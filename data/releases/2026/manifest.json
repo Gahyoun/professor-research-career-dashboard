@@ -1,0 +1,18 @@
+{
+  "release_year": 2026,
+  "professor_count": 3937,
+  "lead_work_count": 120147,
+  "impact_metric": "OpenAlex source summary_stats.2yr_mean_citedness",
+  "lead_definition": "OpenAlex author_position=first OR is_corresponding=true",
+  "identity_filter": "work_authorship_evidence.identity_decision=keep OR explicitly annotated secondary OpenAlex author ID",
+  "secondary_openalex_author_count": 153,
+  "secondary_openalex_lead_work_count": 890,
+  "bachelor_display_rule": "institution only; no timeline estimate because leave/military and other gaps are unobserved",
+  "doctoral_period_rule": "phd_degree_year-5 through phd_degree_year, estimated",
+  "same_institution_postdoc_rule": "post-PhD same-institution affiliation period with work_count>0 before first faculty appointment",
+  "names_encrypted": true,
+  "public_db_bytes": 19800064,
+  "sqlite_integrity": "ok",
+  "foreign_key_errors": 0,
+  "plaintext_names_in_public_assets": false
+}

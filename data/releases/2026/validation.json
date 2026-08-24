@@ -1,0 +1,26 @@
+{
+  "passed": true,
+  "release_year": 2026,
+  "errors": [],
+  "professors": 3937,
+  "decrypted_names": 3937,
+  "lead_work_count": 120147,
+  "db_counts": {
+    "professors": 3937,
+    "career_segments": 14522,
+    "yearly_lead_output": 86181,
+    "professor_journal_output": 62453
+  },
+  "sqlite_integrity": "ok",
+  "foreign_key_errors": 0,
+  "abbreviated_current_institutions": 0,
+  "generic_multicampus_current_institutions": 0,
+  "year_gap_professors": 0,
+  "lee_mijin_move_sentinel": true,
+  "lee_sanghoon_sentinel": true,
+  "research_professor_sentinel": true,
+  "gyeongguk_current_professors": 8,
+  "legacy_andong_current_professors": 0,
+  "anachronistic_gyeongguk_segments": 0,
+  "private_identifiers_in_dashboard": false
+}
