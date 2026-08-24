@@ -70,6 +70,10 @@ pre_doctoral_career = con.execute("""
   SELECT COUNT(*) FROM career_segments c JOIN professors p USING(professor_id)
   WHERE p.phd_year IS NOT NULL AND c.end_year < p.phd_year-5
 """).fetchone()[0]
+invalid_phd_country = con.execute("""
+  SELECT COUNT(*) FROM professors
+  WHERE lower(trim(COALESCE(phd_country,''))) IN ('koreea','koresa')
+""").fetchone()[0]
 
 mijin_ok = False
 for pid in ('P-S4F4ZDO26D',):
@@ -117,6 +121,7 @@ if generic_multicampus_current: errors.append('multi-campus current institution 
 if year_gap_professors: errors.append('yearly output axis has gaps')
 if pre_doctoral_output: errors.append('lead work exists before PhD-minus-5 hard gate')
 if pre_doctoral_career: errors.append('career evidence exists before PhD-minus-5 hard gate')
+if invalid_phd_country: errors.append('misspelled Korea remains in PhD country')
 if not mijin_ok: errors.append('Lee Mijin Hanyang-to-Pusan move sentinel failed')
 if not sanghoon_ok: errors.append('Lee Sang Hoon faculty/postdoc sentinel failed')
 if not research_professor_ok: errors.append('research professor to postdoc sentinel failed')
@@ -136,6 +141,7 @@ result = {
     'year_gap_professors': year_gap_professors,
     'pre_doctoral_output_rows': pre_doctoral_output,
     'pre_doctoral_career_segments': pre_doctoral_career,
+    'misspelled_korea_phd_country_rows': invalid_phd_country,
     'lee_mijin_move_sentinel': mijin_ok, 'lee_sanghoon_sentinel': sanghoon_ok,
     'research_professor_sentinel': research_professor_ok,
     'gyeongguk_current_professors': gyeongguk_count, 'legacy_andong_current_professors': legacy_andong_current,

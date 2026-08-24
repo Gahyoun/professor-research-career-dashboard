@@ -83,6 +83,15 @@ def canonical_institution(full_name, raw_name=None, current_profile=False):
         return 'Gyeongsang National University'
     return full_name or raw_name
 
+def canonical_country(value):
+    if not value:
+        return value
+    country = re.sub(r'\s+', ' ', value).strip()
+    return {
+        'koreea': 'Korea',
+        'koresa': 'Korea',
+    }.get(country.casefold(), country)
+
 def clean_department(label):
     if not label:
         return None
@@ -447,7 +456,7 @@ for row in con.execute('''
         'department': current_departments.get(uid),
         'bachelor_institution': bachelor_name,
         'phd_institution': canonical_institution(phd.get('full_name'), phd.get('institution_raw')),
-        'phd_country': phd.get('country'),
+        'phd_country': canonical_country(phd.get('country')),
         'phd_year': phd_year, 'appointment_year': row['appointment_year'],
         'first_faculty_institution': faculties[0]['institution'] if faculties else None,
         'latest_faculty_institution': faculties[-1]['institution'] if faculties else current_full,
