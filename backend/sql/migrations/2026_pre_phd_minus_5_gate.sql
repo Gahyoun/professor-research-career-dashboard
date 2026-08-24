@@ -60,4 +60,69 @@ WHERE identity_decision='keep'
       AND w.publication_year < p.phd_year-5
   );
 
+-- The tables below are rebuildable career caches.  Raw works and affiliation
+-- strings remain preserved above as duplicate_drop_candidate evidence.
+DELETE FROM career_spells
+WHERE EXISTS (
+  SELECT 1 FROM professors p
+  WHERE p.professor_uid=career_spells.professor_uid
+    AND p.phd_year IS NOT NULL
+    AND career_spells.end_year < p.phd_year-5
+);
+
+UPDATE career_spells
+SET start_year=(
+      SELECT p.phd_year-5 FROM professors p
+      WHERE p.professor_uid=career_spells.professor_uid
+    ),
+    start_term=CASE
+      WHEN start_term IS NULL THEN NULL
+      ELSE printf('%04d-H1',(
+        SELECT p.phd_year-5 FROM professors p
+        WHERE p.professor_uid=career_spells.professor_uid
+      ))
+    END,
+    reasoning=reasoning || '; start trimmed by PhD-minus-5 hard gate'
+WHERE EXISTS (
+  SELECT 1 FROM professors p
+  WHERE p.professor_uid=career_spells.professor_uid
+    AND p.phd_year IS NOT NULL
+    AND career_spells.start_year < p.phd_year-5
+    AND career_spells.end_year >= p.phd_year-5
+);
+
+DELETE FROM affiliation_periods
+WHERE EXISTS (
+  SELECT 1 FROM professors p
+  WHERE p.professor_uid=affiliation_periods.professor_uid
+    AND p.phd_year IS NOT NULL
+    AND affiliation_periods.year < p.phd_year-5
+);
+
+DELETE FROM career_positions_v2
+WHERE EXISTS (
+  SELECT 1 FROM professors p
+  WHERE p.professor_uid=career_positions_v2.professor_uid
+    AND p.phd_year IS NOT NULL
+    AND career_positions_v2.end_year < p.phd_year-5
+);
+
+UPDATE career_positions_v2
+SET start_year=(
+      SELECT p.phd_year-5 FROM professors p
+      WHERE p.professor_uid=career_positions_v2.professor_uid
+    ),
+    start_period=printf('%04d-H1',(
+      SELECT p.phd_year-5 FROM professors p
+      WHERE p.professor_uid=career_positions_v2.professor_uid
+    )),
+    reasoning=reasoning || '; start trimmed by PhD-minus-5 hard gate'
+WHERE EXISTS (
+  SELECT 1 FROM professors p
+  WHERE p.professor_uid=career_positions_v2.professor_uid
+    AND p.phd_year IS NOT NULL
+    AND career_positions_v2.start_year < p.phd_year-5
+    AND career_positions_v2.end_year >= p.phd_year-5
+);
+
 COMMIT;
