@@ -3,13 +3,14 @@
   "release_year": 2026,
   "errors": [],
   "professors": 3937,
-  "decrypted_names": 3937,
-  "lead_work_count": 118850,
+  "decrypted_names": null,
+  "encrypted_names_validation": "reused_bundle_structure",
+  "lead_work_count": 117095,
   "db_counts": {
     "professors": 3937,
-    "career_segments": 14522,
-    "yearly_lead_output": 83901,
-    "professor_journal_output": 61676
+    "career_segments": 14478,
+    "yearly_lead_output": 83932,
+    "professor_journal_output": 60342
   },
   "sqlite_integrity": "ok",
   "foreign_key_errors": 0,

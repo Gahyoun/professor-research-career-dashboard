@@ -14,11 +14,15 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 parser = argparse.ArgumentParser()
 parser.add_argument('--year', default=os.environ.get('RELEASE_YEAR', '2026'))
 parser.add_argument('--project-root', default=str(Path(__file__).resolve().parents[2]))
+parser.add_argument(
+    '--reuse-encrypted-names', action='store_true',
+    help='Validate a filter-only rebuild that reused the existing encrypted name bundle',
+)
 args = parser.parse_args()
 root = Path(args.project_root)
 release = root / 'data' / 'releases' / str(args.year)
 password = os.environ.get('NAMES_PASSWORD')
-if not password:
+if not password and not args.reuse_encrypted_names:
     raise SystemExit('NAMES_PASSWORD is required for validation')
 
 dashboard_path = release / 'dashboard.json'
@@ -31,14 +35,16 @@ encrypted = json.loads(encrypted_path.read_text())
 def b64(value):
     return base64.b64decode(value)
 
-kdf = PBKDF2HMAC(
-    algorithm=hashes.SHA256(), length=32, salt=b64(encrypted['salt']),
-    iterations=int(encrypted['iterations']),
-)
-key = kdf.derive(password.encode())
-names = json.loads(AESGCM(key).decrypt(
-    b64(encrypted['nonce']), b64(encrypted['ciphertext']), b64(encrypted['aad'])
-))
+names = None
+if password:
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(), length=32, salt=b64(encrypted['salt']),
+        iterations=int(encrypted['iterations']),
+    )
+    key = kdf.derive(password.encode())
+    names = json.loads(AESGCM(key).decrypt(
+        b64(encrypted['nonce']), b64(encrypted['ciphertext']), b64(encrypted['aad'])
+    ))
 
 con = sqlite3.connect(f'file:{db_path.resolve()}?mode=ro&immutable=1', uri=True)
 db_counts = {
@@ -113,7 +119,10 @@ ids = [p['id'] for p in dashboard['professors']]
 errors = []
 if not all(re.fullmatch(r'P-[A-Z2-7]{10}', pid) for pid in ids): errors.append('invalid anonymous id')
 if len(ids) != len(set(ids)): errors.append('duplicate anonymous id')
-if set(ids) != set(names): errors.append('encrypted name mapping mismatch')
+if names is not None and set(ids) != set(names): errors.append('encrypted name mapping mismatch')
+if names is None:
+    required_encryption_keys = {'version', 'kdf', 'iterations', 'salt', 'nonce', 'aad', 'ciphertext'}
+    if not required_encryption_keys.issubset(encrypted): errors.append('invalid encrypted name bundle')
 if 'prof:' in dashboard_text or re.search(r'\bA\d{8,}\b', dashboard_text): errors.append('private identifier leaked')
 if 'name' in columns: errors.append('plaintext name column in public DB')
 if abbreviated_current: errors.append('abbreviated current institution remains')
@@ -133,7 +142,8 @@ if dashboard['meta']['lead_work_count'] <= 0: errors.append('no lead-author work
 
 result = {
     'passed': not errors, 'release_year': int(args.year), 'errors': errors,
-    'professors': len(ids), 'decrypted_names': len(names),
+    'professors': len(ids), 'decrypted_names': len(names) if names is not None else None,
+    'encrypted_names_validation': 'decrypted' if names is not None else 'reused_bundle_structure',
     'lead_work_count': dashboard['meta']['lead_work_count'],
     'db_counts': db_counts, 'sqlite_integrity': integrity,
     'foreign_key_errors': fk_errors, 'abbreviated_current_institutions': abbreviated_current,

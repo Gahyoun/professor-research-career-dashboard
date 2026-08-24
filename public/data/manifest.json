@@ -1,10 +1,12 @@
 {
   "release_year": 2026,
   "professor_count": 3937,
-  "lead_work_count": 118850,
+  "lead_work_count": 117095,
   "impact_metric": "OpenAlex source summary_stats.2yr_mean_citedness",
   "lead_definition": "OpenAlex author_position=first OR is_corresponding=true",
-  "identity_filter": "identity_decision=keep (or annotated secondary ID) AND publication_year>=phd_year-5 when PhD year is known",
+  "identity_filter": "KOAD career-aware same-person keep; review preserves prior decision; publication_year>=phd_year-5 when PhD year is known",
+  "identity_filter_version": "KOAD 1.0",
+  "identity_decisions_changed": 14425,
   "secondary_openalex_author_count": 153,
   "secondary_openalex_lead_work_count": 851,
   "bachelor_display_rule": "institution only; no timeline estimate because leave/military and other gaps are unobserved",
@@ -12,7 +14,7 @@
   "pre_doctoral_hard_gate": "works and affiliations earlier than phd_degree_year-5 are duplicate_drop_candidate",
   "same_institution_postdoc_rule": "post-PhD same-institution affiliation period with work_count>0 before first faculty appointment",
   "names_encrypted": true,
-  "public_db_bytes": 19496960,
+  "public_db_bytes": 19300352,
   "sqlite_integrity": "ok",
   "foreign_key_errors": 0,
   "plaintext_names_in_public_assets": false

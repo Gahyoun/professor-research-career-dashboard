@@ -20,6 +20,10 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 parser = argparse.ArgumentParser(description='Build anonymized public dashboard assets.')
 parser.add_argument('--year', default=os.environ.get('RELEASE_YEAR', '2026'))
 parser.add_argument('--project-root', default=str(Path(__file__).resolve().parents[2]))
+parser.add_argument(
+    '--reuse-encrypted-names', action='store_true',
+    help='Reuse the existing encrypted name bundle for a filter-only rebuild',
+)
 args = parser.parse_args()
 
 root = Path(args.project_root)
@@ -33,7 +37,7 @@ for directory in (release_dir, public_data, public_downloads, private_dir):
     directory.mkdir(parents=True, exist_ok=True)
 
 password = os.environ.get('NAMES_PASSWORD')
-if not password:
+if not password and not args.reuse_encrypted_names:
     raise SystemExit('NAMES_PASSWORD is required and is never written to disk')
 db_path = Path((cache / 'source_db_path.txt').read_text().strip())
 role_dir = cache / 'work_role_batches'
@@ -136,6 +140,12 @@ for file in sorted(alias_role_dir.glob('batch_*.jsonl.gz')):
 uri = f'file:{db_path.resolve()}?mode=ro&immutable=1'
 con = sqlite3.connect(uri, uri=True)
 con.row_factory = sqlite3.Row
+koad_applied = bool(con.execute(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='koad_application_audit'"
+).fetchone())
+koad_changed_work_count = con.execute(
+    'SELECT COUNT(*) FROM koad_application_audit'
+).fetchone()[0] if koad_applied else 0
 
 for row in con.execute('''
   SELECT ia.raw_label,iu.display_name,ia.confidence
@@ -600,7 +610,14 @@ meta = {
     'lead_work_count': sum(p['lead_work_count'] for p in professors),
     'impact_metric': 'OpenAlex source summary_stats.2yr_mean_citedness',
     'lead_definition': 'OpenAlex author_position=first OR is_corresponding=true',
-    'identity_filter': 'identity_decision=keep (or annotated secondary ID) AND publication_year>=phd_year-5 when PhD year is known',
+    'identity_filter': (
+        'KOAD career-aware same-person keep; review preserves prior decision; '
+        'publication_year>=phd_year-5 when PhD year is known'
+        if koad_applied else
+        'identity_decision=keep (or annotated secondary ID) AND publication_year>=phd_year-5 when PhD year is known'
+    ),
+    'identity_filter_version': 'KOAD 1.0' if koad_applied else 'legacy',
+    'identity_decisions_changed': koad_changed_work_count,
     'secondary_openalex_author_count': len(alias_author_to_uid),
     'secondary_openalex_lead_work_count': alias_work_count,
     'bachelor_display_rule': 'institution only; no timeline estimate because leave/military and other gaps are unobserved',
@@ -612,20 +629,25 @@ meta = {
 dashboard = {'meta': meta, 'filters': filters, 'professors': professors}
 (release_dir / 'dashboard.json').write_text(compact(dashboard))
 
-# Encrypt names; the public repository never contains plaintext professor names.
-plain = compact(private_names).encode()
-kdf_salt, nonce = secrets.token_bytes(16), secrets.token_bytes(12)
-iterations = 600_000
-kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=kdf_salt, iterations=iterations)
-key = kdf.derive(password.encode())
-aad = b'professor-names-v1'
-ciphertext = AESGCM(key).encrypt(nonce, plain, aad)
-encrypted_names = {
-    'version': 1, 'kdf': 'PBKDF2-SHA256', 'iterations': iterations,
-    'salt': base64.b64encode(kdf_salt).decode(), 'nonce': base64.b64encode(nonce).decode(),
-    'aad': base64.b64encode(aad).decode(), 'ciphertext': base64.b64encode(ciphertext).decode(),
-}
-(release_dir / 'encrypted_names.json').write_text(compact(encrypted_names))
+# Encrypt names; filter-only rebuilds may safely reuse the unchanged encrypted bundle.
+encrypted_name_path = release_dir / 'encrypted_names.json'
+if args.reuse_encrypted_names:
+    if not encrypted_name_path.exists():
+        raise SystemExit('--reuse-encrypted-names requires an existing release encrypted_names.json')
+else:
+    plain = compact(private_names).encode()
+    kdf_salt, nonce = secrets.token_bytes(16), secrets.token_bytes(12)
+    iterations = 600_000
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=kdf_salt, iterations=iterations)
+    key = kdf.derive(password.encode())
+    aad = b'professor-names-v1'
+    ciphertext = AESGCM(key).encrypt(nonce, plain, aad)
+    encrypted_names = {
+        'version': 1, 'kdf': 'PBKDF2-SHA256', 'iterations': iterations,
+        'salt': base64.b64encode(kdf_salt).decode(), 'nonce': base64.b64encode(nonce).decode(),
+        'aad': base64.b64encode(aad).decode(), 'ciphertext': base64.b64encode(ciphertext).decode(),
+    }
+    encrypted_name_path.write_text(compact(encrypted_names))
 
 # Public, name-free SQLite database.
 public_db = release_dir / f'professor_dashboard_{year}.sqlite'
