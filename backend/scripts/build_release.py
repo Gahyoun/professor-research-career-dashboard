@@ -312,7 +312,22 @@ for row in con.execute('''
     bachelor = education.get(uid, {}).get('bachelor', {})
     phd = education.get(uid, {}).get('phd', {})
     phd_year = row['phd_year'] or phd.get('award_year')
+    doctoral_start_year = int(phd_year) - 5 if phd_year else None
     base_careers = [dict(item) for item in career_by_uid.get(uid, [])]
+    if doctoral_start_year is not None:
+        temporally_valid_careers = []
+        for item in base_careers:
+            if item['stage'] == 'doctoral':
+                temporally_valid_careers.append(item)
+                continue
+            if item.get('end_year') is not None and int(item['end_year']) < doctoral_start_year:
+                continue
+            if item.get('start_year') is not None and int(item['start_year']) < doctoral_start_year:
+                item['start_year'] = doctoral_start_year
+                item['start_period'] = f'{doctoral_start_year}-H1'
+                item['evidence_basis'] = f"{item.get('evidence_basis') or ''}; 박사학위-5년 시간 게이트로 시작점 절단".strip('; ')
+            temporally_valid_careers.append(item)
+        base_careers = temporally_valid_careers
     research_professor_institutions = {item['institution_name'] for item in research_professor_affiliations.get(uid, [])}
     base_careers = [item for item in base_careers if not (item['stage'] == 'faculty' and item['institution'] in research_professor_institutions)]
     careers = [item for item in base_careers if item['stage'] != 'doctoral'] if phd_year else base_careers
@@ -491,9 +506,10 @@ def add_role(pid, publication_year, role):
 
 allowed_types = {'article', 'review', 'letter', 'editorial'}
 for row in con.execute('''
-  SELECT professor_uid,openalex_id,work_id,publication_year,work_type
-  FROM work_authorship_evidence
-  WHERE identity_decision='keep' AND publication_year<=?
+  SELECT w.professor_uid,w.openalex_id,w.work_id,w.publication_year,w.work_type
+  FROM work_authorship_evidence w JOIN professors p USING(professor_uid)
+  WHERE w.identity_decision='keep' AND w.publication_year<=?
+    AND (p.phd_year IS NULL OR w.publication_year>=p.phd_year-5)
 ''', (int(year),)):
     role = roles.get((row['openalex_id'], row['work_id']))
     if not role or not (role.get('author_position') == 'first' or role.get('is_corresponding')):
@@ -514,6 +530,9 @@ for role in alias_roles:
         continue
     publication_year = role.get('publication_year')
     if not publication_year or int(publication_year) > int(year):
+        continue
+    alias_professor = by_pid.get(uid_to_public.get(uid))
+    if alias_professor and alias_professor.get('phd_year') and int(publication_year) < int(alias_professor['phd_year']) - 5:
         continue
     alias_work_count += int(add_role(uid_to_public.get(uid), publication_year, role))
 
@@ -572,11 +591,12 @@ meta = {
     'lead_work_count': sum(p['lead_work_count'] for p in professors),
     'impact_metric': 'OpenAlex source summary_stats.2yr_mean_citedness',
     'lead_definition': 'OpenAlex author_position=first OR is_corresponding=true',
-    'identity_filter': 'work_authorship_evidence.identity_decision=keep OR explicitly annotated secondary OpenAlex author ID',
+    'identity_filter': 'identity_decision=keep (or annotated secondary ID) AND publication_year>=phd_year-5 when PhD year is known',
     'secondary_openalex_author_count': len(alias_author_to_uid),
     'secondary_openalex_lead_work_count': alias_work_count,
     'bachelor_display_rule': 'institution only; no timeline estimate because leave/military and other gaps are unobserved',
     'doctoral_period_rule': 'phd_degree_year-5 through phd_degree_year, estimated',
+    'pre_doctoral_hard_gate': 'works and affiliations earlier than phd_degree_year-5 are duplicate_drop_candidate',
     'same_institution_postdoc_rule': 'post-PhD same-institution affiliation period with work_count>0 before first faculty appointment',
     'names_encrypted': True,
 }

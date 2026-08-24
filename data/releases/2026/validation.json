@@ -4,18 +4,20 @@
   "errors": [],
   "professors": 3937,
   "decrypted_names": 3937,
-  "lead_work_count": 120147,
+  "lead_work_count": 118850,
   "db_counts": {
     "professors": 3937,
     "career_segments": 14522,
-    "yearly_lead_output": 86181,
-    "professor_journal_output": 62453
+    "yearly_lead_output": 83901,
+    "professor_journal_output": 61676
   },
   "sqlite_integrity": "ok",
   "foreign_key_errors": 0,
   "abbreviated_current_institutions": 0,
   "generic_multicampus_current_institutions": 0,
   "year_gap_professors": 0,
+  "pre_doctoral_output_rows": 0,
+  "pre_doctoral_career_segments": 0,
   "lee_mijin_move_sentinel": true,
   "lee_sanghoon_sentinel": true,
   "research_professor_sentinel": true,

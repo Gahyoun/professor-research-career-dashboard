@@ -62,6 +62,14 @@ year_gap_professors = con.execute("""
     HAVING COUNT(*) != MAX(year)-MIN(year)+1
   )
 """).fetchone()[0]
+pre_doctoral_output = con.execute("""
+  SELECT COUNT(*) FROM yearly_lead_output y JOIN professors p USING(professor_id)
+  WHERE p.phd_year IS NOT NULL AND y.year < p.phd_year-5 AND y.total_count > 0
+""").fetchone()[0]
+pre_doctoral_career = con.execute("""
+  SELECT COUNT(*) FROM career_segments c JOIN professors p USING(professor_id)
+  WHERE p.phd_year IS NOT NULL AND c.end_year < p.phd_year-5
+""").fetchone()[0]
 
 mijin_ok = False
 for pid in ('P-S4F4ZDO26D',):
@@ -107,6 +115,8 @@ if 'name' in columns: errors.append('plaintext name column in public DB')
 if abbreviated_current: errors.append('abbreviated current institution remains')
 if generic_multicampus_current: errors.append('multi-campus current institution lacks campus qualifier')
 if year_gap_professors: errors.append('yearly output axis has gaps')
+if pre_doctoral_output: errors.append('lead work exists before PhD-minus-5 hard gate')
+if pre_doctoral_career: errors.append('career evidence exists before PhD-minus-5 hard gate')
 if not mijin_ok: errors.append('Lee Mijin Hanyang-to-Pusan move sentinel failed')
 if not sanghoon_ok: errors.append('Lee Sang Hoon faculty/postdoc sentinel failed')
 if not research_professor_ok: errors.append('research professor to postdoc sentinel failed')
@@ -124,6 +134,8 @@ result = {
     'foreign_key_errors': fk_errors, 'abbreviated_current_institutions': abbreviated_current,
     'generic_multicampus_current_institutions': generic_multicampus_current,
     'year_gap_professors': year_gap_professors,
+    'pre_doctoral_output_rows': pre_doctoral_output,
+    'pre_doctoral_career_segments': pre_doctoral_career,
     'lee_mijin_move_sentinel': mijin_ok, 'lee_sanghoon_sentinel': sanghoon_ok,
     'research_professor_sentinel': research_professor_ok,
     'gyeongguk_current_professors': gyeongguk_count, 'legacy_andong_current_professors': legacy_andong_current,
