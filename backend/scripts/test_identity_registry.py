@@ -78,6 +78,14 @@ class IdentityRegistryTests(unittest.TestCase):
         with self.assertRaises(registry.RegistryError):
             registry.import_identifiers(self.path, [candidate(identifier=1)])
 
+    def test_identity_import_remains_compatible_after_thesis_migration(self):
+        from thesis_registry import migrate
+        self.initialize()
+        migrate(self.path)
+        result = registry.import_identifiers(self.path, [candidate()])
+        self.assertEqual(result["identifier_links"], {"national_researcher_number:candidate": 1})
+        self.assertEqual(self.query("PRAGMA user_version"), [(2,)])
+
     def test_incomplete_or_name_and_doi_only_evidence_cannot_be_accepted(self):
         self.initialize()
         for field in ("human_reviewed", "matched_author", "no_conflict", "independent_publication_check", "institution_time_agreement"):

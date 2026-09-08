@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare private domestic PhD lookup anchors for later RISS source review.
+"""Prepare private PhD lookup anchors for later RISS source review.
 
 This command makes no network requests and verifies no departments. It reads
 education award years (never inferred dates or current departments) and reuses
@@ -18,6 +18,7 @@ import unicodedata
 
 from build_constellation_metadata import country, norm
 from build_identity_seed import SafeArgumentParser, anonymous_id, private_output, write_new_jsons
+from riss_api import ISO_COUNTRY_CODES
 
 
 def clean_label(value: object) -> str | None:
@@ -52,7 +53,10 @@ def choose_query(raw: object, unit_id: str, canonical: str,
     return canonical_query, 'existing_canonical_fallback'
 
 
-def build_queue(private_project: Path, public_data: Path, year: str, output: Path) -> dict[str, object]:
+def build_queue(private_project: Path, public_data: Path, year: str, output: Path,
+                scope: str = 'domestic') -> dict[str, object]:
+    if scope not in {'domestic', 'foreign', 'all'}:
+        raise ValueError('Invalid doctorate scope.')
     if not re.fullmatch(r'[12][0-9]{3}', str(year)):
         raise ValueError('Invalid release year.')
     release_year = int(year)
@@ -122,11 +126,14 @@ def build_queue(private_project: Path, public_data: Path, year: str, output: Pat
         if source_country and unit_country and source_country != unit_country:
             excluded['country_conflict'] += 1
             continue
-        if not source_country or not unit_country:
+        if source_country not in ISO_COUNTRY_CODES or unit_country not in ISO_COUNTRY_CODES:
             excluded['missing_country_anchor'] += 1
             continue
-        if source_country != 'KR' or unit_country != 'KR':
+        if scope == 'domestic' and source_country != 'KR':
             excluded['non_domestic_phd'] += 1
+            continue
+        if scope == 'foreign' and source_country == 'KR':
+            excluded['domestic_phd'] += 1
             continue
         # Use precisely the DB canonical string expected by the overlay validator.
         canonical = unit['display_name']
@@ -157,7 +164,7 @@ def build_queue(private_project: Path, public_data: Path, year: str, output: Pat
         planned.append({
             'professor_uid': uid, 'anon_id': anon[uid], 'name': name,
             'institution_unit_id': unit_id, 'institution_canonical': canonical,
-            'institution_query': query, 'country': 'KR', 'award_year': award_year, 'degree_level': 'phd',
+            'institution_query': query, 'country': source_country, 'award_year': award_year, 'degree_level': 'phd',
         })
 
     public_hash = hashlib.sha256(public_bytes).hexdigest()
@@ -165,12 +172,14 @@ def build_queue(private_project: Path, public_data: Path, year: str, output: Pat
                'public_data_sha256': public_hash, 'researchers': planned}
     counts = {'source_researchers': len(people), 'source_phd_rows': sum(map(len, education.values())),
               'planned_queries': len(planned), 'excluded_researchers': sum(excluded.values()),
+              'domestic_queries': sum(row['country'] == 'KR' for row in planned),
+              'foreign_queries': sum(row['country'] != 'KR' for row in planned),
               'exact_public_id_match': True, 'exclusions': dict(sorted(excluded.items())),
               'query_label_sources': dict(sorted(query_sources.items())),
               'korean_institution_queries': sum(korean(row['institution_query']) for row in planned),
               'distinct_institution_units': len({row['institution_unit_id'] for row in planned})}
     audit = {'schema_version': 1, 'release_year': release_year,
-             'public_data_sha256': public_hash, 'counts': counts,
+             'public_data_sha256': public_hash, 'scope': scope, 'counts': counts,
              'assertions': {'source_database_read_only': True, 'existing_salt_reused': True,
                             'network_requests_made': False, 'departments_verified': False,
                             'current_department_used': False, 'estimated_award_years_used': False,
@@ -189,10 +198,11 @@ def main() -> None:
     parser.add_argument('--private-project', type=Path, required=True)
     parser.add_argument('--public-data', type=Path, required=True)
     parser.add_argument('--year', default='2026')
+    parser.add_argument('--scope', choices=('domestic', 'foreign', 'all'), default='domestic')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     try:
-        counts = build_queue(args.private_project.resolve(), args.public_data.resolve(), str(args.year), args.output)
+        counts = build_queue(args.private_project.resolve(), args.public_data.resolve(), str(args.year), args.output, scope=args.scope)
     except Exception:
         parser.exit(1, 'RISS queue generation failed; check private paths, permissions, and input validity. No files were replaced.\n')
     print(json.dumps(counts, ensure_ascii=False, sort_keys=True))

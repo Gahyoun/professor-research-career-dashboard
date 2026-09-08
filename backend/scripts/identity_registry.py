@@ -362,7 +362,8 @@ def import_identifiers(database: str | Path, records: Any) -> dict[str, Any]:
     path = _private_path(database, exists=True)
     connection = _connect(path)
     try:
-        if connection.execute("PRAGMA user_version").fetchone()[0] != 1:
+        # Version 2 adds normalized PhD/thesis tables without changing identity tables.
+        if connection.execute("PRAGMA user_version").fetchone()[0] not in {1, 2}:
             raise RegistryError("Unsupported registry version.")
         with connection:
             connection.execute("BEGIN IMMEDIATE")

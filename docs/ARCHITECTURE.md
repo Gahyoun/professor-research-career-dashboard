@@ -15,6 +15,8 @@
 
 캐시는 배치 파일 단위로 저장하므로 중단 후 같은 명령을 실행하면 완료된 배치를 건너뛴다.
 
+연구자 식별자와 졸업논문 검토는 별도 비공개 SQLite에서 관리한다. `thesis_registry.py`는 기존 식별자 DB를 버전 2로 확장하며, 출처 스냅샷별 박사학위·공급자별 논문·후보 연결·누적 검토 이력을 나눈다. `build_thesis_seed.py`는 기존 OpenAlex 자료에서 국내·해외 논문 후보를 생성하고, 발급키로 수집한 RISS 후보는 `import-riss`로 추가할 수 있다. 자동 입력은 확정 상태를 만들지 않으며 국가·기관·연도 충돌은 검토 대상으로 남긴다. 이 DB는 웹과 공개 릴리스에 직접 연결하지 않는다. [컬럼 및 실행 절차](THESIS_LINKAGE.md)
+
 ## Frontend
 
 프론트엔드는 GitHub Pages에서 동작하는 Vite/React 정적 앱이다. 서버나 비공개 DB에 연결하지 않고 `public/data/dashboard.json`만 읽는다.

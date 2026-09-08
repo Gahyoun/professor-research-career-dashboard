@@ -61,7 +61,7 @@ pnpm build
 
 추가 OpenAlex 저자 ID가 있으면 `AUTHOR_ALIASES_JSON`으로 비공개 별칭 파일을 지정할 수 있습니다. `backend/cache/YYYY`는 커밋하지 않는 재개용 캐시입니다. 기존 `.private/anon_salt.bin`을 유지해야 같은 연구자의 익명 ID가 이어집니다.
 
-보조 메타데이터는 해당 연도 공개 JSON을 먼저 생성한 뒤 별도로 재생성합니다. 정확한 명령과 선택적 학위 검증 DB 결합 절차는 [메타데이터 갱신](docs/CONSTELLATIONS_AND_FLOWS.md#메타데이터-갱신)을 따릅니다. 국내 박사 학과의 후보 검색은 [RISS API와 상세 학위기록 검토](docs/RISS_DEGREE_VERIFICATION.md)를 사용합니다. 공개 JSON과 보조 JSON의 SHA-256이 manifest와 모두 일치할 때만 화면이 보조 정보를 사용합니다.
+보조 메타데이터는 해당 연도 공개 JSON을 먼저 생성한 뒤 별도로 재생성합니다. 정확한 명령과 선택적 학위 검증 DB 결합 절차는 [메타데이터 갱신](docs/CONSTELLATIONS_AND_FLOWS.md#메타데이터-갱신)을 따릅니다. 국내·해외 박사학위논문 후보는 [RISS API와 상세 학위기록 검토](docs/RISS_DEGREE_VERIFICATION.md)로 검색하고, [비공개 학위–논문 DB](docs/THESIS_LINKAGE.md)에 출처와 검토 상태를 저장합니다. 공개 JSON과 보조 JSON의 SHA-256이 manifest와 모두 일치할 때만 화면이 보조 정보를 사용합니다.
 
 ## 공개 지표
 

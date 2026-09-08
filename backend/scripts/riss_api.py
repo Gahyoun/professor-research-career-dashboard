@@ -23,6 +23,16 @@ MAX_XML_BYTES = 2 * 1024 * 1024
 MAX_QUEUE_BYTES = 8 * 1024 * 1024
 TIMEOUT_SECONDS = 15
 QUEUE_FIELDS = {"professor_uid", "anon_id", "name", "institution_unit_id", "institution_canonical", "institution_query", "country", "award_year", "degree_level"}
+# ISO 3166-1 alpha-2 country codes; unknown placeholders are never foreign anchors.
+ISO_COUNTRY_CODES = frozenset("""
+AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ
+CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR
+GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP
+KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS
+MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS
+RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW
+TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW
+""".split())
 
 
 class RissError(ValueError):
@@ -197,8 +207,8 @@ def validate_queue(queue: Any) -> dict[str, Any]:
         if not isinstance(person, dict) or set(person) != QUEUE_FIELDS:
             raise RissError("invalid_queue_record")
         entry = {key: _bounded_string(person[key], 500 if key in {"institution_canonical", "institution_query", "institution_unit_id"} else 300 if key == "name" else 200) for key in QUEUE_FIELDS - {"award_year"}}
-        if entry["country"] != "KR" or entry["degree_level"] != "phd" or type(person["award_year"]) is not int or not 1900 <= person["award_year"] <= release:
-            raise RissError("invalid_domestic_doctorate_query")
+        if entry["country"] not in ISO_COUNTRY_CODES or entry["degree_level"] != "phd" or type(person["award_year"]) is not int or not 1900 <= person["award_year"] <= release:
+            raise RissError("invalid_doctorate_query")
         if entry["professor_uid"] in ids or entry["anon_id"] in anonymous:
             raise RissError("duplicate_queue_identity")
         ids.add(entry["professor_uid"])
@@ -208,9 +218,15 @@ def validate_queue(queue: Any) -> dict[str, Any]:
     return {**queue, "researchers": clean}
 
 
+def doctorate_subtype(country: str) -> str:
+    if country not in ISO_COUNTRY_CODES:
+        raise RissError("invalid_doctorate_query")
+    # Official stype=id is 국내박사 and stype=od is 해외박사; never 'typeid'.
+    return "id" if country == "KR" else "od"
+
+
 def build_query_url(person: dict[str, Any], api_key: str, *, start: int, page_size: int) -> str:
-    # Official stype=id means 국내박사학위논문. It is not a 'typeid' parameter.
-    params = {"key": api_key, "version": "1.0", "type": "T", "stype": "id",
+    params = {"key": api_key, "version": "1.0", "type": "T", "stype": doctorate_subtype(person["country"]),
               "author": person["name"], "publisher": person["institution_query"],
               "spubdate": str(person["award_year"]), "epubdate": str(person["award_year"]),
               "rsnum": str(start), "rowcount": str(page_size)}
@@ -254,7 +270,7 @@ def collect_candidates(queue_json: Path, output: Path, *, limit: int = 5, max_pa
     for person in queue["researchers"][:limit]:
         result = {**person, "status": "not_queried_due_to_prior_error" if stopped else "pending",
                   "request_attempts": 0, "pages_received": 0, "totalcount": None,
-                  "truncated": None, "candidates": [], "query": {"version": "1.0", "type": "T", "stype": "id",
+                  "truncated": None, "candidates": [], "query": {"version": "1.0", "type": "T", "stype": doctorate_subtype(person["country"]),
                   "author": person["name"], "publisher": person["institution_query"], "spubdate": person["award_year"], "epubdate": person["award_year"]}}
         queries.append(result)
         if stopped:
@@ -305,6 +321,8 @@ def collect_candidates(queue_json: Path, output: Path, *, limit: int = 5, max_pa
             result["status"] = "incomplete_truncated"
             result["truncated"] = True
     counts = {"queue_researchers": len(queue["researchers"]), "selected_researchers": len(queries),
+              "domestic_queries": sum(q["country"] == "KR" for q in queries),
+              "foreign_queries": sum(q["country"] != "KR" for q in queries),
               "request_attempts": total_requests, "complete_queries": sum(q["status"].startswith("complete_") for q in queries),
               "incomplete_queries": sum(q["status"].startswith("incomplete_") for q in queries),
               "errored_queries": sum(q["status"] == "incomplete_error" for q in queries),
@@ -313,7 +331,9 @@ def collect_candidates(queue_json: Path, output: Path, *, limit: int = 5, max_pa
     audit = {"schema_version": 1, "release_year": queue["release_year"], "public_data_sha256": queue["public_data_sha256"],
              "created_at": dt.datetime.now(dt.timezone.utc).isoformat(), "limits": {"researchers": limit, "pages_per_researcher": max_pages, "page_size": page_size},
              "counts": counts, "stopped_on_error": stopped, "raw_response_saved": False, "api_key_saved": False,
-             "assertions": {"official_domestic_doctorate_filter": True, "department_returned_by_api": False, "candidate_collection_is_degree_verification": False}}
+             "assertions": {"official_domestic_doctorate_filter": all(q["query"]["stype"] == "id" for q in queries if q["country"] == "KR"),
+                            "official_foreign_doctorate_filter": all(q["query"]["stype"] == "od" for q in queries if q["country"] != "KR"),
+                            "department_returned_by_api": False, "candidate_collection_is_degree_verification": False}}
     payload = {"schema_version": 1, "release_year": queue["release_year"], "public_data_sha256": queue["public_data_sha256"], "source": "RISS thesis OpenAPI", "queries": queries}
     try:
         write_new_jsons([(output, payload), (audit_path, audit)])

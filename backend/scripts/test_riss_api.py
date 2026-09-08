@@ -102,6 +102,47 @@ class RissApiTests(unittest.TestCase):
         self.assertEqual(result["totalcount"], 5)
         self.assertEqual(len(result["candidates"]), 4)
 
+    def test_foreign_doctorate_filter_matches_private_query_audit_and_stays_candidate_only(self):
+        data = queue()
+        foreign = data['researchers'][1]
+        foreign.update(country='US', institution_unit_id='US::synthetic',
+                       institution_canonical='Foreign University', institution_query='Foreign University')
+        self.queue_path.write_text(json.dumps(data))
+        request = Mock(return_value=response())
+        counts = riss.collect_candidates(self.queue_path, self.output, requester=request)
+        self.assertEqual(counts['domestic_queries'], 1)
+        self.assertEqual(counts['foreign_queries'], 1)
+        self.assertEqual(counts['verified_candidates'], 0)
+        for index, expected in enumerate(('id', 'od')):
+            params = parse_qs(urlsplit(request.call_args_list[index].args[0]).query)
+            self.assertEqual(params['type'], ['T'])
+            self.assertEqual(params['stype'], [expected])
+            self.assertNotIn('typeid', params)
+            stored = self.result()['queries'][index]
+            self.assertEqual(stored['query']['stype'], expected)
+            self.assertEqual(stored['candidates'][0]['verification_status'], 'candidate_needs_degree_detail')
+            self.assertIsNone(stored['candidates'][0]['department'])
+        audit = json.loads(self.output.with_suffix('.audit.json').read_text())
+        self.assertTrue(audit['assertions']['official_foreign_doctorate_filter'])
+        self.assertTrue(audit['assertions']['official_domestic_doctorate_filter'])
+        self.assertFalse(audit['assertions']['candidate_collection_is_degree_verification'])
+
+    def test_foreign_country_must_be_assigned_iso2_and_identities_remain_unique(self):
+        self.assertEqual(len(riss.ISO_COUNTRY_CODES), 249)
+        for code in ('US', 'GB', 'JP', 'DE', 'IN'):
+            data = queue(); data['researchers'][1]['country'] = code
+            self.assertEqual(riss.validate_queue(data)['researchers'][1]['country'], code)
+            self.assertEqual(riss.doctorate_subtype(code), 'od')
+        for code in ('ZZ', 'UK', 'us', 'USA', 'United States', 'XX'):
+            with self.subTest(code=code), self.assertRaisesRegex(riss.RissError, 'invalid_doctorate_query'):
+                data = queue(); data['researchers'][1]['country'] = code
+                riss.validate_queue(data)
+        for key in ('anon_id', 'professor_uid'):
+            data = queue(); data['researchers'][1]['country'] = 'US'
+            data['researchers'][1][key] = data['researchers'][0][key]
+            with self.assertRaisesRegex(riss.RissError, 'duplicate_queue_identity'):
+                riss.validate_queue(data)
+
     def test_duplicate_record_ids_and_urls_are_deduplicated_and_cannot_imply_completeness(self):
         request = Mock(return_value=response(2, [metadata("T1"), metadata("T1")]))
         riss.collect_candidates(self.queue_path, self.output, limit=1, page_size=2, requester=request)

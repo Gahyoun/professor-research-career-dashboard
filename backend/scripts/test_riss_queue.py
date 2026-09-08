@@ -100,6 +100,49 @@ class RissQueueTests(unittest.TestCase):
         self.assertEqual(counts['planned_queries'], 1)
         self.assertEqual(counts['exclusions'], {'country_conflict': 2, 'missing_country_anchor': 2, 'non_domestic_phd': 1})
 
+    def test_scope_default_foreign_and_all_keep_unique_exact_country_anchors(self):
+        self.sql("INSERT INTO institution_units VALUES('foreign-unit','Foreign University','US')")
+        self.sql("INSERT INTO institution_units VALUES('unknown-code','Unresolved University','ZZ')")
+        self.add_person('foreign', unit='foreign-unit', raw='Foreign University', country='United States')
+        self.add_person('country-conflict', unit='foreign-unit', raw='Foreign University', country='Korea')
+        self.add_person('unknown-code', unit='unknown-code', raw='Unresolved University', country='ZZ')
+        default_counts = self.build()  # Existing four-argument call remains domestic.
+        default_rows = json.loads(self.output.read_text())['researchers']
+        self.assertEqual(default_counts['domestic_queries'], 1)
+        self.assertEqual(default_counts['foreign_queries'], 0)
+        self.assertEqual(default_counts['exclusions'], {'country_conflict': 1, 'missing_country_anchor': 1, 'non_domestic_phd': 1})
+        scope_rows = {}
+        for scope, expected in [('foreign', 1), ('all', 2)]:
+            output = self.output.with_name(scope + '.json')
+            counts = builder.build_queue(self.project, self.public, '2026', output, scope=scope)
+            scope_rows[scope] = json.loads(output.read_text())['researchers']
+            self.assertEqual(counts['planned_queries'], expected)
+            self.assertEqual(counts['exclusions']['country_conflict'], 1)
+            self.assertEqual(counts['exclusions']['missing_country_anchor'], 1)
+            self.assertEqual(json.loads(output.with_suffix('.audit.json').read_text())['scope'], scope)
+        self.assertEqual(scope_rows['foreign'][0]['country'], 'US')
+        self.assertEqual(scope_rows['foreign'][0]['institution_query'], 'Foreign University')
+        all_ids = [r['anon_id'] for r in scope_rows['all']]
+        self.assertEqual(len(all_ids), len(set(all_ids)))
+        self.assertEqual(set(all_ids), {r['anon_id'] for r in default_rows + scope_rows['foreign']})
+        self.assertEqual([r for r in scope_rows['all'] if r['country'] == 'KR'], default_rows)
+
+    def test_invalid_scope_fails_before_private_input_reads(self):
+        with patch.object(Path, 'read_text') as read, self.assertRaises(ValueError):
+            builder.build_queue(self.project, self.public, '2026', self.output, scope='unrecognized')
+        read.assert_not_called()
+
+    def test_cli_foreign_scope_reaches_builder(self):
+        self.sql("INSERT INTO institution_units VALUES('foreign-unit','Foreign University','GB')")
+        self.add_person('foreign', unit='foreign-unit', raw='Foreign University', country='United Kingdom')
+        args = ['build_riss_queue.py', '--private-project', str(self.project), '--public-data', str(self.public),
+                '--output', str(self.output), '--scope', 'foreign']
+        with patch.object(sys, 'argv', args), contextlib.redirect_stdout(io.StringIO()) as out:
+            builder.main()
+        self.assertEqual(json.loads(out.getvalue())['foreign_queries'], 1)
+        rows = json.loads(self.output.read_text())['researchers']
+        self.assertEqual([r['country'] for r in rows], ['GB'])
+
     def test_only_actual_award_year_matching_public_release(self):
         self.add_person('missing-actual', award=None)  # inferred_start_year cannot fill this.
         self.add_person('future-actual', award=2027, public_year=2027)
