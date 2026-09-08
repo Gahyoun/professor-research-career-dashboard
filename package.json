@@ -11,7 +11,11 @@
     "preview": "vite preview --config frontend/vite.config.ts --host 0.0.0.0",
     "lint": "eslint frontend --ignore-pattern dist",
     "data:build": "python3 backend/scripts/build_release.py",
-    "data:validate": "python3 backend/scripts/validate_release.py"
+    "data:validate": "python3 backend/scripts/validate_release.py",
+    "test": "node scripts/run-tests.mjs",
+    "typecheck": "tsc --noEmit",
+    "data:metadata": "python3 backend/scripts/build_constellation_metadata.py",
+    "data:test": "python3 -m unittest discover -s backend/scripts -p \"test_*.py\""
   },
   "dependencies": {
     "react": "19.2.6",
