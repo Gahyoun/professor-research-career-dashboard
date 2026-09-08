@@ -1,0 +1,29 @@
+{
+  "release_year": 2026,
+  "public_data_sha256": "4bf0501768467e54af0052cb900d27022008d802182d63f0a71a5eb4c0ac89a4",
+  "source": "existing KOAD-filtered 2026 private build source mapped to existing anonymous IDs",
+  "country_rule": "explicit degree country and unique exact institution alias; conflicts remain unknown",
+  "department_rule": "unique formal department from kept author affiliations at the same institutional unit and public career interval; any conflicting or unresolved formal labels excluded",
+  "degree_department_verified": false,
+  "doctoral_period_estimated": true,
+  "bachelor_department_available": false,
+  "private_fields_exported": false,
+  "counts": {
+    "bachelor_country_known": 2855,
+    "career_country_known": 13451,
+    "career_department_inferred": 4022,
+    "career_domestic": 9291,
+    "career_domestic_department_inferred": 2986,
+    "career_segments": 14478,
+    "phd_ambiguous_publication_departments": 1134,
+    "phd_country_known": 3802,
+    "phd_department_inferred": 879,
+    "phd_domestic": 2189,
+    "phd_domestic_department_inferred": 548,
+    "phd_kept_author_affiliation_same_institution_and_period": 879,
+    "phd_missing_institution_or_period": 208,
+    "phd_no_formal_department_evidence": 1716,
+    "researchers": 3937
+  },
+  "metadata_sha256": "91be2875828ed1b20d288a1aca8bae3bebfefc407541a7d6079bf030d4425df6"
+}

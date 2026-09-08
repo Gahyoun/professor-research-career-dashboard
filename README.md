@@ -1,6 +1,21 @@
 # Professor Research Career Dashboard
 
-국내 기초자연과학 교수의 박사과정·포닥·교수 경력과 필터링된 주저자 논문 생산성을 보여주는 GitHub Pages 대시보드입니다. 개인 조회와 조건별 교수 그룹 조회를 모두 지원합니다.
+국내 기초자연과학 교수 명부를 바탕으로 학력·경력의 겹침과 이동, 필터링된 주저자 논문 생산성을 탐색하는 GitHub Pages 대시보드입니다. 흰 바탕의 연구자 별자리, 학부→박사→현재기관 흐름, 기관별 시간 변화와 기존 개인 경력 조회를 제공합니다.
+
+비밀번호를 입력하기 전에는 익명 연구자 ID로 탐색합니다. 실명은 기존 암호화 번들을 브라우저 메모리에서 복호화한 뒤 표시합니다. 이번 화면 확장은 기존 공개 릴리스와 암호화 실명 번들을 변경하지 않고, 검증된 보조 메타데이터를 선택적으로 결합합니다.
+
+## 화면
+
+| 경로 | 탐색 내용 |
+| --- | --- |
+| `#/constellations` | 학교별 또는 연구자별 별자리. 노드는 연구자, 하이퍼엣지는 시기·출신기관의 일치입니다. 선택한 집합의 윤곽과 해당 연구자 목록을 함께 봅니다. |
+| `#/flows` | 학부→박사→현재기관의 3단계 Sankey와 학부 모교 재직 비율. 흐름을 선택해 구성원을 좁힙니다. |
+| `#/institutions` | 기록된 경력을 연도별로 재구성한 기관 구성, 그룹 규모, 구성원 겹침 기반 연속성 δNOA를 비교합니다. |
+| `#/career` | 기존 개인 경력·논문 생산성 조회, 잠금 해제 후 조건별 그룹 비교와 익명 자료 다운로드를 제공합니다. |
+
+이 자료는 **현재 교수 명부에서 과거를 재구성한 표본**입니다. 과거 각 기관의 전체 인력이나 실제 교류망이 아닙니다. 국내 기관의 공간적 일치는 학교와 해당 학력·경력 단계의 학과가 모두 일치해야 하며, 현재 재직 학과를 박사 학과로 대체하지 않습니다. 추정 시기와 논문 소속에서 추론한 학과는 화면에서 구분합니다.
+
+사용법과 해석 범위는 [별자리·흐름·기관 변화](docs/CONSTELLATIONS_AND_FLOWS.md), 임베딩과 가중치는 [하이퍼그래프 방법](docs/HYPERGRAPH_METHOD.md)을 참고합니다.
 
 ## 구조
 
@@ -11,50 +26,42 @@ backend/                 비공개 원본 DB를 읽는 수집·정규화·익명
   sql/                   공개 SQLite 스키마와 예제 쿼리
 frontend/                KRDS 기반 React 화면
 data/releases/YYYY/      연도별 공개 릴리스 산출물
-public/data/             현재 사이트가 읽는 JSON·암호화 실명 번들
+public/data/             현재 공개 JSON·보조 메타데이터·암호화 실명 번들
 public/downloads/        익명 SQLite·SQL 다운로드
 ```
 
-공개 저장소에는 원본 DB, OpenAlex 키, 원본 OpenAlex 저자 ID, 내부 교수 ID, 평문 실명이 들어가지 않습니다. 실명은 PBKDF2-SHA256으로 키를 유도해 AES-GCM으로 암호화되며 브라우저에서만 복호화됩니다. 잠금 해제 전에는 익명 교수 ID만 보이고 그룹 쿼리도 비활성화됩니다.
-
-## 화면 기능
-
-- 개인 조회: `분야 → 현재 재직기관 → 교수(익명 Prof ID)` 순으로 선택
-- 학력·경력: 학부 기관은 항목으로만 표시하고, 박사과정·기관별 포닥·교수 이동은 반기 단위 타임라인으로 표시
-- 연도별 생산성: 빠진 해를 0으로 채운 연속 연도축에서 1저자 또는 교신저자 논문을 공개 저널 영향도 구간별로 표시
-- 그룹 쿼리: 분야, 현재기관, 박사 출신기관·국가, 저널 영향도 M, 논문 N편, 서로 다른 저널 K개 조건을 조합
-- 그룹 비교: 일치 교수 목록과 생산성을 그룹의 실제 최소–최대 연도 공통축으로 정규화해 비교
-- 다운로드: 익명 공개 SQLite, 스키마, 예제 SQL
-
 세부 판별 규칙은 [경력·기관·논문 분류 기준](docs/CLASSIFICATION_RULES.md), 데이터 구조는 [아키텍처](docs/ARCHITECTURE.md), 공개 범위는 [보안 문서](docs/SECURITY.md)를 참고합니다.
 
-## 2027 데이터 추가
+## 로컬 실행과 검증
 
-2027년 전체 DB를 만든 뒤 로컬에서 다음 파이프라인을 한 번 실행합니다. 동일 교수에게 추가 OpenAlex 저자 ID가 있으면 별도 비공개 JSON을 함께 넘깁니다.
-
-```bash
-export OPENALEX_API_KEY='...'
-export NAMES_PASSWORD='...'
-export AUTHOR_ALIASES_JSON='/absolute/path/to/openalex_author_aliases_2027.json' # 선택
-./backend/scripts/update_release.sh 2027 /absolute/path/to/professor_affiliation_timeline_through_2027.sqlite
-```
-
-별칭 파일은 다음처럼 원본 명부의 교수 ID와 병합할 OpenAlex 저자 ID 배열을 갖습니다. 기본 ID와 겹쳐도 자동으로 제외되며, 저자 간 충돌은 빌드 오류로 중단됩니다.
-
-```json
-[
-  {"source_professor_id":"원본-교수-ID","openalex_ids":["https://openalex.org/A123","https://openalex.org/A456"]}
-]
-```
-
-`backend/cache/2027`은 재개용 비공개 캐시이며, `data/releases/2027`과 `public/`만 갱신됩니다. 같은 `.private/anon_salt.bin`을 보관하면 기존 교수의 익명 ID가 2027년에도 유지됩니다.
-
-## 로컬 실행
+Node.js 22.13 이상, pnpm, Python 3가 필요합니다.
 
 ```bash
 pnpm install
 pnpm dev
 ```
+
+공개 전에는 다음 검사를 모두 실행합니다.
+
+```bash
+pnpm test
+pnpm lint
+pnpm typecheck
+pnpm data:test
+pnpm build
+```
+
+## 연도별 데이터와 메타데이터 갱신
+
+다음 연도의 원본 DB를 준비하고, 비공개 환경에서 `OPENALEX_API_KEY`와 `NAMES_PASSWORD`를 설정한 뒤 기존 릴리스 파이프라인을 실행합니다. 아래 변수는 각자의 비공개 경로를 가리키며 값과 원본 자료를 저장소에 기록하지 않습니다.
+
+```bash
+./backend/scripts/update_release.sh 2027 "$SOURCE_DATABASE"
+```
+
+추가 OpenAlex 저자 ID가 있으면 `AUTHOR_ALIASES_JSON`으로 비공개 별칭 파일을 지정할 수 있습니다. `backend/cache/YYYY`는 커밋하지 않는 재개용 캐시입니다. 기존 `.private/anon_salt.bin`을 유지해야 같은 연구자의 익명 ID가 이어집니다.
+
+보조 메타데이터는 해당 연도 공개 JSON을 먼저 생성한 뒤 별도로 재생성합니다. 정확한 명령과 선택적 RISS/KISS 검증 DB 결합 절차는 [메타데이터 갱신](docs/CONSTELLATIONS_AND_FLOWS.md#메타데이터-갱신)을 따릅니다. 공개 JSON과 보조 JSON의 SHA-256이 manifest와 모두 일치할 때만 화면이 보조 정보를 사용합니다.
 
 ## 공개 지표
 

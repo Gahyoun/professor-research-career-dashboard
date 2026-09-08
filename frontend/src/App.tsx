@@ -1,56 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
+import SankeyPage from './SankeyPage';
+import TemporalInstitutionsPage from './TemporalInstitutionsPage';
+import { loadDashboard } from './metadata';
+import { decryptNameMap, type EncryptedNames } from './privacy';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-type Stage = 'doctoral' | 'postdoc' | 'faculty';
-type Career = {
-  stage: Stage; position_no: number | null; institution: string;
-  start_period: string | null; end_period: string | null;
-  start_year: number | null; end_year: number | null; confidence: string;
-  evidence_basis: string | null; is_estimated: boolean; is_institution_successor: boolean;
-};
-type YearPoint = {
-  year: number; stage: Stage | null; total: number; first_author: number;
-  corresponding_author: number; impact_low: number; impact_medium: number;
-  impact_high: number; impact_unknown: number;
-  mean_journal_2yr_citedness: number | null; article_citations: number;
-};
-type JournalStat = { journal: string; lead_work_count: number; openalex_2yr_mean_citedness: number | null };
-type Professor = {
-  id: string; subject: string; current_institution: string | null; department: string | null;
-  bachelor_institution: string | null;
-  phd_institution: string | null; phd_country: string | null; phd_year: number | null; appointment_year: number | null;
-  first_faculty_institution: string | null; latest_faculty_institution: string | null;
-  lead_work_count: number; career: Career[]; yearly: YearPoint[]; journals: JournalStat[];
-};
-type Dashboard = {
-  meta: { release_year: number; professor_count: number; lead_work_count: number; impact_metric: string };
-  filters: { subjects: string[]; current_institutions: string[]; departments: string[]; phd_institutions: string[]; phd_countries: string[] };
-  professors: Professor[];
-};
-type EncryptedNames = {
-  iterations: number; salt: string; nonce: string; aad: string; ciphertext: string;
-};
+import type { Stage, Career, YearPoint, Professor, Dashboard } from './types';
+import Constellation from './Constellation';
+
 type Filters = { subject: string; institution: string };
+
+type ViewMode = 'individual' | 'group' | 'constellation' | 'sankey' | 'institutions';
+function routeView(): ViewMode { const path = window.location.hash.split('?')[0]; return path === '#/institutions' ? 'institutions' : path === '#/flows' ? 'sankey' : path === '#/career' ? 'individual' : 'constellation'; }
 
 const emptyFilters: Filters = { subject: '', institution: '' };
 const stageColors: Record<Stage, string> = { doctoral: '#d63d4a', postdoc: '#228738', faculty: '#256ef4' };
 const subjectLabels: Record<string, string> = { mathematics: '수학', physics: '물리', chemistry: '화학', biology: '생물' };
-
-function b64(value: string) {
-  return Uint8Array.from(atob(value), char => char.charCodeAt(0));
-}
-
-async function decryptNameMap(password: string, payload: EncryptedNames) {
-  const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
-  const key = await crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: b64(payload.salt), iterations: payload.iterations, hash: 'SHA-256' },
-    material, { name: 'AES-GCM', length: 256 }, false, ['decrypt'],
-  );
-  const plain = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: b64(payload.nonce), additionalData: b64(payload.aad), tagLength: 128 },
-    key, b64(payload.ciphertext),
-  );
-  return JSON.parse(new TextDecoder().decode(plain)) as Record<string, string>;
-}
 
 function aggregateYearly(professors: Professor[]): YearPoint[] {
   const years = new Map<number, YearPoint>();
@@ -165,13 +129,19 @@ export default function App() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [selectedId, setSelectedId] = useState('');
-  const [viewMode, setViewMode] = useState<'individual' | 'group'>('individual');
+  const [viewMode, setViewState] = useState<ViewMode>(routeView);
+  const [graphSelectionId, setGraphSelectionId] = useState('');
+  function setViewMode(mode: ViewMode) { setViewState(mode); const hash = mode === 'institutions' ? '#/institutions' : mode === 'sankey' ? '#/flows' : mode === 'constellation' ? '#/constellations' : '#/career'; if (window.location.hash !== hash) window.location.hash = hash; }
+  useEffect(() => { const changed = () => setViewState(routeView()); window.addEventListener('hashchange', changed); return () => window.removeEventListener('hashchange', changed); }, []);
   const [groupPhd, setGroupPhd] = useState('');
   const [groupCountry, setGroupCountry] = useState('');
   const [minimumImpact, setMinimumImpact] = useState(0);
   const [minimumPapers, setMinimumPapers] = useState(0);
   const [minimumJournals, setMinimumJournals] = useState(0);
   const [password, setPassword] = useState('');
+  const [unlocking, setUnlocking] = useState(false);
+  const authGeneration = useRef(0);
+  useEffect(() => () => { authGeneration.current += 1; }, []);
   const [names, setNames] = useState<Record<string, string> | null>(null);
   const [message, setMessage] = useState('실명은 암호화되어 있습니다.');
   const [zoom, setZoom] = useState(100);
@@ -179,9 +149,13 @@ export default function App() {
   const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
-    fetch(`${import.meta.env.BASE_URL}data/dashboard.json`).then(r => {
-      if (!r.ok) throw new Error(String(r.status)); return r.json();
-    }).then((data: Dashboard) => { setDashboard(data); setSelectedId(data.professors[0]?.id || ''); }).catch(() => setLoadError('공개 데이터 파일을 불러오지 못했습니다.'));
+    let active = true;
+    loadDashboard(import.meta.env.BASE_URL).then(({ dashboard: data, metadataAvailable }) => {
+      if (!active) return;
+      setDashboard(data); setSelectedId(data.professors[0]?.id || '');
+      if (!metadataAvailable) setMessage('실명은 암호화되어 있습니다. 학과·국가 보충자료를 불러오지 못해 해당 근거가 없는 공간 연결은 제외됩니다.');
+    }).catch(() => { if (active) setLoadError('공개 데이터 파일을 불러오지 못했습니다.'); });
+    return () => { active = false; };
   }, []);
 
   const filtered = useMemo(() => dashboard?.professors.filter(p =>
@@ -207,14 +181,21 @@ export default function App() {
 
   async function unlock(event: React.FormEvent) {
     event.preventDefault();
+    const generation = ++authGeneration.current;
+    const submittedPassword = password;
+    setPassword(''); setUnlocking(true);
     try {
       const response = await fetch(`${import.meta.env.BASE_URL}data/encrypted_names.json`);
+      if (!response.ok) throw new Error('Name bundle unavailable');
       const payload = await response.json() as EncryptedNames;
-      setNames(await decryptNameMap(password, payload)); setMessage('실명과 그룹 쿼리가 이 기기의 메모리에서만 활성화되었습니다.'); setPassword('');
-    } catch { setMessage('비밀번호가 맞지 않습니다.'); }
+      const decrypted = await decryptNameMap(submittedPassword, payload);
+      if (generation !== authGeneration.current) return;
+      setNames(decrypted); setMessage('실명과 그룹 쿼리가 이 기기의 메모리에서만 활성화되었습니다.');
+    } catch { if (generation === authGeneration.current) setMessage('비밀번호가 맞지 않거나 실명 파일을 불러오지 못했습니다.'); }
+    finally { if (generation === authGeneration.current) setUnlocking(false); }
   }
 
-  function chooseProfessor(id: string) { setSelectedId(id); setViewMode('individual'); document.getElementById('career-title')?.scrollIntoView(); }
+  function chooseProfessor(id: string) { setFilters(emptyFilters); setSelectedId(id); setViewMode('individual'); window.scrollTo({ top: 0 }); }
   function updateFilter(key: keyof Filters, value: string) {
     setFilters(current => key === 'subject' ? { subject: value, institution: '' } : ({ ...current, [key]: value }));
     setSelectedId('');
@@ -229,13 +210,23 @@ export default function App() {
   const totalLead = groupFiltered.reduce((sum, p) => sum + p.lead_work_count, 0);
   return (
     <div className={`app ${contrast ? 'high-contrast' : ''}`} style={{ fontSize: `${zoom}%` }}>
-      <a className="skip-link" href="#main">본문 바로가기</a>
+      <a className="skip-link" href="#main" onClick={e => { e.preventDefault(); const main = document.getElementById('main'); main?.focus(); main?.scrollIntoView(); }}>본문 바로가기</a>
       <header className="site-header"><div className="header-inner">
         <div className="brand"><span className="brand-mark" aria-hidden="true">N</span><div><strong>기초자연과학 연구경력</strong><span>교수 주저자 논문 대시보드</span></div></div>
-        <form className="unlock" onSubmit={unlock}>{names ? <button type="button" className="lock" onClick={() => { setNames(null); setViewMode('individual'); setMessage('실명과 그룹 쿼리를 다시 잠갔습니다.'); }}>실명·쿼리 잠그기</button> : <><label htmlFor="name-password">실명·쿼리 보기</label><input id="name-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="비밀번호" autoComplete="current-password" required/><button type="submit">해제</button></>}</form>
+        <form className="unlock" onSubmit={unlock}>{names ? <button type="button" className="lock" onClick={() => { authGeneration.current += 1; setNames(null); setPassword(''); setUnlocking(false); if (viewMode === 'group') setViewMode('individual'); setMessage('실명과 그룹 쿼리를 다시 잠갔습니다.'); }}>실명·쿼리 잠그기</button> : <><label htmlFor="name-password">실명·쿼리 보기</label><input id="name-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="비밀번호" autoComplete="current-password" required/><button type="submit" disabled={unlocking}>{unlocking ? '확인 중' : '해제'}</button></>}</form>
       </div></header>
 
-      <main id="main" className="container">
+      <main id="main" tabIndex={-1} className={`container ${viewMode === 'constellation' || viewMode === 'sankey' || viewMode === 'institutions' ? 'atlas-container' : ''}`}>
+        <nav className="atlas-nav" aria-label="탐색 화면">
+          <button className={viewMode === 'constellation' ? 'active' : ''} onClick={() => setViewMode('constellation')}>경력 하이퍼그래프</button>
+          <button className={viewMode === 'individual' || viewMode === 'group' ? 'active' : ''} onClick={() => setViewMode('individual')}>경력과 논문</button>
+          <button className={viewMode === 'sankey' ? 'active' : ''} onClick={() => setViewMode('sankey')}>학력·임용 흐름</button>
+          <button className={viewMode === 'institutions' ? 'active' : ''} onClick={() => setViewMode('institutions')}>기관 시계열</button>
+          <span className="atlas-access" role="status" title={message}>{names ? '실명 보기 활성화' : '익명으로 탐색 중'}</span>
+        </nav>
+        <p className="atlas-auth-message" role="status">{message}</p>
+        {viewMode === 'constellation' ? <Constellation key={names ? 'unlocked' : 'locked'} initialSelectedId={graphSelectionId} professors={dashboard.professors} names={names} releaseYear={dashboard.meta.release_year} onSelect={chooseProfessor}/> : viewMode === 'institutions' ? <TemporalInstitutionsPage professors={dashboard.professors} releaseYear={dashboard.meta.release_year}/> : viewMode === 'sankey' ? <SankeyPage key={names ? 'unlocked' : 'locked'} professors={dashboard.professors} names={names} releaseYear={dashboard.meta.release_year} onSelect={chooseProfessor}/> : <>
+
         <section className="title-row"><div><span className="eyebrow">{dashboard.meta.release_year} DATA RELEASE</span><h1>교수 연구경력과 주저자 생산성</h1><p>박사과정부터 기관별 포닥·교수 임용까지의 경력과 필터링된 1저자·교신저자 논문을 확인합니다.</p></div><div className="display-settings"><label htmlFor="zoom">글자 크기</label><select id="zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))}><option value="90">90%</option><option value="100">100%</option><option value="110">110%</option><option value="130">130%</option><option value="150">150%</option></select><label className="contrast"><input type="checkbox" checked={contrast} onChange={e => setContrast(e.target.checked)}/> 선명한 화면</label></div></section>
 
         <section className="filter-panel" aria-labelledby="filter-title"><div className="panel-heading"><div><span className="step">01</span><h2 id="filter-title">조회 조건</h2></div><button className="reset" type="button" onClick={() => { setFilters(emptyFilters); setSelectedId(''); setGroupPhd(''); setGroupCountry(''); setMinimumImpact(0); setMinimumPapers(0); setMinimumJournals(0); }}>초기화</button></div>
@@ -243,7 +234,7 @@ export default function App() {
             <label>분야<select value={filters.subject} onChange={e => updateFilter('subject', e.target.value)}><option value="">전체 분야</option>{dashboard.filters.subjects.map(v => <option key={v} value={v}>{subjectLabels[v] || v}</option>)}</select></label>
             <label>현재 재직기관<select value={filters.institution} onChange={e => updateFilter('institution', e.target.value)}><option value="">전체 기관</option>{availableInstitutions.map(v => <option key={v}>{v}</option>)}</select></label>
             <label>교수 (Prof ID)<select value={selected?.id || ''} onChange={e => { setSelectedId(e.target.value); setViewMode('individual'); }}><option value="">교수 선택</option>{filtered.map(p => <option key={p.id} value={p.id}>{labelFor(p)}</option>)}</select></label>
-          </div><p className="status-message" role="status">{message} · 필터 결과 {filtered.length.toLocaleString()}명</p>
+          </div><p className="status-message" role="status">필터 결과 {filtered.length.toLocaleString()}명</p>
         </section>
 
         <div className="view-toggle" role="group" aria-label="보기 방식"><button className={viewMode === 'individual' ? 'active' : ''} onClick={() => setViewMode('individual')}>선택 교수</button><button className={viewMode === 'group' ? 'active' : ''} onClick={() => setViewMode('group')} disabled={!names} title={names ? '그룹 조건 쿼리' : '실명·쿼리 잠금을 먼저 해제하세요'}>그룹 쿼리 {!names && '🔒'}</button></div>
@@ -251,7 +242,7 @@ export default function App() {
         <section className="summary-grid" aria-label="조회 결과 요약">
           {viewMode === 'individual' && selected ? <>
             <article className="summary-card"><span>선택 교수</span><strong>{labelFor(selected)}</strong><small>{subjectLabels[selected.subject] || selected.subject} · {selected.department || '학과 미상'}</small></article>
-            <article className="summary-card bachelor-card"><span>학부 출신기관</span><strong>{selected.bachelor_institution || '정보 없음'}</strong><small>연도는 군복무·휴학 등을 고려해 추정하지 않음</small></article>
+            <article className="summary-card bachelor-card"><span>학부 출신기관</span><strong>{selected.bachelor_institution || '정보 없음'}</strong><small>실제 재학연도 미상 · 하이퍼그래프에서 추정 구간 선택 가능</small></article>
             <article className="summary-card doctoral-card"><span>박사과정 · 학위연도 기준</span><strong>{doctoral ? `${doctoral.start_year}–${doctoral.end_year}` : '연도 미상'}</strong><small>{selected.phd_institution || '기관 미상'}</small></article>
             <article className="summary-card"><span>포닥·연구원 기관</span><strong>{postdocs}개 구간</strong><small>동일기관은 학위 이후 논문 증거가 있을 때만 분리</small></article>
             <article className="summary-card"><span>주저자 논문</span><strong>{selected.lead_work_count.toLocaleString()}편</strong><small>1저자 또는 교신저자 · 후보 제외</small></article>
@@ -264,13 +255,14 @@ export default function App() {
           </>}
         </section>
 
-        {viewMode === 'individual' && selected && <section className="content-panel"><div className="panel-heading"><div><span className="step">02</span><h2 id="career-title">경력 타임라인</h2></div><div className="legend"><span><i className="doctoral"/>박사과정</span><span><i className="postdoc"/>포닥·연구원</span><span><i className="faculty"/>교수</span></div></div><CareerTimeline rows={selected.career}/></section>}
+        {viewMode === 'individual' && selected && <section className="content-panel"><div className="panel-heading"><div><span className="step">02</span><h2 id="career-title">경력 타임라인</h2></div><div className="legend"><span><i className="doctoral"/>박사과정</span><span><i className="postdoc"/>포닥·연구원</span><span><i className="faculty"/>교수</span></div></div><CareerTimeline rows={selected.career}/><button className="trajectory-open" onClick={() => { setGraphSelectionId(selected.id); setViewMode('constellation'); window.scrollTo({ top: 0 }); }}>이 연구자의 시공간 경로 비교 ↗</button></section>}
 
         <section className="content-panel"><div className="panel-heading"><div><span className="step">{viewMode === 'individual' ? '03' : '02'}</span><h2>연도별 주저자 논문 생산성</h2></div><span className="metric-note">저널 영향도: OpenAlex 2-year mean citedness</span></div><div className="impact-legend"><span><i className="unknown"/>미분류</span><span><i className="low"/>낮음 (&lt;2)</span><span><i className="medium"/>중간 (2–5)</span><span><i className="high"/>높음 (≥5)</span></div><ProductivityChart data={chartData} group={viewMode === 'group'}/><p className="data-note">※ Clarivate JIF가 아닌 공개 재현 가능한 OpenAlex 저널 2년 평균 인용도입니다.</p></section>
 
         {viewMode === 'group' && <section className="content-panel"><div className="panel-heading"><div><span className="step">03</span><h2>조건 일치 교수 목록과 생산성</h2></div><span className="metric-note">상위 24명 · 그룹 실제 최소–최대 연도 공통축</span></div><ProfessorRows rows={groupFiltered} labelFor={labelFor} onSelect={chooseProfessor} minimumImpact={minimumImpact}/></section>}
 
         <section className="download-panel"><div><h2>공개 DB와 SQL</h2><p>실명과 원본 식별자를 제거한 SQLite 및 재사용 가능한 조회문입니다.</p></div><div><a href={`${import.meta.env.BASE_URL}downloads/professor_dashboard_${dashboard.meta.release_year}.sqlite`} download>익명 SQLite</a><a href={`${import.meta.env.BASE_URL}downloads/schema_public.sql`} download>스키마 SQL</a><a href={`${import.meta.env.BASE_URL}downloads/queries_public.sql`} download>예제 쿼리</a></div></section>
+        </>}
       </main>
       <footer><div className="container">{dashboard.meta.release_year} 공개 릴리스 · 공개 화면에는 익명화·집계된 정보만 포함됩니다.</div></footer>
     </div>

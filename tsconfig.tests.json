@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "work/test-dist",
+    "rootDir": "frontend/src",
+    "esModuleInterop": true
+  },
+  "include": [
+    "frontend/src/constellation/*.ts",
+    "frontend/src/privacy.ts",
+    "frontend/src/metadata.ts",
+    "frontend/src/sankey.ts",
+    "frontend/src/schoolIdentity.ts",
+    "frontend/src/temporalInstitutions.ts"
+  ],
+  "exclude": [
+    "frontend/src/constellation/layout.worker.ts"
+  ]
+}
