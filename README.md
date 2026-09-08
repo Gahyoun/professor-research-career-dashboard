@@ -15,7 +15,7 @@
 
 이 자료는 **현재 교수 명부에서 과거를 재구성한 표본**입니다. 과거 각 기관의 전체 인력이나 실제 교류망이 아닙니다. 국내 기관의 공간적 일치는 학교와 해당 학력·경력 단계의 학과가 모두 일치해야 하며, 현재 재직 학과를 박사 학과로 대체하지 않습니다. 추정 시기와 논문 소속에서 추론한 학과는 화면에서 구분합니다.
 
-사용법과 해석 범위는 [별자리·흐름·기관 변화](docs/CONSTELLATIONS_AND_FLOWS.md), 임베딩과 가중치는 [하이퍼그래프 방법](docs/HYPERGRAPH_METHOD.md)을 참고합니다.
+사용법과 해석 범위는 [별자리·흐름·기관 변화](docs/CONSTELLATIONS_AND_FLOWS.md), 임베딩과 가중치는 [하이퍼그래프 방법](docs/HYPERGRAPH_METHOD.md)을 참고합니다. OpenAlex·ORCID·국가연구자번호의 비공개 대조 절차와 GNU의 KRI 기관 연계 확인 사항은 [연구자 식별자 연계](docs/IDENTITY_LINKAGE.md)에 정리했습니다.
 
 ## 구조
 
