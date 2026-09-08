@@ -75,6 +75,8 @@ python3 backend/scripts/identity_registry.py summary \
 
 ## 국내 박사 학과의 확인 경로
 
+현재 프로젝트의 국내 박사 학과 검증은 [RISS 후보 검색과 상세 학위기록 검토](RISS_DEGREE_VERIFICATION.md)를 우선 경로로 사용한다. KRI의 대학 내부 연계 여부를 다른 기관 연구자의 조회 권한으로 확장해 해석하지 않는다.
+
 RISS에는 현재 공식 API 센터와 학위논문 검색 API가 있다. 검색 API는 학위논문 서지정보를 제공하며, 활용 대상은 비영리 기관·대학으로 안내되어 있다. 소속 대학 도서관을 통한 이용 가능성과 반환 필드의 학과·학위 정보 충실도를 확인할 수 있다. KISS의 이용 가능 범위는 별도 확인이 필요하며, RISS에 API가 없다고 전제해 학위논문 확인 경로를 폐기하지 않는다. [RISS 검색 API 공식 소개](https://www.riss.kr/apicenter/apiSearchIntro.do), [API 센터](https://www.riss.kr/apicenter/apiMain.do)
 
 ## 경상국립대학교 확인 경로
