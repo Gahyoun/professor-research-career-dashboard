@@ -12,6 +12,12 @@ Historical predecessor names and explicit campus/hospital suffixes remain distin
 Long Sankey names wrap, with label space reserved separately from proportional
 node and ribbon thicknesses.
 
+Domestic shorthand already paired with an English university name in the public
+release is included explicitly (for example, `Korea_sejong` retains Sejong Campus).
+Display normalization accepts typographic dash variants, without changing the
+matching normalization. Degree detail labels still use the original display field;
+supplemental matching labels must not replace a more complete school name.
+
 Official sources checked on 2026-09-09:
 
 - [KAIST](https://www.kaist.ac.kr/en/): Korea Advanced Institute of Science and Technology
@@ -26,9 +32,28 @@ Official sources checked on 2026-09-09:
 - [Korea National University of Education](https://www.knue.ac.kr/eng/index.do)
 - [Korea National University of Transportation](https://www.ut.ac.kr/english/sub01_01.do)
 - [Dongguk University WISE Campus](https://web.dongguk.ac.kr/eng/page/173)
+- [Korea University Sejong Campus](https://sejong.korea.ac.kr/eng/index.do)
+- [Konkuk University GLOCAL Campus](https://www.kku.ac.kr/cms/FR_CON/index.do?MENU_ID=510)
+- [Hanyang University ERICA Campus](https://www.hanyang.ac.kr/web/eng/erica-campus1/)
+- [Yonsei University Mirae Campus](https://www.yonsei.ac.kr/en_sc/1819/subview.do)
+- [University of Ulsan](https://biology.ulsan.ac.kr/)
+- [Andong National University](https://www.andong.ac.kr/eng/html.do): preserve the historical institution's name.
+- [Jungwon University](https://www.jwu.ac.kr/index.jsp)
+- [Kosin University](https://www.kosin.ac.kr/eng/)
+- [Daegu Catholic University](https://www.cu.ac.kr/index.php)
+- [Sangmyung University](https://www.smu.ac.kr/eng1/index.do)
+- [Hongik University](https://www.hongik.ac.kr/en/about/about-hongik.do)
+- [Kyungnam University](https://www.kyungnam.ac.kr/sites/en/index.do)
+- [Seowon University](https://www.seowon.ac.kr/)
+
+`Donggkuk_wise` is a display-only typo alias: one of its public faculty records
+also identifies the same researcher's current institution explicitly as Dongguk
+University (WISE Campus). No institutional membership keys are rewritten.
 
 Unknown abbreviations are not expanded by guessing. For example, `CIT`, `IIT`,
 `IIT@MIT`, `UST`, `KNUST`, `KUTE` and `UNED` need institution/context verification
 before a global display alias can be added. `KAUST` also remains unchanged because
 its public degree records currently carry KR country values, conflicting with the
 Saudi institution's identity. Resolve those source records in the data workflow.
+Unresolved spellings such as `Konju`, `Myongi`, `Deagu` and `Sila` also retain the
+source text until the underlying institution is confirmed.
