@@ -17,6 +17,32 @@ const aliases: [string, string[]][] = [
   ['Jeonbuk National University', ['Jeonbuk']], ['Chonnam National University', ['Chonnam']],
   ['Sungkyunkwan University', ['Sungkyunkwan']], ['Sogang University', ['Sogang']],
   ['Ewha Womans University', ['Ewha']], ['Kyung Hee University', ['Kyung-Hee']],
+  // Reviewed public-school / roster aliases. These are explicit identities,
+  // not the presentation lookup or a crosswalk learned from source canonicals:
+  // source canonicals also contain hospitals and conflicting school assignments.
+  ['Hanyang University', ['Hanyang']], ['Inha University', ['Inha']],
+  ['Chung-Ang University', ['Chung-Ang', 'Chung_Ang']],
+  ['Dankook University', ['Dankuk', 'Dankook']],
+  ['University of Ulsan', ['Ulsan']],
+  ['Kumoh National Institute of Technology', ['Kumoh']],
+  ['Kosin University', ['Kosin']], ['Seokyeong University', ['Seokyeong']],
+  ['Dongshin University', ['Dongshin']], ['Wonkwang University', ['Wonkwang']],
+  ['Inje University', ['Inje']], ['Andong National University', ['Andong']],
+  ['Daegu Haany University', ['Daegu Haany']], ['Jungwon University', ['Jungwon']],
+  ['Korea Maritime and Ocean University', ['KMOU']],
+  ['Korea University (Sejong Campus)', ['Korea_sejong', 'Korea-Sejong']],
+  ['Konkuk University (GLOCAL Campus)', ['Konkuk_glocal']],
+  ['Hanyang University (ERICA Campus)', ['Hanyang_ERICA', 'Hanyang-ERICA']],
+  ['Yonsei University (Mirae Campus)', ['Yonsei_Mirae', 'Yonsei-Mirae']],
+  ['Dongguk University (WISE Campus)', ['Dongguk University WISE Campus', 'Dongguk_wise', 'Donggkuk_wise']],
+  ['Gangneung-Wonju National University', ['Gangneung–Wonju National University']],
+  ['Daegu Catholic University', ['Daegu Catholic']],
+  ['Sangmyung University', ['Sangmyung']], ['Seowon University', ['Seowon']],
+  ['Kyungnam University', ['Kyungnam']], ['Hongik University', ['Hongik']],
+  ['Korea National Open University', ['KNOU']],
+  ['Korea National University of Education', ['KNUE']],
+  ['Korea National University of Transportation', ['KNUT']],
+  ['The Hong Kong University of Science and Technology', ['HKUST']],
 ];
 const key = (value: string) => value.normalize('NFKC').trim().toLocaleLowerCase('en-US').replace(/\s+/g, ' ');
 const lookup = new Map(aliases.flatMap(([canonical, variants]) => [canonical, ...variants].map(name => [key(name), canonical] as const)));

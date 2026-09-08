@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildLifetimeTrajectory } from '../work/test-dist/constellation/lifetime.js';
+import { createHash } from 'node:crypto';
+import { buildLifetimeTrajectory, createLifetimeIndex } from '../work/test-dist/constellation/lifetime.js';
 const unit={institution:'School',country:'KR',department:'Physics'};
 const appointment=(start,end,extra={})=>({...unit,start_year:start,end_year:end,role:'faculty',evidence_kind:'official_profile',evidence_status:'verified',...extra});
 const student=(id,end,extra={})=>({id,phd_institution:'School',phd_country:'KR',phd_department:'Physics',phd_year:end,...extra});
@@ -102,4 +103,57 @@ test('actual doctoral unit conflicts cannot borrow the degree department and mal
   assert.equal(stage(groups([a,b]),'doctoral').groups.length,0);
   const result=groups([student('A',2010),student('B',2010),student(' ',2010),student(7,2010)]);
   assert.deepEqual(result.peers.map(p=>p.id),['B']);
+});
+
+
+function indexFixture(){const current={...unit,observation_year:2026,evidence_kind:'semester_roster',evidence_status:'observed',department_inferred:true};return[
+ student('Z',2010,{phd_department_inferred:true,career:[{...unit,stage:'postdoc',start_year:2011,end_year:2013,is_estimated:false}],faculty_appointments:[appointment(2014,2016,{rank:'assistant_professor',first_assistant_professor_verified:true})],current_position:current}),
+ student('B',2015),{id:'teacher',faculty_appointments:[appointment(2005,2005),appointment(2010,2016),appointment(2010,2016)],current_position:{...current,department_inferred:false}},
+ student('A',2009,{career:[{...unit,stage:'doctoral',start_year:2006,end_year:2009,is_estimated:false},{...unit,stage:'postdoc',start_year:2010,end_year:2012,is_estimated:true}]}),
+ student('foreign',2010,{phd_country:'US'}),student('missing',2010,{phd_department:null}),{id:'inferred-faculty',career:[{...unit,stage:'faculty',start_year:2005,end_year:2026,is_estimated:false}]},
+ {id:'stale',current_position:{...current,observation_year:2025}},student('B',2020),student(' ',2010)];}
+
+test('indexed queries preserve complete legacy results, evidence order and coverage across all four stages',()=>{
+  // Captured from the pre-index implementation (ad3d100), before replacing its
+  // full researcher scan. These compare every field, including ordering and scores.
+  const cases=[
+    [{includeInferredDepartments:true},'6797fce0d24af0cc9aa55907ad2f02a028d691bcc498078cd72916ade936fb42'],
+    [{includeInferredDepartments:false},'a6dab215be13b8b4979e102e90ac274861f3202df6eaddaf3ec8a7aa67076c05'],
+    [{includeInferredDepartments:true,includeEstimated:false},'d903db6f4bf4d1fd1f337a3c4127d0cc4af26caeb26c3e1e978de136b9bd9659'],
+    [{includeInferredDepartments:true,estimatedYears:4,stages:['postdoc','current']},'95f9a9408e5769706bb22446f048e3938beb87f3d073888e19189c5d055c354e'],
+  ];
+  for(const [options,digest] of cases){
+    const index=createLifetimeIndex(indexFixture(),{releaseYear:2026,...options});
+    assert.deepEqual(index.ids,['Z','B','teacher','A','foreign','missing','inferred-faculty','stale']);
+    const actual=index.ids.map(id=>index.get(id));
+    assert.equal(createHash('sha256').update(JSON.stringify(actual)).digest('hex'),digest);
+  }
+});
+
+test('an index retains every eligible identity including people with no documented intervals or peers',()=>{
+  const rows=[student('A',2010),student('B',2009),...Array.from({length:80},(_,i)=>({id:`no-evidence-${i}`})),
+    ...Array.from({length:80},(_,i)=>student(`isolated-${i}`,2010,{phd_institution:`Other school ${i}`}))];
+  const index=createLifetimeIndex([...rows,rows[0],student('',2010),student(42,2010)],{releaseYear:2026});
+  assert.equal(index.ids.length,162);
+  let grouped=0,eligibleWithoutPeers=0,missingAnchors=0;
+  for(const id of index.ids){const result=index.get(id);assert.equal(result.selectedFound,true);assert.equal(result.stages.length,4);
+    if(result.coverage.groupCount)grouped++;
+    else if(result.coverage.eligibleIntervals)eligibleWithoutPeers++;
+    else missingAnchors++;
+  }
+  assert.deepEqual([grouped,eligibleWithoutPeers,missingAnchors],[2,80,80]);
+  assert.deepEqual(index.get('absent'),buildLifetimeTrajectory(rows,'absent',{releaseYear:2026}));
+});
+
+test('index options and prepared records are isolated, and callers cannot mutate subsequent results',()=>{
+  const rows=indexFixture(),options={releaseYear:2026,includeInferredDepartments:true,stages:['doctoral','current']};
+  const original=JSON.stringify(rows),index=createLifetimeIndex(rows,options),expected=index.get('Z');
+  assert.equal(JSON.stringify(rows),original);
+  options.includeInferredDepartments=false;options.stages.splice(0,2,'postdoc');rows[0].phd_department='Mathematics';
+  rows[0].current_position.department='Mathematics';
+  const changed=index.get('Z');changed.stages[0].groups[0].members.push('injected');changed.peers[0].evidence[0].basis.push('injected');
+  assert.deepEqual(index.get('Z'),expected);
+  const strict=createLifetimeIndex(indexFixture(),{releaseYear:2026,includeInferredDepartments:false});
+  assert.equal(strict.get('Z').stages.find(s=>s.stage==='current').groups.length,0);
+  assert.ok(index.get('Z').stages.find(s=>s.stage==='current').groups.length);
 });

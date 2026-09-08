@@ -39,6 +39,11 @@ export interface LifetimeResult {
   selectedId: string; selectedFound: boolean; stages: LifetimeStageResult[];
   peers: LifetimePeer[]; coverage: LifetimeCoverage;
 }
+export interface LifetimeIndex {
+  ids: string[];
+  /** A fresh result per request; detailed results are not retained by the index. */
+  get(selectedId: string): LifetimeResult;
+}
 
 const STAGES: LifetimeStage[] = ['doctoral', 'postdoc', 'first_faculty', 'current'];
 const LABELS: Record<LifetimeStage, string> = {
@@ -170,91 +175,119 @@ function selectedFor(stage: LifetimeStage, interval: SourceInterval): boolean {
  * Ego-window unions: each member overlaps the selected person's stage interval.
  * Members need not overlap one another, and yearly memberships are never implied.
  */
-export function buildLifetimeTrajectory(records: readonly ResearcherRecord[], selectedId: string,
-  options: LifetimeOptions = {}): LifetimeResult {
+export function createLifetimeIndex(records: readonly ResearcherRecord[], inputOptions: LifetimeOptions = {}): LifetimeIndex {
+  // Capture options so an existing index cannot change when caller state changes.
+  const options = { ...inputOptions, stages: inputOptions.stages ? [...inputOptions.stages] : undefined };
   const distinct = new Map<string, ResearcherRecord>();
   for (const record of records) if (typeof record.id === 'string' && record.id.trim() && !distinct.has(record.id)) distinct.set(record.id, record);
-  const coverage: LifetimeCoverage = { totalStages: 4, eligibleStages: 0, eligibleIntervals: 0, totalIntervals: 0,
-    groupCount: 0, peerCount: 0, unverifiedFacultyIntervals: 0, missingDepartmentIntervals: 0,
-    missingCountryIntervals: 0, excludedInferredDepartmentIntervals: 0, excludedEstimatedIntervals: 0 };
-  const result: LifetimeResult = { selectedId, selectedFound: distinct.has(selectedId), stages: [], peers: [], coverage };
-  if (!result.selectedFound) return result;
   const profiles = new Map([...distinct].map(([id, record]) => [id, profile(record, options)]));
-  const selected = profiles.get(selectedId)!;
-  coverage.unverifiedFacultyIntervals = [...profiles.values()].reduce((sum, p) => sum + p.unverifiedFaculty, 0);
-  const peers = new Map<string, LifetimeEvidence[]>();
-  const selectedTokens = new Set<string>();
-  const enabled = new Set(options.stages ?? STAGES);
-  for (const stage of STAGES) {
-    const stageResult: LifetimeStageResult = { id: stage, stage, label: LABELS[stage], condition: CONDITIONS[stage],
-      intervals: [], groups: [], excludedReasons: [...selected.reasons[stage]] };
-    result.stages.push(stageResult);
-    if (!enabled.has(stage)) continue;
-    const intervalKeys = new Set<string>();
-    for (const source of selected.intervals.filter(i => selectedFor(stage, i))) {
-      coverage.totalIntervals++;
-      const checked = validateUnit(source.unit, stage === 'postdoc', options);
-      if (!checked.unit) {
-        stageResult.excludedReasons.push(checked.reason!);
-        if (checked.reason!.startsWith('해당 시기의 학과')) coverage.missingDepartmentIntervals++;
-        if (checked.reason!.startsWith('국가')) coverage.missingCountryIntervals++;
-        if (checked.reason!.startsWith('논문 소속')) coverage.excludedInferredDepartmentIntervals++;
-        continue;
-      }
-      const unit = checked.unit;
-      const id = `lifetime:${stage}:${unit.key}:${source.start}:${source.end}`;
-      if (intervalKeys.has(id)) continue;
-      intervalKeys.add(id);
-      const interval: LifetimeInterval = { id, stage, unitKey: unit.key, institution: unit.institution,
-        country: unit.country, department: unit.department, startYear: source.start, endYear: source.end,
-        estimated: source.estimated, inferredDepartment: unit.inferred, basis: [...source.basis] };
-      stageResult.intervals.push(interval); coverage.eligibleIntervals++;
-      for (let year = source.start; year <= source.end; year++) selectedTokens.add(`${stage}:${unit.key}:${year}`);
-      const group: LifetimeGroup = { ...interval, label: `${LABELS[stage]} · ${unit.institution}${unit.department ? ` · ${unit.department}` : ''} · ${source.start === source.end ? source.start : `${source.start}–${source.end}`}`,
-        condition: CONDITIONS[stage], members: [selectedId], memberEvidence: [], temporalSemantics: 'selected_interval_union' };
-      for (const [peerId, peerProfile] of profiles) {
-        if (peerId === selectedId) continue;
-        const evidenceKeys = new Set<string>();
-        for (const peer of peerProfile.intervals) {
-          if (!permittedPeer(stage, peer)) continue;
-          const peerUnit = validateUnit(peer.unit, stage === 'postdoc', options).unit;
-          if (!peerUnit || peerUnit.key !== unit.key) continue;
-          const startYear = Math.max(source.start, peer.start), endYear = Math.min(source.end, peer.end);
-          if (startYear > endYear) continue;
-          const key = `${peer.role}:${startYear}:${endYear}:${peer.estimated}:${peerUnit.inferred}`;
-          if (evidenceKeys.has(key)) continue;
-          evidenceKeys.add(key);
-          const evidence: LifetimeEvidence = { peerId, unitKey: unit.key, institution: unit.institution,
-            country: unit.country, department: unit.department, selectedStage: stage, peerStage: peer.role,
-            startYear, endYear, selectedStartYear: source.start, selectedEndYear: source.end,
-            peerStartYear: peer.start, peerEndYear: peer.end, estimated: source.estimated || peer.estimated,
-            inferredDepartment: unit.inferred || peerUnit.inferred,
-            basis: [...new Set([...source.basis, ...peer.basis])], };
-          group.memberEvidence.push(evidence);
-          group.inferredDepartment ||= evidence.inferredDepartment;
-          group.estimated ||= evidence.estimated;
-          if (!peers.has(peerId)) peers.set(peerId, []);
-          peers.get(peerId)!.push(evidence);
-        }
-        if (evidenceKeys.size) group.members.push(peerId);
-      }
-      group.memberEvidence.sort((a, b) => a.peerId.localeCompare(b.peerId, 'en') || a.startYear - b.startYear || a.peerStage.localeCompare(b.peerStage, 'en'));
-      if (group.members.length > 1) { stageResult.groups.push(group); coverage.groupCount++; }
+  const unverifiedFacultyIntervals = [...profiles.values()].reduce((sum, p) => sum + p.unverifiedFaculty, 0);
+  type UnitCheck = ReturnType<typeof validateUnit>;
+  type PreparedPeer = { source: SourceInterval; unit: ValidUnit };
+  const checks = new Map<SourceInterval, { department: UnitCheck; institution: UnitCheck }>();
+  // Stage -> matching unit -> peer -> intervals. Insertion order preserves the
+  // original researcher order and evidence precedence without a full scan per ego.
+  const candidates = new Map<LifetimeStage, Map<string, Map<string, PreparedPeer[]>>>(STAGES.map(stage => [stage, new Map()]));
+  for (const [peerId, peerProfile] of profiles) for (const source of peerProfile.intervals) {
+    const checked = { department: validateUnit(source.unit, false, options), institution: validateUnit(source.unit, true, options) };
+    checks.set(source, checked);
+    for (const stage of STAGES) {
+      if (!permittedPeer(stage, source)) continue;
+      const unit = (stage === 'postdoc' ? checked.institution : checked.department).unit;
+      if (!unit) continue;
+      const stageCandidates = candidates.get(stage)!;
+      if (!stageCandidates.has(unit.key)) stageCandidates.set(unit.key, new Map());
+      const peers = stageCandidates.get(unit.key)!;
+      if (!peers.has(peerId)) peers.set(peerId, []);
+      peers.get(peerId)!.push({ source, unit });
     }
-    if (stageResult.intervals.length) coverage.eligibleStages++;
-    if (stage === 'doctoral' && coverage.unverifiedFacultyIntervals > 0) stageResult.excludedReasons.push('논문 소속으로 추정된 교수 구간은 재직 근거로 사용하지 않습니다. 별도의 명부·공식 이력 근거가 있는 구간만 연결합니다.');
-    if (!stageResult.groups.length && stageResult.intervals.length) stageResult.excludedReasons.push('현재 자료에서 이 기간·단위의 연결 상대가 확인되지 않았습니다.');
-    stageResult.excludedReasons = [...new Set(stageResult.excludedReasons)];
-    coverage.excludedEstimatedIntervals += stageResult.excludedReasons.filter(reason => reason.startsWith('추정 기간')).length;
   }
-  for (const [id, evidence] of peers) {
-    const tokens = new Set<string>();
-    for (const item of evidence) for (let year = item.startYear; year <= item.endYear; year++) tokens.add(`${item.selectedStage}:${item.unitKey}:${year}`);
-    result.peers.push({ id, evidence, score: selectedTokens.size ? tokens.size / selectedTokens.size : 0,
-      sharedUnitYears: tokens.size, comparedUnitYears: selectedTokens.size,
-      stageCount: new Set(evidence.map(item => item.selectedStage)).size });
-  }
-  result.peers.sort((a, b) => b.stageCount - a.stageCount || b.sharedUnitYears - a.sharedUnitYears || a.id.localeCompare(b.id, 'en'));
-  coverage.peerCount = result.peers.length;
-  return result;
+  const enabled = new Set(options.stages ?? STAGES);
+  const get = (selectedId: string): LifetimeResult => {
+    const coverage: LifetimeCoverage = { totalStages: 4, eligibleStages: 0, eligibleIntervals: 0, totalIntervals: 0,
+      groupCount: 0, peerCount: 0, unverifiedFacultyIntervals: 0, missingDepartmentIntervals: 0,
+      missingCountryIntervals: 0, excludedInferredDepartmentIntervals: 0, excludedEstimatedIntervals: 0 };
+    const result: LifetimeResult = { selectedId, selectedFound: distinct.has(selectedId), stages: [], peers: [], coverage };
+    if (!result.selectedFound) return result;
+    const selected = profiles.get(selectedId)!;
+    coverage.unverifiedFacultyIntervals = unverifiedFacultyIntervals;
+    const peers = new Map<string, LifetimeEvidence[]>();
+    const selectedTokens = new Set<string>();
+    for (const stage of STAGES) {
+      const stageResult: LifetimeStageResult = { id: stage, stage, label: LABELS[stage], condition: CONDITIONS[stage],
+        intervals: [], groups: [], excludedReasons: [...selected.reasons[stage]] };
+      result.stages.push(stageResult);
+      if (!enabled.has(stage)) continue;
+      const intervalKeys = new Set<string>();
+      for (const source of selected.intervals.filter(i => selectedFor(stage, i))) {
+        coverage.totalIntervals++;
+        const checked = stage === 'postdoc' ? checks.get(source)!.institution : checks.get(source)!.department;
+        if (!checked.unit) {
+          stageResult.excludedReasons.push(checked.reason!);
+          if (checked.reason!.startsWith('해당 시기의 학과')) coverage.missingDepartmentIntervals++;
+          if (checked.reason!.startsWith('국가')) coverage.missingCountryIntervals++;
+          if (checked.reason!.startsWith('논문 소속')) coverage.excludedInferredDepartmentIntervals++;
+          continue;
+        }
+        const unit = checked.unit;
+        const id = `lifetime:${stage}:${unit.key}:${source.start}:${source.end}`;
+        if (intervalKeys.has(id)) continue;
+        intervalKeys.add(id);
+        const interval: LifetimeInterval = { id, stage, unitKey: unit.key, institution: unit.institution,
+          country: unit.country, department: unit.department, startYear: source.start, endYear: source.end,
+          estimated: source.estimated, inferredDepartment: unit.inferred, basis: [...source.basis] };
+        stageResult.intervals.push(interval); coverage.eligibleIntervals++;
+        for (let year = source.start; year <= source.end; year++) selectedTokens.add(`${stage}:${unit.key}:${year}`);
+        const group: LifetimeGroup = { ...interval, label: `${LABELS[stage]} · ${unit.institution}${unit.department ? ` · ${unit.department}` : ''} · ${source.start === source.end ? source.start : `${source.start}–${source.end}`}`,
+          condition: CONDITIONS[stage], members: [selectedId], memberEvidence: [], temporalSemantics: 'selected_interval_union' };
+        for (const [peerId, peerIntervals] of candidates.get(stage)!.get(unit.key) ?? []) {
+          if (peerId === selectedId) continue;
+          const evidenceKeys = new Set<string>();
+          for (const { source: peer, unit: peerUnit } of peerIntervals) {
+            const startYear = Math.max(source.start, peer.start), endYear = Math.min(source.end, peer.end);
+            if (startYear > endYear) continue;
+            const key = `${peer.role}:${startYear}:${endYear}:${peer.estimated}:${peerUnit.inferred}`;
+            if (evidenceKeys.has(key)) continue;
+            evidenceKeys.add(key);
+            const evidence: LifetimeEvidence = { peerId, unitKey: unit.key, institution: unit.institution,
+              country: unit.country, department: unit.department, selectedStage: stage, peerStage: peer.role,
+              startYear, endYear, selectedStartYear: source.start, selectedEndYear: source.end,
+              peerStartYear: peer.start, peerEndYear: peer.end, estimated: source.estimated || peer.estimated,
+              inferredDepartment: unit.inferred || peerUnit.inferred,
+              basis: [...new Set([...source.basis, ...peer.basis])], };
+            group.memberEvidence.push(evidence);
+            group.inferredDepartment ||= evidence.inferredDepartment;
+            group.estimated ||= evidence.estimated;
+            if (!peers.has(peerId)) peers.set(peerId, []);
+            peers.get(peerId)!.push(evidence);
+          }
+          if (evidenceKeys.size) group.members.push(peerId);
+        }
+        group.memberEvidence.sort((a, b) => a.peerId.localeCompare(b.peerId, 'en') || a.startYear - b.startYear || a.peerStage.localeCompare(b.peerStage, 'en'));
+        if (group.members.length > 1) { stageResult.groups.push(group); coverage.groupCount++; }
+      }
+      if (stageResult.intervals.length) coverage.eligibleStages++;
+      if (stage === 'doctoral' && coverage.unverifiedFacultyIntervals > 0) stageResult.excludedReasons.push('논문 소속으로 추정된 교수 구간은 재직 근거로 사용하지 않습니다. 별도의 명부·공식 이력 근거가 있는 구간만 연결합니다.');
+      if (!stageResult.groups.length && stageResult.intervals.length) stageResult.excludedReasons.push('현재 자료에서 이 기간·단위의 연결 상대가 확인되지 않았습니다.');
+      stageResult.excludedReasons = [...new Set(stageResult.excludedReasons)];
+      coverage.excludedEstimatedIntervals += stageResult.excludedReasons.filter(reason => reason.startsWith('추정 기간')).length;
+    }
+    for (const [id, evidence] of peers) {
+      const tokens = new Set<string>();
+      for (const item of evidence) for (let year = item.startYear; year <= item.endYear; year++) tokens.add(`${item.selectedStage}:${item.unitKey}:${year}`);
+      result.peers.push({ id, evidence, score: selectedTokens.size ? tokens.size / selectedTokens.size : 0,
+        sharedUnitYears: tokens.size, comparedUnitYears: selectedTokens.size,
+        stageCount: new Set(evidence.map(item => item.selectedStage)).size });
+    }
+    result.peers.sort((a, b) => b.stageCount - a.stageCount || b.sharedUnitYears - a.sharedUnitYears || a.id.localeCompare(b.id, 'en'));
+    coverage.peerCount = result.peers.length;
+    return result;
+  };
+  return { ids: [...distinct.keys()], get };
+}
+
+/** Convenience wrapper for a single selection; reuse an index when querying many people. */
+export function buildLifetimeTrajectory(records: readonly ResearcherRecord[], selectedId: string,
+  options: LifetimeOptions = {}): LifetimeResult {
+  return createLifetimeIndex(records, options).get(selectedId);
 }

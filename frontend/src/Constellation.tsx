@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Professor } from './types';
 import { institutionDisplayName, institutionSearchText } from './schoolIdentity';
-import { type ResearcherRecord, type Hypergraph, type HypergraphLayout, type Hyperedge } from './constellation/hypergraph';
-import { buildLifetimeTrajectory, type LifetimeStage } from './constellation/lifetime';
+import { type Hypergraph, type HypergraphLayout, type Hyperedge } from './constellation/hypergraph';
+import { createLifetimeIndex, type LifetimeStage } from './constellation/lifetime';
+import { toResearcherRecords } from './constellation/records';
+import type { CareerSummary } from './constellation/careerCatalog';
+import CareerDirectory from './CareerDirectory';
 import './constellation.css';
 import TrajectoryPanel from './TrajectoryPanel';
 import { smoothEnvelope } from './constellation/smoothEnvelope';
@@ -21,7 +24,7 @@ export default function Constellation({ professors, names, releaseYear, onSelect
   initialSelectedId?: string; professors: Professor[]; names: Record<string, string> | null; releaseYear: number; onSelect: (id: string) => void;
 }) {
   const [subject, setSubject] = useState('');
-  const [scope, setScope] = useState<'institution' | 'researcher'>(initialSelectedId ? 'researcher' : 'institution');
+  const [scope, setScope] = useState<'institution' | 'researcher'>('researcher');
   const [institution, setInstitution] = useState(() => { const counts = new Map<string, number>(); professors.forEach(p => { const value = p.phd_institution_canonical || p.phd_institution; if (value && !/^\d+$/.test(value)) counts.set(value, (counts.get(value) || 0) + 1); }); return [...counts].sort((a,b) => b[1]-a[1])[0]?.[0] || ''; });
   const [level, setLevel] = useState<'phd' | 'bachelor'>('phd');
   const [spatial, setSpatial] = useState(true), [temporal, setTemporal] = useState(true);
@@ -31,7 +34,12 @@ export default function Constellation({ professors, names, releaseYear, onSelect
   const [includeInferredDepartments, setIncludeInferredDepartments] = useState(true);
   const [lifetimeStage, setLifetimeStage] = useState<LifetimeStage | 'all'>('all');
   const [rosterPage, setRosterPage] = useState(0);
-  const [query, setQuery] = useState(''), [selectedId, setSelectedId] = useState(initialSelectedId);
+  const [queryState, setQueryState] = useState({ names, text: '' });
+  const query = queryState.names === names ? queryState.text : '';
+  // Clear only the search on an authentication change, before an old name can render.
+  if (queryState.names !== names) setQueryState({ names, text: '' });
+  function setQuery(text: string) { setQueryState({ names, text }); }
+  const [selectedId, setSelectedId] = useState(initialSelectedId);
   const [hoverId, setHoverId] = useState(''), [selectedEdge, setSelectedEdge] = useState('');
   const [storedResult, setResult] = useState<(Result & { requestKey: string }) | null>(null);
   const [status, setStatus] = useState('연결을 계산하고 있습니다.'), [error, setError] = useState('');
@@ -40,21 +48,28 @@ export default function Constellation({ professors, names, releaseYear, onSelect
   const drag = useRef<{ px: number; py: number; x: number; y: number; moved: boolean } | null>(null);
   const envelopes = useRef(new Map<string, Path2D>());
   const [size, setSize] = useState({ width: 1000, height: 700 });
-  const allRecords = useMemo<ResearcherRecord[]>(() => professors.map(p => ({
-    id: p.id, subject: p.subject, phd_institution: p.phd_institution_canonical || p.phd_institution,
-    bachelor_institution: p.bachelor_institution_canonical || p.bachelor_institution, phd_year: p.phd_year,
-    phd_country: p.phd_country, bachelor_country: p.bachelor_country,
-    phd_department: p.phd_department, bachelor_department: p.bachelor_department,
-    phd_department_inferred: p.phd_department_inferred, bachelor_department_inferred: p.bachelor_department_inferred,
-    career: p.career.map(c => ({ stage: c.stage, start_year: c.start_year, end_year: c.end_year,
-      is_estimated: c.is_estimated, institution: c.institution_canonical || c.institution,
-      country: c.country, department: c.department, department_inferred: c.department_inferred,
-      evidence_basis: c.evidence_basis })),
-    faculty_appointments: (p as Professor & Pick<ResearcherRecord, 'faculty_appointments'>).faculty_appointments,
-    current_position: (p as Professor & Pick<ResearcherRecord, 'current_position'>).current_position,
-  })), [professors]);
-  const comparisonRecords = useMemo(() => allRecords.filter(p => !subject || p.subject === subject || p.id === selectedId), [allRecords, subject, selectedId]);
-  const lifetime = useMemo(() => buildLifetimeTrajectory(comparisonRecords, selectedId, { releaseYear, includeEstimated, estimatedYears: years, includeInferredDepartments }), [comparisonRecords, selectedId, releaseYear, includeEstimated, years, includeInferredDepartments]);
+  const allRecords = useMemo(() => toResearcherRecords(professors), [professors]);
+  const comparisonRecords = useMemo(() => !subject ? allRecords : allRecords.filter(p => p.subject === subject || p.id === selectedId), [allRecords, subject, selectedId]);
+  const lifetimeIndex = useMemo(() => createLifetimeIndex(comparisonRecords, { releaseYear, includeEstimated, estimatedYears: years, includeInferredDepartments }), [comparisonRecords, releaseYear, includeEstimated, years, includeInferredDepartments]);
+  const lifetime = useMemo(() => lifetimeIndex.get(selectedId), [lifetimeIndex, selectedId]);
+  const catalogRequest = useMemo(() => ({ records: allRecords, options: { releaseYear, includeEstimated, estimatedYears: years, includeInferredDepartments } }), [allRecords, releaseYear, includeEstimated, years, includeInferredDepartments]);
+  const [catalogState, setCatalogState] = useState<{ request: typeof catalogRequest; summaries: Record<string, CareerSummary> | null; progress: number; error: string } | null>(null);
+  const catalog = catalogState?.request === catalogRequest ? catalogState : null;
+
+  useEffect(() => {
+    const worker = new Worker(new URL('./constellation/catalog.worker.ts', import.meta.url), { type: 'module' });
+    let active = true;
+    const fail = () => { if (active) setCatalogState(previous => ({ request: catalogRequest, summaries: previous?.request === catalogRequest ? previous.summaries : null, progress: previous?.request === catalogRequest ? previous.progress : 0, error: '전체 경력 계산을 불러오지 못했습니다. 새로고침해 주세요.' })); };
+    worker.onmessage = ({ data }) => {
+      if (!active) return;
+      if (data.type === 'progress') setCatalogState(previous => ({ request: catalogRequest, summaries: { ...(previous?.request === catalogRequest ? previous.summaries : {}), ...data.summaries }, progress: data.progress, error: '' }));
+      if (data.type === 'result') setCatalogState({ request: catalogRequest, summaries: data.summaries, progress: 1, error: '' });
+      if (data.type === 'error') fail();
+    };
+    worker.onerror = fail;
+    worker.postMessage(catalogRequest);
+    return () => { active = false; worker.terminate(); };
+  }, [catalogRequest]);
   const lifetimeGroups = useMemo(() => lifetime.stages.filter(stage => lifetimeStage === 'all' || stage.stage === lifetimeStage).flatMap(stage => stage.groups), [lifetime, lifetimeStage]);
   const peerIds = useMemo(() => new Set([selectedId, ...lifetimeGroups.flatMap(group => group.members)]), [selectedId, lifetimeGroups]);
 
@@ -194,6 +209,11 @@ export default function Constellation({ professors, names, releaseYear, onSelect
     return nearest;
   }
   function pick(id: string) { setSelectedId(id); setSelectedEdge(''); setHoverId(''); setRosterPage(0); setLifetimeStage('all'); }
+  function openResearcher(id: string) {
+    setScope('researcher'); setSubject(''); pick(id);
+    setStatus('선택한 교수의 전체 경력 연결을 계산하고 있습니다.');
+    requestAnimationFrame(() => document.getElementById('lifetime-explorer-title')?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }));
+  }
   function filterStage(stage: LifetimeStage | 'all') { setLifetimeStage(stage); setSelectedEdge(''); setRosterPage(0); setStatus('선택한 단계의 집단을 계산하고 있습니다.'); }
   function selectEdge(id: string) {
     if (selectedEdge === id) { setSelectedEdge(''); setHoverId(''); setRosterPage(0); setCamera(initialCamera); return; }
@@ -213,7 +233,8 @@ export default function Constellation({ professors, names, releaseYear, onSelect
   const missingCount = filtered.filter(p => !p.phd_year && !p.career.some(c => c.stage === 'doctoral' && c.start_year !== null && c.end_year !== null)).length;
 
   return <section className="atlas" aria-labelledby="atlas-title">
-    <div className="atlas-heading"><div><div className="atlas-kicker">K–STEM ATLAS <span>/ {releaseYear}</span></div><h1 id="atlas-title">Career trajectory hypergraph</h1><p>연구자의 경력 단계별로 학교·학과와 활동 기간이 겹치는 집단을 탐색합니다.</p></div><div className="atlas-count"><strong>{filtered.length.toLocaleString()}</strong><span>연구자 <i>·</i> {result?.graph.edges.length.toLocaleString() ?? '…'} 하이퍼엣지</span></div></div>
+    <div className="atlas-heading"><div><div className="atlas-kicker">K–STEM ATLAS <span>/ {releaseYear}</span></div><h1 id="atlas-title">Career trajectory hypergraph</h1><p>연구자의 경력 단계별로 학교·학과와 활동 기간이 겹치는 집단을 탐색합니다.</p></div><div className="atlas-count"><strong>{professors.length.toLocaleString()}</strong><span>전체 교수 <i>·</i> 현재 그래프 {filtered.length.toLocaleString()}명</span></div></div>
+    <CareerDirectory professors={professors} names={names} summaries={catalog?.summaries || null} progress={catalog?.progress || 0} error={catalog?.error} selectedId={selectedId} onSelect={openResearcher}/>
     <div className="atlas-scope">
       <div className="atlas-segment" role="group" aria-label="탐색 범위"><button className={scope === 'institution' ? 'selected' : ''} onClick={() => recompute(() => { setScope('institution'); pick(''); })}>학교별</button><button className={scope === 'researcher' ? 'selected' : ''} onClick={() => { setScope('researcher'); setSelectedEdge(''); }}>연구자별</button></div>
       {scope === 'institution' ? <label>출신학교<select value={institution} onChange={e => recompute(() => setInstitution(e.target.value))}><option value="">학교를 선택하세요</option>{institutions.map(v => <option key={v} value={v}>{institutionDisplayName(v)}</option>)}</select></label> : <label>연구자 · 현재기관<select value={selectedId} onChange={e => { setStatus('단계별 집단을 계산하고 있습니다.'); pick(e.target.value); }}><option value="">연구자를 선택하세요</option>{professors.filter(p => !subject || p.subject === subject || p.id === selectedId).map(p => <option key={p.id} value={p.id}>{identityLabel(p.id)} · {subjects[p.subject]}</option>)}</select></label>}
