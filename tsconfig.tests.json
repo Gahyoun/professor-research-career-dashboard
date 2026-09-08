@@ -19,7 +19,7 @@
     "frontend/src/metadata.ts",
     "frontend/src/sankey.ts",
     "frontend/src/schoolIdentity.ts",
-    "frontend/src/temporalInstitutions.ts"
+    "frontend/src/institutionStatistics.ts"
   ],
   "exclude": [
     "frontend/src/constellation/layout.worker.ts"

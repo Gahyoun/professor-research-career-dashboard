@@ -7,6 +7,7 @@
   "degree_department_verified": true,
   "doctoral_period_estimated": true,
   "faculty_appointment_rule": "individual observed roster years only, plus explicitly reviewed official employment intervals; publication career stages never establish faculty employment or first assistant professorship",
+  "observed_terms_rule": "actual semester_roster terms only; term/year/semester agree, duplicates removed, no inferred terms for official profile or CV intervals",
   "current_position_rule": "latest observed roster institution/year; inferred department uses unique formal unit in the latest kept affiliation period at that institution, or explicit reviewed official current unit",
   "bachelor_department_available": false,
   "private_fields_exported": false,
@@ -23,6 +24,7 @@
     "current_positions": 3937,
     "current_positions_release_year": 3241,
     "first_assistant_professor_verified": 1,
+    "observed_faculty_appointment_terms": 17769,
     "observed_faculty_appointment_years": 10767,
     "phd_ambiguous_publication_departments": 1134,
     "phd_country_known": 3802,
@@ -37,5 +39,5 @@
     "researchers": 3937,
     "verified_faculty_intervals": 6
   },
-  "metadata_sha256": "3afbea322f6ae5e22d2ef3a148a943ff717bc61584c1e2d3079fa86cc4bf6c31"
+  "metadata_sha256": "b155652a6460ad4f7b958448e9a9f5c501f1a4b15886c99a9631276e401686fd"
 }

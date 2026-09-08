@@ -297,12 +297,18 @@ def run(args):
         current_records = {r['professor_uid']: dict(r) for r in connection.execute(
             'SELECT professor_uid,latest_term,latest_institution_unit_id FROM professors')}
     snapshots = defaultdict(lambda: defaultdict(set))
+    snapshot_terms = defaultdict(lambda: defaultdict(set))
     if 'semester_snapshots' in source_tables:
-        for snapshot in connection.execute('SELECT professor_uid,term,year,institution_unit_id,rank FROM semester_snapshots'):
+        snapshot_columns = {r[1] for r in connection.execute('PRAGMA table_info(semester_snapshots)')}
+        semester_column = 'semester' if 'semester' in snapshot_columns else 'NULL AS semester'
+        for snapshot in connection.execute(f'SELECT professor_uid,term,year,institution_unit_id,rank,{semester_column} FROM semester_snapshots'):
             if (snapshot['professor_uid'] in uid_to_public and snapshot['institution_unit_id'] in units and
                 valid_year(snapshot['year'], int(args.year)) and
-                re.fullmatch(str(snapshot['year']) + r'-(?:spring|fall)', snapshot['term'] or '')):
-                snapshots[snapshot['professor_uid']][(snapshot['year'], snapshot['institution_unit_id'])].add(snapshot['rank'])
+                re.fullmatch(str(snapshot['year']) + r'-(?:spring|fall)', snapshot['term'] or '') and
+                ('semester' not in snapshot_columns or snapshot['semester'] == snapshot['term'].split('-')[1])):
+                key = (snapshot['year'], snapshot['institution_unit_id'])
+                snapshots[snapshot['professor_uid']][key].add(snapshot['rank'])
+                snapshot_terms[snapshot['professor_uid']][key].add(snapshot['term'])
     rank_names = {'assistant': 'assistant_professor', 'associate': 'associate_professor', 'full': 'professor'}
 
     def roster_lifetime(uid, person):
@@ -316,6 +322,9 @@ def run(args):
                 'department_inferred': bool(department), 'department_evidence': basis,
                 'start_year': year, 'end_year': year, 'role': 'faculty',
                 'evidence_kind': 'semester_roster', 'evidence_status': 'observed',
+                # Actual source terms only. Annual lifetime intervals stay intact,
+                # but semester comparisons must select one of these observations.
+                'observed_terms': sorted(snapshot_terms[uid][(year, unit_id)], key=lambda term: term.endswith('-fall')),
                 'first_assistant_professor_verified': False,
             }
             if len(ranks) == 1 and next(iter(ranks)) in rank_names:
@@ -434,6 +443,7 @@ def run(args):
         }
         counts['researchers'] += 1
         counts['observed_faculty_appointment_years'] += sum(a['evidence_status'] == 'observed' for a in appointments)
+        counts['observed_faculty_appointment_terms'] += sum(len(a.get('observed_terms', [])) for a in appointments)
         counts['verified_faculty_intervals'] += sum(a['evidence_status'] == 'verified' for a in appointments)
         counts['current_positions'] += bool(current_position)
         counts['current_positions_release_year'] += bool(current_position and current_position['observation_year'] == int(args.year))
@@ -483,6 +493,7 @@ def run(args):
         'degree_department_verified': bool(counts['phd_department_verified']),
         'doctoral_period_estimated': True,
         'faculty_appointment_rule': 'individual observed roster years only, plus explicitly reviewed official employment intervals; publication career stages never establish faculty employment or first assistant professorship',
+        'observed_terms_rule': 'actual semester_roster terms only; term/year/semester agree, duplicates removed, no inferred terms for official profile or CV intervals',
         'current_position_rule': 'latest observed roster institution/year; inferred department uses unique formal unit in the latest kept affiliation period at that institution, or explicit reviewed official current unit',
         'bachelor_department_available': False,
         'private_fields_exported': False,

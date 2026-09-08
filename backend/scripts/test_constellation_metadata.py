@@ -103,7 +103,7 @@ class MetadataTests(unittest.TestCase):
                 self.assertEqual(bool(row['phd_department']), row['phd_department_inferred'])
                 self.assertGreaterEqual(row['phd_department_supporting_affiliations'], bool(row['phd_department']))
             for appointment in row['faculty_appointments']:
-                self.assertEqual(set(appointment) - {'rank'}, appointment_fields)
+                self.assertEqual(set(appointment) - {'rank', 'observed_terms'}, appointment_fields)
                 self.assertEqual(appointment['role'], 'faculty')
                 if appointment.get('first_assistant_professor_verified'):
                     self.assertEqual(appointment.get('rank'), 'assistant_professor')
@@ -114,6 +114,13 @@ class MetadataTests(unittest.TestCase):
                 if appointment['evidence_kind'] == 'semester_roster':
                     self.assertEqual(appointment['start_year'], appointment['end_year'])
                     self.assertEqual(appointment['evidence_status'], 'observed')
+                    self.assertTrue(appointment['observed_terms'])
+                    self.assertEqual(len(appointment['observed_terms']), len(set(appointment['observed_terms'])))
+                    for term in appointment['observed_terms']:
+                        self.assertRegex(term, rf"^{appointment['start_year']}-(?:spring|fall)$")
+                        self.assertLessEqual(int(term[:4]), dashboard['meta']['release_year'])
+                else:
+                    self.assertNotIn('observed_terms', appointment)
             if row['current_position']:
                 self.assertEqual(set(row['current_position']), current_fields)
                 self.assertEqual(row['current_position']['institution'], public[public_id]['current_institution'])
@@ -225,7 +232,7 @@ class MetadataTests(unittest.TestCase):
             connection = sqlite3.connect(db)
             connection.executescript("""
                 CREATE TABLE professors(professor_uid TEXT,name TEXT,latest_term TEXT,latest_institution_unit_id TEXT);
-                CREATE TABLE semester_snapshots(professor_uid TEXT,term TEXT,year INTEGER,institution_unit_id TEXT,rank TEXT);
+                CREATE TABLE semester_snapshots(professor_uid TEXT,term TEXT,year INTEGER,institution_unit_id TEXT,rank TEXT,semester TEXT);
                 CREATE TABLE institution_units(unit_id TEXT,display_name TEXT,country_code TEXT);
                 CREATE TABLE institution_aliases(raw_label TEXT,unit_id TEXT,confidence REAL);
                 CREATE TABLE education(professor_uid TEXT,degree_level TEXT,institution_raw TEXT,institution_unit_id TEXT,country TEXT,award_year INTEGER);
@@ -234,8 +241,16 @@ class MetadataTests(unittest.TestCase):
                 INSERT INTO institution_units VALUES ('degree-unit','Degree University','KR'),('current-unit','Current University','KR');
                 INSERT INTO education VALUES ('synthetic-person','phd','Degree University','degree-unit','KR',2010);
                 INSERT INTO semester_snapshots VALUES
-                    ('synthetic-person','2023-spring',2023,'current-unit','assistant'),
-                    ('synthetic-person','2024-fall',2024,'current-unit','associate');
+                    ('synthetic-person','2023-spring',2023,'current-unit','assistant','spring'),
+                    ('synthetic-person','2024-spring',2024,'current-unit','associate','spring'),
+                    ('synthetic-person','2024-fall',2024,'current-unit','associate','fall'),
+                    ('synthetic-person','2024-fall',2024,'current-unit','associate','fall'),
+                    ('synthetic-person','2023-fall',2024,'current-unit','full','fall'),
+                    ('synthetic-person','2023-fall',2023,'current-unit','full','spring'),
+                    ('synthetic-person','2023-summer',2023,'current-unit','full','summer'),
+                    ('synthetic-person','2027-spring',2027,'current-unit','full','spring'),
+                    ('synthetic-person','2026-fall-secret',2026,'current-unit','full','fall'),
+                    ('synthetic-person',NULL,2026,'current-unit','full','spring');
                 INSERT INTO raw_affiliation_units VALUES
                     ('synthetic-person','current-unit','2023-H1','Department of Physics and Astronomy','secret-work','keep');
             """)
@@ -254,6 +269,9 @@ class MetadataTests(unittest.TestCase):
             self.assertEqual([(a['start_year'], a['end_year']) for a in row['faculty_appointments']], [(2023, 2023), (2024, 2024)])
             self.assertTrue(all(a['evidence_status'] == 'observed' and not a['first_assistant_professor_verified'] for a in row['faculty_appointments']))
             self.assertEqual(row['faculty_appointments'][0]['rank'], 'assistant_professor')
+            self.assertEqual([a['observed_terms'] for a in row['faculty_appointments']],
+                             [['2023-spring'], ['2024-spring', '2024-fall']])
+            self.assertEqual(row['faculty_appointments'][1]['rank'], 'associate_professor')
             self.assertEqual(row['current_position']['institution'], 'Current University')
             self.assertEqual(row['current_position']['observation_year'], 2024)
             self.assertEqual(row['current_position']['department'], 'Department of Physics and Astronomy')
@@ -277,9 +295,10 @@ class MetadataTests(unittest.TestCase):
             self.assertEqual(row['faculty_appointments'][-1]['start_year'], 2001)
             self.assertEqual(row['faculty_appointments'][-1]['evidence_status'], 'verified')
             self.assertNotIn('rank', row['faculty_appointments'][-1])
+            self.assertNotIn('observed_terms', row['faculty_appointments'][-1])
             self.assertFalse(row['current_position']['department_inferred'])
             self.assertEqual(row['current_position']['observation_year'], 2026)
-            for secret in ['synthetic-person', 'Private Synthetic Name', 'secret-work', 'https://example.edu']:
+            for secret in ['synthetic-person', 'Private Synthetic Name', 'secret-work', 'https://example.edu', '2026-fall-secret']:
                 self.assertNotIn(secret, args.output.read_text())
             # Reviewed claims must still match the exact release, person, degree,
             # country and interval; failed imports leave previous bytes untouched.
