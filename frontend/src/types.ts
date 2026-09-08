@@ -17,6 +17,7 @@ export type FacultyAppointment = {
   institution: string; institution_canonical?: string | null; country: string | null;
   department?: string | null; department_inferred?: boolean; department_evidence?: string;
   start_year: number; end_year: number; role: 'faculty';
+  observed_terms?: string[];
   evidence_kind: 'semester_roster' | 'official_profile' | 'verified_cv'; evidence_status: 'observed' | 'verified';
   rank?: 'assistant_professor' | 'associate_professor' | 'professor'; first_assistant_professor_verified?: boolean;
 };

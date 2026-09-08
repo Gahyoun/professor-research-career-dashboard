@@ -5,6 +5,8 @@ export const INSTITUTION_SUCCESSIONS = [
   {
     id: 'gnu-2021', effectiveDate: '2021-03-01', effectiveYear: 2021,
     label: '경상국립대학교',
+    seriesAnchorLabel: 'Gyeongsang National University',
+    predecessorNames: ['경남과학기술대학교', '경남과학기술대', '경남과기대', 'Gyeongnam National University of Science and Technology'],
     source: 'https://www.gnu.ac.kr/archives/cm/cntnts/cntntsView.do?cntntsId=3998&mi=7470',
     names: ['경상국립대학교', '경상국립대', '경상대학교', '경상대', 'Gyeongsang National University',
       '경남과학기술대학교', '경남과학기술대', '경남과기대', 'Gyeongnam National University of Science and Technology'],
@@ -12,6 +14,8 @@ export const INSTITUTION_SUCCESSIONS = [
   {
     id: 'kangwon-2026', effectiveDate: '2026-03-01', effectiveYear: 2026,
     label: '강원대학교 (통합)',
+    seriesAnchorLabel: 'Kangwon National University',
+    predecessorNames: ['Gangneung-Wonju National University', '국립강릉원주대학교', '강릉원주대학교', '강릉원주대'],
     source: 'https://home.kangwon.ac.kr/',
     names: ['강원대학교 (통합)', '통합강원대', '강원대학교', '강원대', 'Kangwon National University',
       'Gangneung-Wonju National University', '국립강릉원주대학교', '강릉원주대학교', '강릉원주대'],

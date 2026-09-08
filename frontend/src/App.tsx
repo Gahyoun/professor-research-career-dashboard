@@ -221,7 +221,7 @@ export default function App() {
           <button className={viewMode === 'constellation' ? 'active' : ''} onClick={() => setViewMode('constellation')}>경력 하이퍼그래프</button>
           <button className={viewMode === 'individual' || viewMode === 'group' ? 'active' : ''} onClick={() => setViewMode('individual')}>경력과 논문</button>
           <button className={viewMode === 'sankey' ? 'active' : ''} onClick={() => setViewMode('sankey')}>학력·임용 흐름</button>
-          <button className={viewMode === 'institutions' ? 'active' : ''} onClick={() => setViewMode('institutions')}>기관 시계열</button>
+          <button className={viewMode === 'institutions' ? 'active' : ''} onClick={() => setViewMode('institutions')}>기관 인력 통계</button>
           <span className="atlas-access" role="status" title={message}>{names ? '실명 보기 활성화' : '익명으로 탐색 중'}</span>
         </nav>
         <p className="atlas-auth-message" role="status">{message}</p>

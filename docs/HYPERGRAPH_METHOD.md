@@ -69,7 +69,7 @@ University succession changes current display units and exempts specified post-m
 score = shared distinct unit-years / union distinct unit-years
 ```
 
-Each peer carries matching institution, country, department, both career stages, shared year interval, and estimated/inferred flags. Unknown units or invalid dates are excluded, and coverage diagnostics identify why. Actual doctoral intervals can use degree metadata only when they refer to the same recorded/canonical doctoral institution. Current faculty department is never imported into degree history. Country-less postdoc/faculty intervals remain excluded. These generic school-and-department observations support the institutional time-series page; the person-focused UI uses the lifetime groups above rather than presenting this Jaccard score as its connection criterion.
+Each peer carries matching institution, country, department, both career stages, shared year interval, and estimated/inferred flags. Unknown units or invalid dates are excluded, and coverage diagnostics identify why. Actual doctoral intervals can use degree metadata only when they refer to the same recorded/canonical doctoral institution. Current faculty department is never imported into degree history. Country-less postdoc/faculty intervals remain excluded. This generic helper is separate from the person-focused lifetime groups. The institutional statistics page uses actual same-semester roster observations from its own aggregation module, not these reconstructed career intervals or a hypergraph score.
 
 ## Complexity and validation
 
