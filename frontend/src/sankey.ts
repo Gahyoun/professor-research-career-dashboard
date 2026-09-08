@@ -1,3 +1,5 @@
+import { institutionDisplayName } from './schoolIdentity';
+
 /** Pure, deterministic aggregation of the public release. No private name data. */
 export type SankeyPerson = {
   id: string; subject: string; bachelor_institution: string | null;
@@ -9,7 +11,14 @@ export type Region = 'domestic' | 'us' | 'europe' | 'japan-china' | 'foreign' | 
 export type Origin = 'snu' | 'kaist' | 'postech' | 'yonsei' | 'korea' | 'other';
 export const STAGES: FlowStage[] = ['bachelor', 'phd', 'current'];
 export const STAGE_LABELS: Record<FlowStage, string> = { bachelor: '학사', phd: '박사', current: '현재 재직' };
-export const ORIGIN_LABELS: Record<Origin, string> = { snu: '서울대', kaist: 'KAIST', postech: 'POSTECH', yonsei: '연세대', korea: '고려대', other: '그 외 학부' };
+export const ORIGIN_LABELS: Record<Origin, string> = {
+  snu: institutionDisplayName('Seoul National University'),
+  kaist: institutionDisplayName('Korea Advanced Institute of Science and Technology'),
+  postech: institutionDisplayName('Pohang University of Science and Technology'),
+  yonsei: institutionDisplayName('Yonsei University'),
+  korea: institutionDisplayName('Korea University'),
+  other: '그 외 학부',
+};
 export const ORIGIN_COLORS: Record<Origin, string> = { snu: '#163c7a', kaist: '#087e9b', postech: '#a94269', yonsei: '#256ef4', korea: '#8f4754', other: '#8796a6' };
 export const SUBJECT_LABELS: Record<string, string> = { mathematics: '수학', physics: '물리학', chemistry: '화학', biology: '생물학' };
 const REGION_LABELS: Record<Region, string> = { domestic: '국내', us: '미국', europe: '유럽', 'japan-china': '일본·중국', foreign: '기타 해외', unknown: '국가 미확인' };
@@ -20,9 +29,7 @@ export function isMissingInstitution(value: string | null | undefined): boolean 
   return value == null || missingTokens.has(normalize(String(value)));
 }
 const ALIASES: Record<string, string> = {};
-const LABELS: Record<string, string> = {};
 function alias(id: string, label: string, values: string[]) {
-  LABELS[id] = label;
   for (const value of [...values, label]) ALIASES[normalize(value)] = id;
 }
 // Deliberate alias list. Regional campuses remain distinct, including Mirae/Sejong.
@@ -53,7 +60,7 @@ export function institutionKey(value: string): string {
 }
 export function institutionLabel(value: string): string {
   if (/^\d+(?:\.0)?$/.test(value.trim())) return '기관명 미확인';
-  return LABELS[institutionKey(value)] ?? value.trim();
+  return institutionDisplayName(value);
 }
 export function countryRegion(value?: string | null): Region {
   if (!value || missingTokens.has(normalize(value))) return 'unknown';
@@ -189,18 +196,22 @@ export function ribbonPath(sourceX: number, targetX: number, sourceY: number, ta
   const mid = (sourceX + targetX) / 2;
   return `M${sourceX},${sourceY} C${mid},${sourceY} ${mid},${targetY} ${targetX},${targetY} L${targetX},${targetY + height} C${mid},${targetY + height} ${mid},${sourceY + height} ${sourceX},${sourceY + height} Z`;
 }
-export function layoutSankey(data: SankeyData): SankeyLayout {
-  const width = 1400, top = 44, bottom = 34, gap = 22;
+export function layoutSankey(data: SankeyData, labelHeights: ReadonlyMap<string, number> = new Map()): SankeyLayout {
+  const width = 1540, top = 44, bottom = 34, gap = 22;
   const groups = STAGES.map(s => data.nodes.filter(n => n.stage === s).sort((a, b) => b.count - a.count || lexical(a.id, b.id)));
   const maxNodes = Math.max(1, ...groups.map(g => g.length));
-  const height = Math.max(710, maxNodes * 36 + 200);
-  const scale = data.count ? (height - top - bottom - (maxNodes - 1) * gap) / data.count : 0;
+  const baseHeight = Math.max(710, maxNodes * 36 + 200);
+  const scale = data.count ? (baseHeight - top - bottom - (maxNodes - 1) * gap) / data.count : 0;
+  // Reserve room for complete, wrapped labels; every ribbon still uses one common person-to-width scale.
+  const slotHeight = (node: FlowNode) => Math.max(node.count * scale, labelHeights.get(node.id) ?? 0);
+  const usedHeight = (group: FlowNode[]) => group.reduce((sum, node) => sum + slotHeight(node), 0) + Math.max(0, group.length - 1) * gap;
+  const height = Math.max(baseHeight, top + bottom + Math.max(0, ...groups.map(usedHeight)));
   const positions = new Map<string, number>();
   const place = () => {
     for (const group of groups) {
-      const used = data.count * scale + Math.max(0, group.length - 1) * gap;
+      const used = usedHeight(group);
       let y = top + (height - top - bottom - used) / 2;
-      for (const n of group) { positions.set(n.id, y + n.count * scale / 2); y += n.count * scale + gap; }
+      for (const n of group) { positions.set(n.id, y + slotHeight(n) / 2); y += slotHeight(n) + gap; }
     }
   };
   place();
@@ -222,7 +233,7 @@ export function layoutSankey(data: SankeyData): SankeyLayout {
       place();
     }
   }
-  const xs = [220, 700, 1180], nodeWidth = 12;
+  const xs = [260, 770, 1260], nodeWidth = 12;
   const nodes: PositionedNode[] = groups.flatMap((group, i) => group.map(n => ({ ...n, x: xs[i], y: positions.get(n.id)! - n.count * scale / 2, height: n.count * scale, labelY: positions.get(n.id)! })));
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
   const sy = new Map<string, number>(), ty = new Map<string, number>();
