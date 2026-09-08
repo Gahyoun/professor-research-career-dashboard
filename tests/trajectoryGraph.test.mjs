@@ -1,42 +1,45 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {buildTrajectoryHypergraph} from '../work/test-dist/constellation/trajectoryGraph.js';
-const record=(id,phd_institution,phd_year,start=2000,end=2002,institution='Harvard',country='US',department)=>({
-  id,phd_institution,phd_country:'US',phd_year,career:[{stage:'postdoc',institution,country,department,start_year:start,end_year:end,is_estimated:false}],
+import { buildTrajectoryHypergraph } from '../work/test-dist/constellation/trajectoryGraph.js';
+import { buildLifetimeTrajectory } from '../work/test-dist/constellation/lifetime.js';
+const student=(id,start,end)=>({id,phd_institution:'School',phd_country:'US',phd_department:'Physics',phd_year:end,career:[{stage:'doctoral',institution:'School',country:'US',department:'Physics',start_year:start,end_year:end,is_estimated:false}]});
+
+test('a whole selected stage interval is one edge with each peer overlap, not annual memberships',()=>{
+  const rows=[student('A',2000,2010),student('B',2000,2002),student('C',2008,2010)];
+  const graph=buildTrajectoryHypergraph(rows,'A');
+  const lifetime=buildLifetimeTrajectory(rows,'A');
+  assert.equal(graph.edges.length,1);const edge=graph.edges[0];
+  assert.equal(edge.id,lifetime.stages[0].groups[0].id);
+  assert.equal(edge.lifetimeStage,'doctoral');assert.equal(edge.temporalSemantics,'selected_interval_union');
+  assert.deepEqual(edge.members,[0,1,2]);assert.deepEqual(graph.incidence,[[0],[0],[0]]);
+  assert.deepEqual(edge.memberEvidence.map(e=>[e.peerId,e.startYear,e.endYear]),[['B',2000,2002],['C',2008,2010]]);
+  assert.equal(edge.startYear,2000);assert.equal(edge.endYear,2010);
+  assert.equal(edge.weight,1.5);assert.equal(edge.sizeAdjustment,.5);
 });
 
-test('shared postdoc becomes a true cohort despite disjoint doctoral schools/eras',()=>{
-  const graph=buildTrajectoryHypergraph([record('A','Oxford',1995),record('B','MIT',2010)],'A');
-  assert.equal(graph.edges.length,1);assert.equal(graph.edges[0].kind,'cohort');
-  assert.deepEqual(graph.edges[0].members,[0,1]);assert.deepEqual(graph.edges[0].years,[2000,2001,2002]);
-  assert.deepEqual(graph.incidence,[[0],[0]]);assert.equal(graph.edges[0].weight,2);
-  assert.deepEqual(graph.nodes.map(n=>n.layoutYear),[2001,2001]);
-});
-
-test('era, school and domestic department mismatches never create a cohort',()=>{
-  const rows=[record('A','X',1990,2000,2002,'SNU','KR','Physics'),record('B','Y',2010,2003,2005,'SNU','KR','Physics'),record('C','Z',2020,2000,2002,'SNU','KR','Math'),record('D','Q',2030,2000,2002,'KAIST','KR','Physics')];
-  const graph=buildTrajectoryHypergraph(rows,'A');assert.equal(graph.edges.length,0);assert.equal(graph.nodes.length,4);assert.equal(graph.diagnostics.isolatedCount,4);
-});
-
-test('annual memberships are exact and deduplicate only within the same unit',()=>{
-  const graph=buildTrajectoryHypergraph([record('A','X',1990,2000,2004),record('B','Y',2010,2000,2002),record('C','Z',2020,2002,2004)],'A');
-  assert.equal(graph.edges.length,3);
-  assert.deepEqual(graph.edges.map(e=>[e.years,e.members]),[[[2000,2001],[0,1]],[[2002],[0,1,2]],[[2003,2004],[0,2]]]);
+test('postdoc institution exception crosses departments and stays separated from doctoral stage',()=>{
+  const rows=[student('A',2000,2005),student('B',2001,2006)];
+  rows[0].career.push({stage:'postdoc',institution:'Institute',country:'US',start_year:2008,end_year:2010,is_estimated:false});
+  rows[1].career.push({stage:'postdoc',institution:'Institute',country:'US',department:'Unrelated',start_year:2009,end_year:2011,is_estimated:false});
+  const graph=buildTrajectoryHypergraph(rows,'A');
+  assert.deepEqual(graph.edges.map(e=>e.lifetimeStage),['doctoral','postdoc']);
   assert.ok(graph.edges.every(e=>e.overlapAdjustment<1));
+  const filtered=buildTrajectoryHypergraph(rows,'A',{stages:['postdoc']});
+  assert.equal(filtered.edges.length,1);assert.equal(filtered.edges[0].lifetimeStage,'postdoc');
 });
 
-test('duplicates never duplicate selected/peer members and private names are stripped',()=>{
-  const a={...record('A','X',1990),name:'DO NOT COPY'},b=record('B','Y',2010);
+test('duplicates do not duplicate memberships and raw private fields never propagate',()=>{
+  const a={...student('A',2000,2005),name:'PRIVATE NAME',url:'PRIVATE URL'},b=student('B',2001,2006);
   const graph=buildTrajectoryHypergraph([a,a,b,b],'A');
   assert.equal(graph.nodes.length,2);assert.equal(graph.diagnostics.duplicateIdsCount,2);
-  assert.deepEqual(graph.edges[0].members,[0,1]);assert.ok(!JSON.stringify(graph).includes('DO NOT COPY'));
+  assert.deepEqual(graph.edges[0].members,[0,1]);assert.ok(!JSON.stringify(graph).includes('PRIVATE'));
 });
 
-test('inferred domestic units remain opt-in and unknown countries excluded',()=>{
-  const rows=[record('A','X',1990,2000,2002,'SNU','KR','Physics'),record('B','Y',2010,2000,2002,'SNU','KR','Physics')];
-  rows.forEach(r=>r.career[0].department_inferred=true);
+test('inferred doctoral departments stay opt-in and unknown countries never form a group',()=>{
+  const rows=[student('A',2000,2005),student('B',2001,2006)];
+  rows.forEach(r=>{r.phd_department_inferred=true;r.career[0].department_inferred=true});
   assert.equal(buildTrajectoryHypergraph(rows,'A').edges.length,0);
   assert.equal(buildTrajectoryHypergraph(rows,'A',{includeInferredDepartments:true}).edges[0].inferredDepartment,true);
-  rows[1].career[0].country=null;
+  rows[1].phd_country=null;rows[1].career[0].country=null;
   assert.equal(buildTrajectoryHypergraph(rows,'A',{includeInferredDepartments:true}).edges.length,0);
 });

@@ -1,5 +1,6 @@
 import { buildResearcherTrajectory, normalizeInstitution } from './constellation/hypergraph.js';
 import type { ResearcherRecord, TrajectoryInterval, TrajectoryCoverage } from './constellation/hypergraph.js';
+import { isInstitutionSuccession } from './institutionSuccession.js';
 
 export type TemporalOptions = { releaseYear: number; subject?: string; includeEstimated?: boolean; includeInferredDepartments?: boolean };
 export type InstitutionYear = {
@@ -8,6 +9,7 @@ export type InstitutionYear = {
   jaccard: number | null; turnover: number | null; retained: number;
   hyperedgeContinuity: number | null;
   entries: number | null; exits: number | null; leftCensored: number; rightCensored: number;
+  mergerEntries: number; mergerExits: number;
   crossDepartmentPeople: number | null; crossDepartmentShare: number | null;
   stageDiversity: number | null; stages: Record<'doctoral' | 'postdoc' | 'faculty', number>;
 };
@@ -50,6 +52,8 @@ export function buildTemporalInstitutions(records: readonly ResearcherRecord[], 
   const catalogue = new Map<string, { label: string; country: string; people: Set<string> }>();
   const membership = new Map<string, Map<number, AnnualMembership>>();
   const observable = new Map<string, Set<number>>();
+  // Exact annual records only: succession never fills gaps or extends employment.
+  const observedSchools = new Map<string, Map<number, Map<string, { label: string; country: string }>>>();
   const eligiblePeople = new Set<string>();
   for (const p of people) {
     // The permissive catalogue keeps a school selectable when strict filters exclude all its records.
@@ -69,8 +73,11 @@ export function buildTemporalInstitutions(records: readonly ResearcherRecord[], 
       const key = schoolKey(i);
       if (!membership.has(key)) membership.set(key, new Map());
       if (!observable.has(p.id)) observable.set(p.id, new Set());
+      if (!observedSchools.has(p.id)) observedSchools.set(p.id, new Map());
       for (let year = i.startYear; year <= end; year++) {
         observable.get(p.id)!.add(year);
+        if (!observedSchools.get(p.id)!.has(year)) observedSchools.get(p.id)!.set(year, new Map());
+        observedSchools.get(p.id)!.get(year)!.set(key, { label: i.institution, country: i.country });
         if (!membership.get(key)!.has(year)) membership.get(key)!.set(year, new Map());
         const annual = membership.get(key)!.get(year)!;
         if (!annual.has(p.id)) annual.set(p.id, { units: new Set(), stages: new Set(), observed: false, estimated: false, inferred: false });
@@ -100,14 +107,20 @@ export function buildTemporalInstitutions(records: readonly ResearcherRecord[], 
         if (member.inferred) inferredDepartmentPeople++;
         if (member.units.size >= 2) crossDepartmentPeople++;
       }
-      let retained = 0, entries = 0, exits = 0, leftCensored = 0, rightCensored = 0;
+      let retained = 0, entries = 0, exits = 0, mergerEntries = 0, mergerExits = 0, leftCensored = 0, rightCensored = 0;
+      const successionAt = (pid: string, observationYear: number, entering: boolean) =>
+        [...(observedSchools.get(pid)?.get(observationYear) ?? new Map()).entries()]
+          .some(([otherId, other]) => otherId !== id && school.country === 'KR' && other.country === school.country &&
+            isInstitutionSuccession(entering ? other.label : school.label, entering ? school.label : other.label, year));
       for (const pid of current) {
         if (previous.has(pid)) retained++;
+        else if (successionAt(pid, year - 1, true)) mergerEntries++;
         else if (year > start && observable.get(pid)?.has(year - 1)) entries++;
         else leftCensored++;
       }
       for (const pid of previous) if (!current.has(pid)) {
-        if (observable.get(pid)?.has(year)) exits++;
+        if (successionAt(pid, year, false)) mergerExits++;
+        else if (observable.get(pid)?.has(year)) exits++;
         else rightCensored++;
       }
       const sizes = [...units.values()].map(u => u.size), multi = sizes.filter(n => n >= 2);
@@ -118,9 +131,9 @@ export function buildTemporalInstitutions(records: readonly ResearcherRecord[], 
         meanHyperedgeSize: multi.length ? multi.reduce((a, b) => a + b, 0) / multi.length : null,
         largestHyperedge: multi.length ? Math.max(...multi) : 0, jaccard: similarity, turnover: similarity === null ? null : 1 - similarity,
         hyperedgeContinuity: year === start ? null : nodeOverlapAwareSimilarity(previousGroups, currentGroups),
-        retained, entries: year === start ? null : entries, exits: year === start ? null : exits, leftCensored, rightCensored,
-        crossDepartmentPeople: school.country === 'KR' ? crossDepartmentPeople : null,
-        crossDepartmentShare: school.country === 'KR' && current.size ? crossDepartmentPeople / current.size : null,
+        retained, entries: year === start ? null : entries, exits: year === start ? null : exits, mergerEntries, mergerExits, leftCensored, rightCensored,
+        crossDepartmentPeople,
+        crossDepartmentShare: current.size ? crossDepartmentPeople / current.size : null,
         stageDiversity: normalizedStageEntropy(stages), stages });
       previous = current;
       previousGroups = currentGroups;

@@ -1,11 +1,13 @@
 import { canonicalSchool } from './schoolIdentity';
-import type { Dashboard } from './types';
+import type { Dashboard, FacultyAppointment, CurrentPosition } from './types';
+import { applyInstitutionSuccessions } from './institutionSuccession';
 
 type UnitMetadata = {
   country: string | null; department: string | null; department_inferred: boolean;
   department_evidence: string; institution_canonical?: string | null;
 };
 export type ResearcherMetadata = {
+  faculty_appointments?: FacultyAppointment[]; current_position?: CurrentPosition | null;
   phd_country: string | null; phd_department: string | null; phd_department_inferred: boolean;
   phd_department_evidence: string; phd_institution_canonical?: string | null;
   bachelor_country: string | null; bachelor_department: string | null; bachelor_department_inferred: boolean;
@@ -18,6 +20,7 @@ export function mergeMetadata(dashboard: Dashboard, metadata: Record<string, Res
   if (Object.keys(metadata).length !== dashboard.professors.length || dashboard.professors.some(p => !metadata[p.id])) throw new Error('Metadata researcher mismatch');
   return { ...dashboard, professors: dashboard.professors.map(p => {
     const m = metadata[p.id];
+    if (m.current_position && m.current_position.institution !== p.current_institution) throw new Error('Metadata current position mismatch');
     const career = p.career.map((c, i) => {
       const row = m.career_units.find(r => r.segment_index === i);
       if (!row || row.institution !== c.institution || row.start_year !== c.start_year || row.end_year !== c.end_year) throw new Error('Metadata career mismatch');
@@ -28,7 +31,9 @@ export function mergeMetadata(dashboard: Dashboard, metadata: Record<string, Res
       phd_department_evidence: m.phd_department_evidence, phd_institution_canonical: canonicalSchool(p.phd_institution),
       bachelor_country: m.bachelor_country, bachelor_department: m.bachelor_department, bachelor_department_inferred: m.bachelor_department_inferred,
       bachelor_department_evidence: m.bachelor_department_evidence, bachelor_institution_canonical: canonicalSchool(p.bachelor_institution),
-      current_country: career.filter(c => c.stage === 'faculty' && c.institution === p.current_institution).at(-1)?.country ?? null,
+      faculty_appointments: (m.faculty_appointments ?? []).map(a => ({ ...a, institution_canonical: canonicalSchool(a.institution) })),
+      current_position: m.current_position ? { ...m.current_position, institution_canonical: canonicalSchool(m.current_position.institution) } : null,
+      current_country: m.current_position?.country ?? null,
       career,
     };
   }) };
@@ -51,6 +56,6 @@ export async function loadDashboard(base: string): Promise<{ dashboard: Dashboar
     const [metadataText, manifest] = await Promise.all([supplementary[0].text(), supplementary[1].json()]);
     const [publicHash, metadataHash] = await Promise.all([sha256(publicText), sha256(metadataText)]);
     if (manifest.release_year !== dashboard.meta.release_year || manifest.public_data_sha256 !== publicHash || manifest.metadata_sha256 !== metadataHash) throw new Error('Supplement version mismatch');
-    return { dashboard: mergeMetadata(dashboard, JSON.parse(metadataText)), metadataAvailable: true };
-  } catch { return { dashboard, metadataAvailable: false }; }
+    return { dashboard: applyInstitutionSuccessions(mergeMetadata(dashboard, JSON.parse(metadataText))), metadataAvailable: true };
+  } catch { return { dashboard: applyInstitutionSuccessions(dashboard), metadataAvailable: false }; }
 }

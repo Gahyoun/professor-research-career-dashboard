@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Export anonymous institution/department evidence without opening name fields.
+"""Export anonymous institution, department and observed employment evidence.
 
 The private source is read-only; the existing HMAC salt is read only in memory.
+Names are read only to validate optional private reviewed evidence, never exported.
 Paper affiliations are explicitly inferred units, never verified degree units.
 """
 from __future__ import annotations
@@ -111,6 +112,62 @@ def validate_verified_record(record, *, uid, public_id, person_name, institution
     return record['department'].strip()
 
 
+
+def valid_year(value, release_year):
+    return type(value) is int and 1900 <= value <= release_year
+
+
+def load_lifetime_overlay(path, *, public_hash, uid_to_public, private_names, public, release_year):
+    """Read explicitly reviewed private primary-source evidence, never scrape it.
+
+    Review establishes the evidence. This loader only enforces person/snapshot
+    anchors and safe structured fields; a JSON assertion is not authentication.
+    """
+    if not path:
+        return defaultdict(list)
+    data = json.loads(path.read_text())
+    if data.get('schema_version') != 1 or data.get('public_data_sha256') != public_hash or not isinstance(data.get('records'), list):
+        raise ValueError('Lifetime overlay version/public release mismatch; no output written.')
+    records = defaultdict(list)
+    for record in data['records']:
+        uid = record.get('professor_uid')
+        public_id = uid_to_public.get(uid)
+        person = public.get(public_id, {})
+        url = urlparse(record.get('source_url') or '')
+        if (not public_id or record.get('anon_id') != public_id or
+            not private_names.get(uid) or norm(record.get('person_name')) != norm(private_names[uid]) or
+            record.get('verification_status') != 'verified' or
+            record.get('evidence_kind') not in {'official_profile', 'verified_cv'} or
+            not re.fullmatch(r'\d{4}-\d{2}-\d{2}T[^ ]+', record.get('checked_at') or '') or
+            url.scheme != 'https' or not url.hostname or url.username or url.password):
+            raise ValueError('Lifetime overlay person/review/source mismatch; no output written.')
+        kind = record.get('kind')
+        department = record.get('department')
+        if (kind not in {'phd_department', 'faculty_appointment', 'current_position'} or
+            not isinstance(record.get('institution'), str) or not record['institution'].strip() or
+            not re.fullmatch(r'[A-Z]{2}', record.get('country') or '') or
+            not isinstance(department, str) or not 1 <= len(department) <= 150 or
+            re.search(r'https?://|@|[\r\n]', department) or
+            not re.search(r'\b(?:Department|School|Division)\b|(?:학과|학부|전공)', department, re.I)):
+            raise ValueError('Lifetime overlay invalid structured claim; no output written.')
+        if kind == 'phd_department':
+            if (not valid_year(record.get('award_year'), release_year) or record['award_year'] != person.get('phd_year') or
+                norm(record['institution']) != norm(person.get('phd_institution'))):
+                raise ValueError('Lifetime overlay degree anchor mismatch; no output written.')
+        elif kind == 'faculty_appointment':
+            if (not valid_year(record.get('start_year'), release_year) or not valid_year(record.get('end_year'), release_year) or
+                record['start_year'] > record['end_year'] or
+                record.get('rank') not in {None, 'assistant_professor', 'associate_professor', 'professor'} or
+                ('first_assistant_professor_verified' in record and type(record['first_assistant_professor_verified']) is not bool) or
+                (record.get('first_assistant_professor_verified') and
+                 (record.get('rank') != 'assistant_professor' or record.get('first_assistant_evidence') != 'complete_prior_employment_history_reviewed'))):
+                raise ValueError('Lifetime overlay employment interval/first-rank mismatch; no output written.')
+        elif (not valid_year(record.get('observation_year'), release_year) or
+              norm(record['institution']) != norm(person.get('current_institution'))):
+            raise ValueError('Lifetime overlay current institution/year mismatch; no output written.')
+        records[uid].append(record)
+    return records
+
 def run(args):
     private_root = args.private_project.resolve()
     public_path = args.public_data.resolve()
@@ -167,6 +224,15 @@ def run(args):
                 if row['professor_uid'] in verified_records:
                     private_person_names[row['professor_uid']] = row['name']
 
+    lifetime_path = getattr(args, 'lifetime_evidence_json', None)
+    if lifetime_path:
+        # Read private names only to validate explicitly reviewed source records.
+        for private_person in connection.execute('SELECT professor_uid,name FROM professors'):
+            private_person_names[private_person['professor_uid']] = private_person['name']
+    lifetime_records = load_lifetime_overlay(lifetime_path,
+        public_hash=hashlib.sha256(public_bytes).hexdigest(), uid_to_public=uid_to_public,
+        private_names=private_person_names, public=public, release_year=int(args.year))
+
     # Kept author-level source affiliations only. No raw strings, names, URLs,
     # OpenAlex identifiers, source work identifiers or plaintext name map is read.
     evidence = defaultdict(list)
@@ -222,6 +288,69 @@ def run(args):
             return next(iter(candidates.values())), evidence_count, 'kept_author_affiliation_same_institution_and_period'
         return None, 0, 'no_formal_department_evidence'
 
+    # Snapshot evidence is independent of publication-derived career positions.
+    # Older test/source schemas without roster columns fail closed to no links.
+    source_tables = {r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    professor_columns = {r[1] for r in connection.execute('PRAGMA table_info(professors)')}
+    current_records = {}
+    if {'latest_term', 'latest_institution_unit_id'} <= professor_columns:
+        current_records = {r['professor_uid']: dict(r) for r in connection.execute(
+            'SELECT professor_uid,latest_term,latest_institution_unit_id FROM professors')}
+    snapshots = defaultdict(lambda: defaultdict(set))
+    if 'semester_snapshots' in source_tables:
+        for snapshot in connection.execute('SELECT professor_uid,term,year,institution_unit_id,rank FROM semester_snapshots'):
+            if (snapshot['professor_uid'] in uid_to_public and snapshot['institution_unit_id'] in units and
+                valid_year(snapshot['year'], int(args.year)) and
+                re.fullmatch(str(snapshot['year']) + r'-(?:spring|fall)', snapshot['term'] or '')):
+                snapshots[snapshot['professor_uid']][(snapshot['year'], snapshot['institution_unit_id'])].add(snapshot['rank'])
+    rank_names = {'assistant': 'assistant_professor', 'associate': 'associate_professor', 'full': 'professor'}
+
+    def roster_lifetime(uid, person):
+        appointments = []
+        for (year, unit_id), ranks in sorted(snapshots[uid].items()):
+            ids = {unit_id}
+            department, _, basis = infer_department(uid, ids, f'{year}-H1', f'{year}-H2')
+            item = {
+                'institution': canonical_institution(ids), 'institution_canonical': canonical_institution(ids),
+                'country': resolved_country(ids), 'department': department,
+                'department_inferred': bool(department), 'department_evidence': basis,
+                'start_year': year, 'end_year': year, 'role': 'faculty',
+                'evidence_kind': 'semester_roster', 'evidence_status': 'observed',
+                'first_assistant_professor_verified': False,
+            }
+            if len(ranks) == 1 and next(iter(ranks)) in rank_names:
+                item['rank'] = rank_names[next(iter(ranks))]
+            appointments.append(item)
+        current = current_records.get(uid)
+        position = None
+        term = re.fullmatch(r'(\d{4})-(?:spring|fall)', (current or {}).get('latest_term') or '')
+        if current and term and valid_year(int(term[1]), int(args.year)) and current['latest_institution_unit_id'] in units:
+            year = int(term[1])
+            ids = {current['latest_institution_unit_id']}
+            # Retain the public current-institution anchor (including deliberate
+            # existing campus/successor naming), never the last paper institution.
+            institution = person.get('current_institution')
+            current_unit = current['latest_institution_unit_id']
+            observed = (year, current_unit) in snapshots[uid]
+            if institution and observed:
+                periods = [p for p, _, _, _ in evidence[(uid, current_unit)] if p <= f'{year}-H2']
+                latest_period = max(periods, default=None)
+                department, _, basis = infer_department(uid, ids, latest_period, latest_period)
+                position = {
+                    'institution': institution, 'institution_canonical': institution,
+                    'country': resolved_country(ids), 'department': department,
+                    'department_inferred': bool(department), 'department_evidence': basis,
+                    'department_observation_year': int(latest_period[:4]) if department else None,
+                    'observation_year': year, 'evidence_kind': 'semester_roster', 'evidence_status': 'observed',
+                }
+        return appointments, position
+
+    def checked_lifetime_record(record, ids):
+        # Exact institution resolution also checks country consistency. No fuzzy
+        # school aliases, current-subject substitutions or historical mergers.
+        if len(ids) != 1 or resolved_country(ids) != record['country']:
+            raise ValueError('Lifetime overlay institution/country mismatch; no output written.')
+
     output = {}
     counts = Counter()
     for uid, public_id in uid_to_public.items():
@@ -246,8 +375,47 @@ def run(args):
             if verified_department and norm(verified_department) != norm(candidate):
                 raise ValueError('Conflicting verified degree departments; no output written.')
             verified_department = candidate
+        for record in lifetime_records.get(uid, []):
+            if record['kind'] == 'phd_department':
+                if not phd or phd.get('award_year') != record['award_year']:
+                    raise ValueError('Lifetime overlay private degree anchor mismatch; no output written.')
+                checked_lifetime_record(record, phd_units)
+                if phd_country != record['country'] or (verified_department and norm(verified_department) != norm(record['department'])):
+                    raise ValueError('Conflicting verified degree departments; no output written.')
+                verified_department = record['department']
         if verified_department:
             department, support, basis = verified_department, 0, 'verified_degree_record'
+        appointments, current_position = roster_lifetime(uid, person)
+        verified_current = None
+        for record in lifetime_records.get(uid, []):
+            if record['kind'] == 'phd_department':
+                continue
+            ids = resolve_units(record['institution'])
+            checked_lifetime_record(record, ids)
+            common = {
+                'institution': record['institution'], 'institution_canonical': record['institution'],
+                'country': record['country'], 'department': record['department'],
+                'department_inferred': False, 'department_evidence': 'verified_official_profile',
+                'evidence_kind': record['evidence_kind'], 'evidence_status': 'verified',
+            }
+            if record['kind'] == 'faculty_appointment':
+                appointment = {**common, 'start_year': record['start_year'], 'end_year': record['end_year'],
+                    'role': 'faculty', 'first_assistant_professor_verified': record.get('first_assistant_professor_verified', False)}
+                if record.get('rank'):
+                    appointment['rank'] = record['rank']
+                if appointment not in appointments:
+                    appointments.append(appointment)
+            else:
+                if current_position and record['observation_year'] < current_position['observation_year']:
+                    raise ValueError('Current official evidence predates the latest roster observation; no output written.')
+                if verified_current is not None and verified_current != {**common, 'observation_year': record['observation_year'], 'department_observation_year': record['observation_year']}:
+                    raise ValueError('Conflicting current position evidence; no output written.')
+                verified_current = {**common, 'observation_year': record['observation_year'], 'department_observation_year': record['observation_year']}
+        first_appointments = {tuple(a.get(k) for k in ('institution', 'department', 'start_year')) for a in appointments if a.get('first_assistant_professor_verified')}
+        if len(first_appointments) > 1:
+            raise ValueError('Conflicting first assistant professor claims; no output written.')
+        if verified_current:
+            current_position = verified_current
         row = {
             'phd_country': phd_country,
             'phd_institution_canonical': canonical_institution(phd_units),
@@ -261,8 +429,17 @@ def run(args):
             'bachelor_department_inferred': False,
             'bachelor_department_evidence': 'no_degree_department_field_in_source',
             'career_units': [],
+            'faculty_appointments': appointments,
+            'current_position': current_position,
         }
         counts['researchers'] += 1
+        counts['observed_faculty_appointment_years'] += sum(a['evidence_status'] == 'observed' for a in appointments)
+        counts['verified_faculty_intervals'] += sum(a['evidence_status'] == 'verified' for a in appointments)
+        counts['current_positions'] += bool(current_position)
+        counts['current_positions_release_year'] += bool(current_position and current_position['observation_year'] == int(args.year))
+        counts['current_department_inferred'] += bool(current_position and current_position['department_inferred'])
+        counts['current_department_verified'] += bool(current_position and current_position['department'] and not current_position['department_inferred'])
+        counts['first_assistant_professor_verified'] += sum(a.get('first_assistant_professor_verified', False) for a in appointments)
         counts['phd_country_known'] += bool(phd_country)
         counts['bachelor_country_known'] += bool(bachelor_country)
         counts['phd_department_inferred'] += bool(department) and not bool(verified_department)
@@ -305,6 +482,8 @@ def run(args):
         'department_rule': 'unique formal department from kept author affiliations at the same institutional unit and public career interval; any conflicting or unresolved formal labels excluded',
         'degree_department_verified': bool(counts['phd_department_verified']),
         'doctoral_period_estimated': True,
+        'faculty_appointment_rule': 'individual observed roster years only, plus explicitly reviewed official employment intervals; publication career stages never establish faculty employment or first assistant professorship',
+        'current_position_rule': 'latest observed roster institution/year; inferred department uses unique formal unit in the latest kept affiliation period at that institution, or explicit reviewed official current unit',
         'bachelor_department_available': False,
         'private_fields_exported': False,
         'counts': dict(sorted(counts.items())),
@@ -326,5 +505,6 @@ if __name__ == '__main__':
     parser.add_argument('--source-db', type=Path)
     parser.add_argument('--anon-salt', type=Path)
     parser.add_argument('--verified-departments-db', type=Path, help='Optional private RISS/KISS second-verification overlay; never copied to public output.')
+    parser.add_argument('--lifetime-evidence-json', type=Path, help='Optional private reviewed official profile/CV overlay; bound to public release hash and exact private identity/degree anchors.')
     parser.add_argument('--year', default='2026')
     run(parser.parse_args())

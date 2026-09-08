@@ -3,7 +3,7 @@ import test from 'node:test';
 import { buildHypergraph as buildCoreHypergraph, layoutHypergraph, normalizeInstitution, institutionKey, findTrajectoryPeers, buildResearcherTrajectory } from '../work/test-dist/constellation/hypergraph.js';
 const buildHypergraph=(records,options={})=>buildCoreHypergraph(records,{cohortEnabled:false,...options});
 
-const person = (id, institution, phd_year, career = []) => ({ id, subject: 'Physics', phd_institution: institution, phd_country: 'US', bachelor_country:'US', phd_year, career });
+const person = (id, institution, phd_year, career = []) => ({ id, subject: 'Physics', phd_institution: institution, phd_country: 'US', bachelor_country:'US', phd_department:'Physics', bachelor_department:'Physics', phd_year, career });
 const actual = (start, end) => ({ stage: 'PhD', start_year: start, end_year: end, is_estimated: false });
 const commonYears = graph => graph.edges.filter(e => e.kind === 'temporal').flatMap(e => e.years).sort((a,b) => a-b);
 
@@ -94,16 +94,16 @@ test('large edges have lower size weight and overlapping time sets have Jaccard 
   assert.equal(both.edges[1].overlapAdjustment,1);
 });
 
-test('domestic same-school different departments never match; foreign department differences are ignored', () => {
+test('school-level matching requires the same recorded department in every country', () => {
   assert.notEqual(institutionKey({institution:'Seoul National University',country:'KR',department:'Physics'}),institutionKey({institution:'Seoul National University',country:'Korea',department:'Mathematics'}));
-  assert.equal(institutionKey({institution:'Oxford',country:'GB',department:'Mathematics'}),institutionKey({institution:'Oxford',country:'United Kingdom',department:'Mathematical Institute'}));
+  assert.notEqual(institutionKey({institution:'Oxford',country:'GB',department:'Mathematics'}),institutionKey({institution:'Oxford',country:'United Kingdom',department:'Mathematical Institute'}));
   assert.equal(institutionKey({institution:'Oxford',country:null,department:'Mathematics'}),null);
   assert.equal(institutionKey({institution:'Seoul National University',country:'KR'}),null);
   const records=[
     {...person('a','SNU',null),phd_country:'KR',phd_department:'Physics'},
     {...person('b','SNU',null),phd_country:'KR',phd_department:'Math'},
     {...person('c','SNU',null),phd_country:'KR',phd_department:'Physics'},
-    {...person('d','SNU',null),phd_country:'KR',department:'Physics'},
+    {...person('d','SNU',null),phd_country:'KR',phd_department:null,department:'Physics'},
     {...person('e','Unknown Country School',null),phd_country:null},
   ];
   const graph=buildHypergraph(records);
@@ -123,8 +123,8 @@ test('inferred domestic departments are opt-in and explicitly marked', () => {
 });
 
 test('verified canonical school aliases match without guessed aliases', () => {
-  assert.equal(institutionKey({institution:'U. Oxford',institution_canonical:'University of Oxford',country:'GB'}),institutionKey({institution:'Oxford',institution_canonical:'University of Oxford',country:'GB'}));
-  assert.notEqual(institutionKey({institution:'U. Oxford',country:'GB'}),institutionKey({institution:'Oxford',country:'GB'}));
+  assert.equal(institutionKey({institution:'U. Oxford',institution_canonical:'University of Oxford',country:'GB',department:'Physics'}),institutionKey({institution:'Oxford',institution_canonical:'University of Oxford',country:'GB',department:'Physics'}));
+  assert.notEqual(institutionKey({institution:'U. Oxford',country:'GB',department:'Physics'}),institutionKey({institution:'Oxford',country:'GB',department:'Physics'}));
 });
 
 test('bachelor cohort uses only phd_year−10..−8 inclusive, and estimated exclusion suppresses it', () => {
@@ -171,10 +171,12 @@ test('trajectory score is deduplicated unit-year Jaccard with stage/year evidenc
   assert.equal(result.selectedCoverage.unitYears,3);
 });
 
-test('trajectory matches foreign school across department labels and distinguishes stages', () => {
+test('generic trajectory requires matching foreign departments and distinguishes stages', () => {
   const records=[person('a',null,null,[{stage:'postdoc',institution:'Oxford',country:'GB',department:'Math',start_year:2000,end_year:2002,is_estimated:false}]),person('b','Oxford',2003,[actual(2002,2003)])];
   records[1].phd_country='GB';
   records[1].phd_department='Mathematical Institute';
+  assert.equal(findTrajectoryPeers(records,'a').peers.length,0);
+  records[1].phd_department='Math';
   const result=findTrajectoryPeers(records,'a');
   assert.equal(result.peers[0].sharedUnitYears,1);
   assert.equal(result.peers[0].unionUnitYears,4);

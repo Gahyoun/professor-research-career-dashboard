@@ -180,3 +180,96 @@
 .atlas-roster td button { border: 0; background: none; color: #0b50d0; text-decoration: underline; padding: 4px 0; }
 .atlas-roster-pages { display: flex; align-items: center; justify-content: flex-end; gap: 16px; margin-top: 16px; }
 .atlas-roster-pages button { padding: 8px 16px; border: 1px solid #b1b8be; background: white; border-radius: 4px; }
+
+/* Lifetime groups: phase colors belong to boundaries, subject colors to dots. */
+.atlas-reset { border: 1px solid #b1b8be; background: #fff; color: #464c53; border-radius: 6px; padding: 11px 16px; font-size: 15px; }
+.atlas-current-identity { margin: 7px 0 0; color: #464c53; font-size: 17px; overflow-wrap: anywhere; line-height: 1.6; }
+.atlas-current-identity > span { color: #6d7882; font-size: 15px; }
+.atlas-section-title > div { min-width: 0; }
+.atlas-section-title h2 { overflow-wrap: anywhere; }
+.atlas-section-title > button { flex-shrink: 0; }
+.atlas-map-footer { gap: 12px 18px; color: #464c53; font-size: 13px; }
+.atlas-map-footer > b { font-weight: 600; }
+.atlas-map-footer .atlas-line { border-top-width: 3px; }
+.atlas-search-results { max-height: 380px; }
+.atlas-search-results button { display: grid; gap: 4px; padding: 12px; font-size: 15px; line-height: 1.5; }
+.atlas-search-results button:hover { background: #ecf2fe; }
+.atlas-search-results strong { color: #0b50d0; font-weight: 600; }
+.atlas-search-results span, .atlas-search-results small { float: none; display: block; overflow-wrap: anywhere; color: #464c53; }
+.atlas-search-results small { font-size: 13px; color: #6d7882; }
+.atlas-selected-identity { display: grid; gap: 5px; margin-top: 16px; padding: 14px 0 0; border-top: 1px solid #cdd1d5; }
+.atlas-selected-identity strong { font-size: 17px; color: #1e2124; }
+.atlas-selected-identity span { font-size: 15px; color: #464c53; overflow-wrap: anywhere; }
+.atlas-selected-identity small { color: #6d7882; font-size: 13px; }
+.atlas-roster td button { text-align: left; max-width: 320px; line-height: 1.5; overflow-wrap: anywhere; }
+.atlas-roster td button strong, .atlas-roster td button span { display: block; }
+.atlas-roster td button span { color: #464c53; font-size: 13px; margin-top: 4px; }
+.atlas-check { align-items: flex-start; }
+.atlas-check input { width: 17px; height: 17px; flex-shrink: 0; margin-top: 3px; }
+.atlas-edge-list { max-height: 360px; }
+.atlas-edge-list button > span { font-size: 15px; }
+.atlas-edge-list button > .atlas-line { border-top-width: 3px; }
+.lifetime-explorer { margin: 22px 0; }
+.lifetime-explorer .atlas-section-title > button { border: 1px solid #b1b8be; border-radius: 6px; padding: 10px 16px; font-size: 15px; background: #fff; }
+.lifetime-explorer .atlas-section-title > button.selected { border-color: #256ef4; color: #0b50d0; background: #ecf2fe; }
+.lifetime-stage-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.lifetime-stage-filters > button { display: grid; align-content: start; gap: 9px; min-width: 0; text-align: left; padding: 16px 18px; background: #fff; border: 1px solid #cdd1d5; border-top: 4px solid var(--stage-color); border-radius: 6px; color: #1e2124; line-height: 1.5; }
+.lifetime-stage-filters > button.active { border-color: var(--stage-color); box-shadow: inset 0 0 0 1px var(--stage-color); background: #f4f5f6; }
+.lifetime-stage-filters > button:hover { background: #f4f5f6; }
+.lifetime-stage-filters strong { font-size: 19px; }
+.lifetime-stage-filters small { font-size: 13px; color: #464c53; overflow-wrap: anywhere; }
+.lifetime-stage-name { font-size: 15px; color: var(--stage-color); font-weight: 700; display: flex; align-items: center; gap: 7px; }
+.lifetime-stage-name i, .lifetime-phase-label i { width: 17px; border-top: 3px solid var(--stage-color); display: inline-block; flex-shrink: 0; }
+.lifetime-rule { font-size: 15px; line-height: 1.8; color: #464c53; margin: 14px 0 0; }
+.lifetime-stage-explanation, .lifetime-unavailable { border-left: 3px solid var(--stage-color); padding: 12px 18px; margin: 16px 0; background: #f4f5f6; font-size: 15px; color: #464c53; }
+.lifetime-stage-explanation strong, .lifetime-unavailable strong { color: var(--stage-color); }
+.lifetime-stage-explanation p, .lifetime-unavailable p { margin: 8px 0 0; line-height: 1.7; }
+.lifetime-evidence-group { margin-top: 25px; border: 1px solid #cdd1d5; border-top: 4px solid var(--stage-color); border-radius: 6px; overflow: hidden; }
+.lifetime-evidence-group.active { border-color: var(--stage-color); }
+.lifetime-evidence-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 20px; }
+.lifetime-evidence-heading > div { min-width: 0; }
+.lifetime-phase-label { display: flex; align-items: center; gap: 7px; font-weight: 600; color: var(--stage-color); font-size: 15px; }
+.lifetime-evidence-heading h3 { font-size: 19px; color: #1e2124; margin: 9px 0 0; line-height: 1.6; overflow-wrap: anywhere; }
+.lifetime-evidence-heading button { border: 1px solid var(--stage-color); color: var(--stage-color); background: #fff; border-radius: 5px; padding: 10px 13px; font-size: 15px; flex-shrink: 0; }
+.lifetime-group-facts { display: grid; grid-template-columns: 2fr 1.2fr 1.5fr 1fr; margin: 0; padding: 16px 20px; gap: 20px; background: #f4f5f6; }
+.lifetime-group-facts dt { color: #6d7882; font-size: 13px; margin-bottom: 5px; }
+.lifetime-group-facts dd { color: #464c53; font-size: 15px; margin: 0; overflow-wrap: anywhere; }
+.lifetime-member-table { max-height: 580px; overflow: auto; }
+.lifetime-member-table table { width: 100%; border-collapse: collapse; text-align: left; table-layout: fixed; font-size: 15px; }
+.lifetime-member-table th { color: #464c53; background: #fff; font-weight: 600; position: sticky; top: 0; z-index: 1; box-shadow: 0 1px #cdd1d5; }
+.lifetime-member-table td, .lifetime-member-table th { padding: 14px 20px; border-bottom: 1px solid #e6e8ea; vertical-align: top; }
+.lifetime-member-table th:first-child { width: 35%; }
+.lifetime-member-table th:nth-child(2) { width: 25%; }
+.lifetime-member-table p { margin: 0; line-height: 1.7; overflow-wrap: anywhere; font-size: 13px; color: #464c53; }
+.lifetime-member-table p + p { border-top: 1px solid #e6e8ea; margin-top: 10px; padding-top: 10px; }
+.lifetime-member-table b { color: var(--stage-color); font-weight: 600; }
+.lifetime-member-button { border: 0; background: none; color: #0b50d0; padding: 0; text-align: left; display: grid; gap: 5px; width: 100%; line-height: 1.6; }
+.lifetime-member-button:disabled { opacity: 1; cursor: default; color: #1e2124; }
+.lifetime-member-button strong { font-size: 15px; overflow-wrap: anywhere; }
+.lifetime-member-button strong em { display: block; color: var(--stage-color); font-style: normal; font-size: 13px; font-weight: 400; }
+.lifetime-member-button span { color: #464c53; font-size: 15px; overflow-wrap: anywhere; }
+.lifetime-member-button small { font-size: 13px; color: #6d7882; }
+.lifetime-evidence-flags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+.lifetime-evidence-flags em { color: #725000; background: #fff4d4; padding: 2px 6px; font-size: 12px; font-style: normal; border-radius: 3px; }
+@media(max-width: 1000px) { .lifetime-stage-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } .lifetime-group-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media(max-width: 760px) { .atlas-reset { margin-top: 14px; } .lifetime-explorer .atlas-section-title { align-items: flex-start; flex-wrap: wrap; } .lifetime-stage-filters { gap: 9px; } .lifetime-stage-filters > button { padding: 13px 12px; } .lifetime-evidence-heading { align-items: flex-start; flex-direction: column; padding: 16px; } .lifetime-member-table table { min-width: 630px; } .lifetime-member-table td, .lifetime-member-table th { padding: 12px 15px; } .atlas-current-identity { font-size: 15px; } .atlas-map-footer > b { width: 100%; } .atlas-selected-identity { margin-top: 18px; } }
+@media(max-width: 420px) { .lifetime-group-facts { grid-template-columns: 1fr; gap: 12px; } }
+
+/* Keep the 320px layout within the viewport; only explicit data tables scroll. */
+@media(max-width: 420px) {
+  .atlas-container { width: calc(100% - 28px); }
+  .atlas-workspace, .atlas-sidebar, .atlas-lower { grid-template-columns: minmax(0, 1fr); }
+  .atlas-sidebar-section, .atlas-selection, .atlas-groups, .trajectory-panel,
+  .lifetime-evidence-group, .lifetime-member-table, .atlas-roster-table { min-width: 0; max-width: 100%; }
+  .atlas-current-identity, .atlas-selected-identity, .atlas-search-results button,
+  .lifetime-stage-name, .lifetime-phase-label { min-width: 0; overflow-wrap: anywhere; }
+  .lifetime-stage-name, .lifetime-phase-label { flex-wrap: wrap; }
+  .atlas-scope { padding: 16px; }
+  .atlas-scope select, .atlas-field select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+  .atlas-years { flex-wrap: wrap; }
+  .atlas-years select { flex-basis: 100%; width: 100%; margin-top: 4px; }
+  .atlas-section-title { flex-wrap: wrap; align-items: flex-start; }
+  .atlas-section-title > button, .lifetime-evidence-heading button { max-width: 100%; white-space: normal; text-align: left; }
+  .atlas-scale { right: 72px; bottom: 18px; }
+  .atlas-scale span { display: block; margin: 3px 0 0; line-height: 1.5; overflow-wrap: anywhere; }
+}

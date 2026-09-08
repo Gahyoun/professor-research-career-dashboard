@@ -13,6 +13,8 @@ export interface ResearcherRecord {
   phd_department_inferred?: boolean;
   bachelor_department_inferred?: boolean;
   phd_year?: number | null;
+  faculty_appointments?: readonly FacultyAppointment[];
+  current_position?: CurrentPosition | null;
   career?: readonly {
     stage: string;
     start_year: number | null;
@@ -23,6 +25,7 @@ export interface ResearcherRecord {
     country?: string | null;
     department?: string | null;
     department_inferred?: boolean;
+    evidence_basis?: string | null;
   }[];
 }
 
@@ -52,6 +55,13 @@ export interface Hyperedge {
   department?: string;
   country?: string;
   inferredDepartment?: boolean;
+  lifetimeStage?: 'doctoral' | 'postdoc' | 'first_faculty' | 'current';
+  condition?: string;
+  startYear?: number;
+  endYear?: number;
+  estimated?: boolean;
+  temporalSemantics?: 'selected_interval_union';
+  memberEvidence?: LifetimeLinkEvidence[];
   weight: number;
   sizeAdjustment: number;
   overlapAdjustment: number;
@@ -160,12 +170,45 @@ export interface InstitutionUnit {
   department_inferred?: boolean;
 }
 
-/** KR units require the recorded educational department; foreign units use school only. */
+export type EmploymentEvidenceKind = 'semester_roster' | 'official_profile' | 'verified_cv';
+export interface FacultyAppointment extends InstitutionUnit {
+  start_year: number | null;
+  end_year: number | null;
+  role: 'faculty';
+  evidence_kind: EmploymentEvidenceKind;
+  evidence_status: 'observed' | 'verified';
+  rank?: 'assistant_professor' | 'associate_professor' | 'professor';
+  first_assistant_professor_verified?: boolean;
+}
+export interface CurrentPosition extends InstitutionUnit {
+  observation_year: number | null;
+  evidence_kind: EmploymentEvidenceKind;
+  evidence_status: 'observed' | 'verified';
+}
+export interface LifetimeLinkEvidence {
+  peerId: string;
+  unitKey: string;
+  institution: string;
+  department?: string;
+  country: string;
+  selectedStage: 'doctoral' | 'postdoc' | 'first_faculty' | 'current';
+  peerStage: 'doctoral' | 'postdoc' | 'faculty' | 'current';
+  startYear: number;
+  endYear: number;
+  selectedStartYear: number;
+  selectedEndYear: number;
+  peerStartYear: number;
+  peerEndYear: number;
+  estimated: boolean;
+  inferredDepartment: boolean;
+  basis: string[];
+}
+
+/** Every educational unit requires its own department, irrespective of country. */
 export function institutionKey(unit: InstitutionUnit, options: { includeInferredDepartments?: boolean } = {}): string | null {
   const institution = normalizeInstitution(unit.institution_canonical) ?? normalizeInstitution(unit.institution);
   const country = normalizeCountry(unit.country);
   if (!institution || !country) return null;
-  if (country !== 'KR') return `${country}::${institution}`;
   const department = normalizeInstitution(unit.department);
   if (!department || (unit.department_inferred && !options.includeInferredDepartments)) return null;
   return `${country}::${institution}::${department}`;
@@ -248,21 +291,21 @@ export function buildHypergraph(records: readonly ResearcherRecord[], options: H
     const unitKey = institutionKey({ institution: rawInstitution, institution_canonical: canonicalInstitution, country: rawCountry, department: rawDepartment, department_inferred: inferred }, options);
     if (institution === null) graph.diagnostics.missingInstitutionCount++;
     else if (country === null) graph.diagnostics.missingCountryCount++;
-    else if (country === 'KR' && !department) graph.diagnostics.missingDepartmentCount++;
-    else if (country === 'KR' && inferred && !options.includeInferredDepartments) graph.diagnostics.excludedInferredDepartmentCount++;
+    else if (!department) graph.diagnostics.missingDepartmentCount++;
+    else if (inferred && !options.includeInferredDepartments) graph.diagnostics.excludedInferredDepartmentCount++;
     if (unitKey) {
       graph.diagnostics.spatialEligibleCount++;
-      if (country === 'KR' && inferred) graph.diagnostics.inferredDepartmentCount++;
+      if (inferred) graph.diagnostics.inferredDepartmentCount++;
       if (spatialEnabled) {
         const schoolLabel = (normalizeInstitution(canonicalInstitution) ? canonicalInstitution : rawInstitution)!.normalize('NFKC').trim().replace(/\s+/g, ' ');
-        const departmentLabel = country === 'KR' ? rawDepartment!.normalize('NFKC').trim() : undefined;
+        const departmentLabel = rawDepartment!.normalize('NFKC').trim();
         if (!institutions.has(unitKey)) institutions.set(unitKey, {
           label: departmentLabel ? `${schoolLabel} · ${departmentLabel}` : schoolLabel,
           institution: schoolLabel, department: departmentLabel, country: country!, inferred: false, members: [],
         });
         const group = institutions.get(unitKey)!;
         group.members.push(nodeIndex);
-        group.inferred ||= country === 'KR' && inferred === true;
+        group.inferred ||= inferred === true;
       }
     }
 
@@ -386,8 +429,8 @@ export function buildHypergraph(records: readonly ResearcherRecord[], options: H
           const country = normalizeCountry(group.unit.country)!;
           const edge: Hyperedge = { id: `cohort:${unitKey}:${year}`, kind: 'cohort', degree: group.degree,
             institution: group.unit.institution_canonical || group.unit.institution || '', country,
-            department: country === 'KR' ? group.unit.department ?? undefined : undefined,
-            inferredDepartment: country === 'KR' && group.unit.department_inferred === true,
+            department: group.unit.department ?? undefined,
+            inferredDepartment: group.unit.department_inferred === true,
             label: '', years: [year], members,
             weight: Math.sqrt(positive(options.spatialWeight, 1) * positive(options.temporalWeight, 1)),
             sizeAdjustment: 1, overlapAdjustment: 1 };
@@ -531,14 +574,14 @@ export function buildResearcherTrajectory(record: ResearcherRecord, options: Tra
     const institution = normalizeInstitution(unit.institution_canonical) ?? normalizeInstitution(unit.institution), country = normalizeCountry(unit.country);
     if (!institution) { coverage.missingInstitutionIntervals++; return; }
     if (!country) { coverage.missingCountryIntervals++; return; }
-    if (country === 'KR' && !normalizeInstitution(unit.department)) { coverage.missingDepartmentIntervals++; return; }
-    if (country === 'KR' && unit.department_inferred && !options.includeInferredDepartments) { coverage.excludedInferredDepartmentIntervals++; return; }
+    if (!normalizeInstitution(unit.department)) { coverage.missingDepartmentIntervals++; return; }
+    if (unit.department_inferred && !options.includeInferredDepartments) { coverage.excludedInferredDepartmentIntervals++; return; }
     const key = institutionKey(unit, options);
     if (!key) return;
-    const inferred = country === 'KR' && unit.department_inferred === true;
+    const inferred = unit.department_inferred === true;
     if (inferred) coverage.inferredDepartmentIntervals++;
     intervals.push({ unitKey: key, institution: (normalizeInstitution(unit.institution_canonical) ? unit.institution_canonical : unit.institution)!.trim(), country,
-      department: country === 'KR' ? unit.department!.trim() : undefined, stage,
+      department: unit.department!.trim(), stage,
       startYear: start, endYear: end, estimated, inferredDepartment: inferred });
     coverage.eligibleIntervals++;
   };
