@@ -7,6 +7,9 @@ export const lifetimeStageColors: Record<LifetimeStage, string> = {
 export const lifetimeStageLabels: Record<LifetimeStage, string> = {
   doctoral: '박사과정', postdoc: '포닥', first_faculty: '첫 조교수', current: '현직',
 };
+export const careerSubjectLabels: Record<string, string> = {
+  mathematics: '수학', physics: '물리', chemistry: '화학', biology: '생물',
+};
 
 export function lifetimePeriod(start: number, end: number): string {
   return start === end ? `${start}년` : `${start}–${end}년`;

@@ -24,7 +24,7 @@ test('the worker projection excludes identity extras from nested records without
 
 test('catalogue summaries distinguish missing evidence, unmatched intervals and shared peers across stages', () => {
   const current = { institution: 'School', country: 'KR', department: 'Physics', observation_year: 2026, evidence_kind: 'semester_roster', evidence_status: 'observed' };
-  const student = id => ({ id, phd_institution: 'School', phd_country: 'KR', phd_department: 'Physics', phd_year: 2005, current_position: current });
+  const student = id => ({ id, subject: 'physics', phd_institution: 'School', phd_country: 'KR', phd_department: 'Physics', phd_year: 2005, current_position: current });
   const index = createLifetimeIndex([student('A'), student('B'), { id: 'missing' }, { ...student('alone'), phd_institution: 'Other', current_position: null }], { releaseYear: 2026 });
   const connected = summarizeCareer(index.get('A'));
   assert.equal(connected.groupCount, 2);

@@ -53,7 +53,9 @@ export interface Hyperedge {
   years?: number[];
   institution?: string;
   department?: string;
-  country?: string;
+  country?: string | null;
+  matchingBasis?: 'institution_subject';
+  subject?: string;
   inferredDepartment?: boolean;
   lifetimeStage?: 'doctoral' | 'postdoc' | 'first_faculty' | 'current';
   condition?: string;
@@ -190,7 +192,9 @@ export interface LifetimeLinkEvidence {
   unitKey: string;
   institution: string;
   department?: string;
-  country: string;
+  country: string | null;
+  matchingBasis?: 'institution_subject';
+  subject?: string;
   selectedStage: 'doctoral' | 'postdoc' | 'first_faculty' | 'current';
   peerStage: 'doctoral' | 'postdoc' | 'faculty' | 'current';
   startYear: number;

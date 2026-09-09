@@ -4,12 +4,12 @@ import { createHash } from 'node:crypto';
 import { buildLifetimeTrajectory, createLifetimeIndex } from '../work/test-dist/constellation/lifetime.js';
 const unit={institution:'School',country:'KR',department:'Physics'};
 const appointment=(start,end,extra={})=>({...unit,start_year:start,end_year:end,role:'faculty',evidence_kind:'official_profile',evidence_status:'verified',...extra});
-const student=(id,end,extra={})=>({id,phd_institution:'School',phd_country:'KR',phd_department:'Physics',phd_year:end,...extra});
+const student=(id,end,extra={})=>({id,subject:'physics',phd_institution:'School',phd_country:'KR',phd_department:'Physics',phd_year:end,...extra});
 const stage=(result,id)=>result.stages.find(s=>s.stage===id);
 const groups=(records,id='A',options={})=>buildLifetimeTrajectory(records,id,{releaseYear:2026,...options});
 
 test('doctoral group joins overlapping students and verified faculty, never inferred faculty affiliations',()=>{
-  const rows=[student('A',2010),student('B',2009),{id:'teacher',faculty_appointments:[appointment(2001,2026)]},
+  const rows=[student('A',2010),student('B',2009),{id:'teacher',subject:'physics',faculty_appointments:[appointment(2001,2026)]},
     {id:'not-proof',career:[{...unit,stage:'faculty',position_no:1,confidence:'confirmed',is_estimated:false,start_year:2000,end_year:2026}]}];
   const result=groups(rows),group=stage(result,'doctoral').groups[0];
   assert.deepEqual(group.members,['A','B','teacher']);
@@ -20,7 +20,7 @@ test('doctoral group joins overlapping students and verified faculty, never infe
 test('foreign doctoral/faculty units require departments and never use current department fallback',()=>{
   const rows=[student('A',2010,{phd_country:'US'}),student('B',2010,{phd_country:'US',phd_department:'Math'}),
     student('missing',2010,{phd_country:'US',phd_department:null,department:'Physics'}),
-    {id:'teacher',faculty_appointments:[appointment(2000,2010,{country:'US',department:null})],department:'Physics'}];
+    {id:'teacher',subject:'physics',faculty_appointments:[appointment(2000,2010,{country:'US',department:null})],department:'Physics'}];
   assert.equal(stage(groups(rows),'doctoral').groups.length,0);
   rows[1].phd_department='Physics';
   assert.deepEqual(stage(groups(rows),'doctoral').groups[0].members,['A','B']);
@@ -55,12 +55,12 @@ test('conflicting first-assistant institutions remain unavailable instead of cho
   assert.ok(stage(result,'first_faculty').excludedReasons.some(r=>r.includes('충돌')));
 });
 
-test('current group needs current-year observations and respects inferred department opt-in',()=>{
+test('current group needs current-year observations and ignores inferred department toggles',()=>{
   const current={...unit,observation_year:2026,evidence_kind:'semester_roster',evidence_status:'observed',department_inferred:true};
-  const rows=[{id:'A',current_position:current},{id:'B',current_position:{...current}},
-    {id:'stale',current_position:{...current,observation_year:2025}},
+  const rows=[{id:'A',subject:'physics',current_position:current},{id:'B',subject:'physics',current_position:{...current}},
+    {id:'stale',subject:'physics',current_position:{...current,observation_year:2025}},
     {id:'no-source',current_institution:'School',current_country:'KR',department:'Physics'}];
-  assert.equal(stage(groups(rows),'current').groups.length,0);
+  assert.equal(stage(groups(rows),'current').groups.length,1);
   const result=groups(rows,'A',{includeInferredDepartments:true});
   assert.deepEqual(stage(result,'current').groups[0].members,['A','B']);
   assert.ok(stage(groups(rows,'stale',{includeInferredDepartments:true}),'current').excludedReasons.some(r=>r.includes('현재로 연장하지')));
@@ -76,14 +76,14 @@ test('estimated PhD windows honor options and explicit actual periods have prior
 });
 
 test('nonoverlapping observed faculty years never fill employment gaps',()=>{
-  const rows=[student('A',2010),{id:'teacher',faculty_appointments:[appointment(2005,2005),appointment(2010,2010)]}];
+  const rows=[student('A',2010),{id:'teacher',subject:'physics',faculty_appointments:[appointment(2005,2005),appointment(2010,2010)]}];
   const group=stage(groups(rows),'doctoral').groups[0];
   assert.deepEqual(group.memberEvidence.map(e=>[e.startYear,e.endYear]),[[2005,2005],[2010,2010]]);
 });
 
 test('stage filters affect groups and peer membership without inventing unavailable stages',()=>{
   const current={...unit,observation_year:2026,evidence_kind:'semester_roster',evidence_status:'observed'};
-  const rows=[student('A',2010,{current_position:current}),student('B',2010),{id:'C',current_position:current}];
+  const rows=[student('A',2010,{current_position:current}),student('B',2010),{id:'C',subject:'physics',current_position:current}];
   assert.deepEqual(groups(rows,'A',{stages:['current']}).peers.map(p=>p.id),['C']);
   assert.equal(groups(rows,'A',{stages:[]}).peers.length,0);
   assert.equal(groups(rows,'absent').selectedFound,false);
@@ -108,24 +108,25 @@ test('actual doctoral unit conflicts cannot borrow the degree department and mal
 
 function indexFixture(){const current={...unit,observation_year:2026,evidence_kind:'semester_roster',evidence_status:'observed',department_inferred:true};return[
  student('Z',2010,{phd_department_inferred:true,career:[{...unit,stage:'postdoc',start_year:2011,end_year:2013,is_estimated:false}],faculty_appointments:[appointment(2014,2016,{rank:'assistant_professor',first_assistant_professor_verified:true})],current_position:current}),
- student('B',2015),{id:'teacher',faculty_appointments:[appointment(2005,2005),appointment(2010,2016),appointment(2010,2016)],current_position:{...current,department_inferred:false}},
+ student('B',2015),{id:'teacher',subject:'physics',faculty_appointments:[appointment(2005,2005),appointment(2010,2016),appointment(2010,2016)],current_position:{...current,department_inferred:false}},
  student('A',2009,{career:[{...unit,stage:'doctoral',start_year:2006,end_year:2009,is_estimated:false},{...unit,stage:'postdoc',start_year:2010,end_year:2012,is_estimated:true}]}),
  student('foreign',2010,{phd_country:'US'}),student('missing',2010,{phd_department:null}),{id:'inferred-faculty',career:[{...unit,stage:'faculty',start_year:2005,end_year:2026,is_estimated:false}]},
- {id:'stale',current_position:{...current,observation_year:2025}},student('B',2020),student(' ',2010)];}
+ {id:'stale',subject:'physics',current_position:{...current,observation_year:2025}},student('B',2020),student(' ',2010)];}
 
-test('indexed queries preserve complete legacy results, evidence order and coverage across all four stages',()=>{
-  // Captured from the pre-index implementation (ad3d100), before replacing its
-  // full researcher scan. These compare every field, including ordering and scores.
+test('indexed historical queries preserve legacy evidence, ordering and coverage after current grouping changes',()=>{
+  // Legacy historical-only results from 4763ab5. Current grouping intentionally
+  // changed to school + subject, so current-stage prose is omitted and current
+  // queries are disabled. The dedicated currentGroups tests verify its new rules.
   const cases=[
-    [{includeInferredDepartments:true},'6797fce0d24af0cc9aa55907ad2f02a028d691bcc498078cd72916ade936fb42'],
-    [{includeInferredDepartments:false},'a6dab215be13b8b4979e102e90ac274861f3202df6eaddaf3ec8a7aa67076c05'],
-    [{includeInferredDepartments:true,includeEstimated:false},'d903db6f4bf4d1fd1f337a3c4127d0cc4af26caeb26c3e1e978de136b9bd9659'],
-    [{includeInferredDepartments:true,estimatedYears:4,stages:['postdoc','current']},'95f9a9408e5769706bb22446f048e3938beb87f3d073888e19189c5d055c354e'],
+    [{includeInferredDepartments:true,stages:['doctoral','postdoc','first_faculty']},'4e7246697a8e6789abdf22d04ff439033685a11011e28e96b6ea66e5ee952ad1'],
+    [{includeInferredDepartments:false,stages:['doctoral','postdoc','first_faculty']},'6b6bf0fea7804be0c23877ada33ff793e5a2483974d1189fcaac91168bb90036'],
+    [{includeInferredDepartments:true,includeEstimated:false,stages:['doctoral','postdoc','first_faculty']},'73a06e6f237e236334d768f447fcea2d559c1b7d54b4f7bf57006ae6584a5d19'],
+    [{includeInferredDepartments:true,estimatedYears:4,stages:['postdoc']},'f1101fdf08894db04e8f8c30e8f9dc0b0fc48becede24c5d744cc219f58bf4ec'],
   ];
   for(const [options,digest] of cases){
     const index=createLifetimeIndex(indexFixture(),{releaseYear:2026,...options});
     assert.deepEqual(index.ids,['Z','B','teacher','A','foreign','missing','inferred-faculty','stale']);
-    const actual=index.ids.map(id=>index.get(id));
+    const actual=index.ids.map(id=>{const result=index.get(id);return {...result,stages:result.stages.filter(s=>s.stage!=='current')};});
     assert.equal(createHash('sha256').update(JSON.stringify(actual)).digest('hex'),digest);
   }
 });
@@ -154,6 +155,7 @@ test('index options and prepared records are isolated, and callers cannot mutate
   const changed=index.get('Z');changed.stages[0].groups[0].members.push('injected');changed.peers[0].evidence[0].basis.push('injected');
   assert.deepEqual(index.get('Z'),expected);
   const strict=createLifetimeIndex(indexFixture(),{releaseYear:2026,includeInferredDepartments:false});
-  assert.equal(strict.get('Z').stages.find(s=>s.stage==='current').groups.length,0);
+  assert.equal(strict.get('Z').stages.find(s=>s.stage==='doctoral').groups.length,0);
+  assert.equal(strict.get('Z').stages.find(s=>s.stage==='current').groups.length,1);
   assert.ok(index.get('Z').stages.find(s=>s.stage==='current').groups.length);
 });

@@ -87,7 +87,7 @@ test('the default three stages retain current membership when a verified first a
 });
 
 test('missing or stale current evidence removes only that current membership, never the doctoral group', () => {
-  for (const changed of [{ department: null }, { department: 'Mathematics' }, { country: null }, { observation_year: 2025 }, { department_inferred: true }]) {
+  for (const changed of [{ observation_year: 2025 }, { evidence_status: 'inferred' }, { institution: null }]) {
     const rows = pair(); Object.assign(rows[1].current_position, changed);
     const graph = buildTrajectoryHypergraph(rows, 'A', { ...options, includeInferredDepartments: false });
     assert.deepEqual(incidentStages(graph, 'B'), ['doctoral']);
