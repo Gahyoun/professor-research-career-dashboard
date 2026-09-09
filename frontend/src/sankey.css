@@ -56,3 +56,19 @@
 @media(max-width:600px){.sk-controls{padding:20px 12px}.sk-filter-heading{gap:14px}.sk-filter-heading h2{font-size:19px}.sk-institution-selector{padding:12px}.sk-secondary-filters{flex-direction:column;align-items:stretch;gap:16px}.sk-subject-filter{flex-basis:auto}.sk-secondary-filters .sk-checks{align-self:stretch}.sk-cohort-note{margin-top:-12px!important}.sk-chart-scroll{max-height:70vh;min-height:240px}.sk-legend>p{flex-basis:100%}.sk-chart-status span{flex-shrink:1}}
 .sk-chart-actions{display:flex;flex-wrap:wrap;gap:8px;flex-shrink:0;max-width:100%}
 @media(max-width:600px){.sk-chart-actions{gap:8px}.sk-chart-actions .sk-button{white-space:normal;text-align:left}}
+
+/* The world uses layout pixels; one camera transform controls every label and ribbon. */
+.sk-view-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding:16px 24px 8px;background:#fff}
+.sk-zoom-buttons,.sk-fit-buttons{display:flex;align-items:center;gap:8px}
+.sk-zoom-buttons .sk-button{min-width:44px;min-height:44px;padding:4px 12px;font-size:24px!important}
+.sk-zoom-buttons output{min-width:64px;text-align:center;font-size:15px;font-variant-numeric:tabular-nums;color:var(--sk-body)}
+.sk-fit-buttons{flex-wrap:wrap}
+.sk-canvas-hint{padding:0 24px 16px;font-size:14px;line-height:1.6;color:var(--sk-muted)}
+.sk-flow-canvas{position:relative;width:100%;height:clamp(360px,70vh,800px);overflow:clip;touch-action:none;user-select:none;cursor:grab;background:#fff;border-top:1px solid var(--sk-soft)}
+.sk-flow-canvas.is-dragging{cursor:grabbing}
+.sk-flow-world{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+.sk-flow-canvas.is-dragging .sk-flow-world{pointer-events:none}
+.sk-flow-world .sk-column-labels{position:static;min-width:0;width:100%;height:72px;padding:0 16px;grid-template-columns:repeat(3,1fr);background:#fff}
+.sk-flow-world .sk-svg{width:100%;min-width:0;max-width:none;height:auto}
+.sk-flow-canvas:focus-visible{outline-offset:-3px!important}
+@media(max-width:600px){.sk-view-toolbar{padding:12px;gap:8px}.sk-canvas-hint{padding:0 12px 12px}.sk-fit-buttons .sk-button{padding:6px 10px}.sk-flow-canvas{height:clamp(360px,65vh,600px)}}
