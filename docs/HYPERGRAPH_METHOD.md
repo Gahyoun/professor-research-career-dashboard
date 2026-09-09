@@ -30,6 +30,8 @@ Jaccard overlap correction is a transparent project heuristic for redundant neig
 
 ## Sparse spectral embedding
 
+This section describes the school-focused graph. The person-focused career graph uses the all-membership display layout described below.
+
 Let `H` be binary researcher-by-hyperedge incidence, `W` edge weights, `De` edge cardinalities, and `Dv` summed incident weights. The operator is
 
 ```
@@ -59,7 +61,15 @@ Faculty employment comes from `faculty_appointments` with semester-roster, offic
 
 The temporal semantics are **selected-interval union**: every member overlaps the selected person's interval, but members need not all overlap one another in the same year. Member-level role, overlap years, and source kinds accompany every group. For example, an observed professor and overlapping doctoral peers in one department can form one school-years hyperedge. Single-member intervals are shown as available periods, with an explanation that no peer is supported; they are not rendered as hyperedges.
 
-`trajectoryGraph.ts` uses the same lifetime group IDs and membership as the evidence panel. Orange, teal, purple, and blue encode doctoral, postdoc, first-assistant, and current groups respectively; researcher-node colors encode subjects separately. Smooth convex envelopes indicate selected groups, while highlighted nodes and the member list determine actual membership. An unrelated node can geometrically fall inside an envelope. Names remain outside the worker and are overlaid only by the unlocked UI, together with current institution.
+`trajectoryGraph.ts` uses the same lifetime group IDs and membership as the evidence panel. Orange, teal, purple, and blue encode doctoral, postdoc, first-assistant, and current groups respectively; researcher-node colors encode subjects separately. The UI defaults to doctoral, postdoc and current stages together. First-assistant groups are opt-in and still require the existing explicit employment evidence. Continuing at the first institution does not remove the current group; enabling the option preserves both stage edges even when their members are identical.
+
+Membership is many-to-many: different postdocs do not prevent the same pair from sharing both doctoral and current groups. Focusing an edge changes emphasis without removing other career edges or refitting the camera. Clicking a researcher dot inspects all of its memberships; recentering is an explicit separate action. Each incident group gets a colored segment around the researcher dot, and both the sidebar and evidence rows list simultaneous memberships. Equal-member edges have separate, stable envelope padding so one stage cannot paint over the other's identical boundary. An unrelated node can geometrically fall inside a convex envelope; the ring segments and member list, not containment alone, determine actual membership. Names remain outside the worker and are overlaid only by the unlocked UI, together with current institution.
+
+### All-membership career layout
+
+`lifetimeLayout.ts` creates a distinct display anchor for every stage/period hyperedge, ordered deterministically around an ellipse. Each researcher appears once, at the normalized weighted barycentre of **all** incident anchors. Weights retain the graph's size and overlap corrections. Researchers with identical incidence spread in a small sunflower cloud; chronological ordering is restricted to assignment within that cloud. A node's averaged historical year no longer overwrites its global y coordinate and pulls it away from a shared current group. Spatial collision repair preserves a feasible minimum distance, with nearest-free-grid repair only as a fallback. Initial framing fits the actual nodes instead of the entire nominal canvas.
+
+This is a display heuristic with fixed anchors, not a learned embedding or a global optimum. The diagnostic objective measures the final normalized weighted squared distance from nodes to every incident anchor, after spreading and collision repair. It is not the spectral objective above. Distinct edges remain distinct even when every member is shared; edge anchors and visual boundaries do not create new membership or evidence.
 
 University succession changes current display units and exempts specified post-merger institution transitions from job-change counts. Historic degree and career names remain intact. See [institution successions](INSTITUTION_SUCCESSIONS.md).
 
