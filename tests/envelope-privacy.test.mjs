@@ -107,12 +107,12 @@ test('missing, unresolved or numeric source institution anchors cannot transfer 
   }
 });
 test('matching aliases preserve department, country, time and first-assistant evidence requirements', () => {
-  const faculty = (id, changes = {}) => ({ id, career: [], faculty_appointments: [{
+  const faculty = (id, changes = {}) => ({ id, subject: 'physics', career: [], faculty_appointments: [{
     institution: 'Hanyang', institution_canonical: canonicalSchool('Hanyang'), country: 'KR',
     department: 'Department of Physics', start_year: 2004, end_year: 2004,
     role: 'faculty', rank: 'assistant_professor', evidence_kind: 'semester_roster', evidence_status: 'observed', ...changes,
   }] });
-  const selected = { id: 'P-AAAAAAAAAA', phd_institution: 'Hanyang University', phd_year: 2005,
+  const selected = { id: 'P-AAAAAAAAAA', subject: 'physics', phd_institution: 'Hanyang University', phd_year: 2005,
     phd_country: 'KR', phd_department: 'Department of Physics', career: [] };
   const records = [selected, faculty('P-BBBBBBBBBB'),
     faculty('P-CCCCCCCCCC', { department: 'Department of Mathematics' }),

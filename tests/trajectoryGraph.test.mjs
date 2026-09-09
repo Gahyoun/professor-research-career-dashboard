@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildTrajectoryHypergraph } from '../work/test-dist/constellation/trajectoryGraph.js';
 import { buildLifetimeTrajectory } from '../work/test-dist/constellation/lifetime.js';
-const student=(id,start,end)=>({id,phd_institution:'School',phd_country:'US',phd_department:'Physics',phd_year:end,career:[{stage:'doctoral',institution:'School',country:'US',department:'Physics',start_year:start,end_year:end,is_estimated:false}]});
+const student=(id,start,end)=>({id,subject:'physics',phd_institution:'School',phd_country:'US',phd_department:'Physics',phd_year:end,career:[{stage:'doctoral',institution:'School',country:'US',department:'Physics',start_year:start,end_year:end,is_estimated:false}]});
 
 test('a whole selected stage interval is one edge with each peer overlap, not annual memberships',()=>{
   const rows=[student('A',2000,2010),student('B',2000,2002),student('C',2008,2010)];
@@ -17,7 +17,7 @@ test('a whole selected stage interval is one edge with each peer overlap, not an
   assert.equal(edge.weight,1.5);assert.equal(edge.sizeAdjustment,.5);
 });
 
-test('postdoc institution exception crosses departments and stays separated from doctoral stage',()=>{
+test('same-field postdoc institution exception tolerates unverified department differences and stays separated from doctoral stage',()=>{
   const rows=[student('A',2000,2005),student('B',2001,2006)];
   rows[0].career.push({stage:'postdoc',institution:'Institute',country:'US',start_year:2008,end_year:2010,is_estimated:false});
   rows[1].career.push({stage:'postdoc',institution:'Institute',country:'US',department:'Unrelated',start_year:2009,end_year:2011,is_estimated:false});

@@ -85,7 +85,7 @@ export default function CareerDirectory({ professors, names, summaries, progress
       {incompleteCount > 0 && <div className={`cd-computation${error ? ' cd-computation-error' : ''}`} role="status">{error ? <p>경력 연결 계산을 완료하지 못했습니다. 교수 목록과 개별 그래프는 계속 탐색할 수 있습니다. 계산 미완료 {count(incompleteCount)}명.</p> : <><span>전체 경력 연결 계산 중 · {Math.round(fraction * 100)}%</span><progress value={fraction} max={1} aria-label="전체 교수 경력 연결 계산 진행률" /><span>계산 완료 {count(completedCount)} / {count(professors.length)}명</span></>}</div>}
       <div className="cd-results" aria-live="polite"><p><strong>필터 결과 {count(rows.length)}명</strong><span> / 전체 대상 {count(professors.length)}명</span></p><span>페이지당 50명</span></div>
       {connection !== 'all' && incompleteCount > 0 && <p className="cd-note">연결 상태 필터는 계산이 끝난 교수에게만 적용됩니다. 아직 계산되지 않은 {count(incompleteCount)}명은 ‘전체 교수’에서 볼 수 있습니다.</p>}
-      <p className="cd-guide">현재 추정 설정을 적용해 전체 분야를 비교한 결과입니다. 현직은 같은 학교·계열을 묶으며 세부 학과명으로 나누지 않습니다. 단계별 표시는 연결된 집단 수입니다. ‘겹친 상대 없음’은 경력 구간은 있지만 조건이 겹친 상대를 찾지 못한 경우이며, ‘근거 부족’은 연결에 필요한 경력 근거가 없는 경우입니다.</p>
+      <p className="cd-guide">전체 교수를 대상으로 현재 추정 설정을 적용하되, 각 연구자의 연결 상대는 명부의 분야가 같은 사람으로 제한합니다. 명부 분야는 과거 학과를 확인한 근거가 아닙니다. 박사·첫 조교수는 과거 학교·학과, 포닥은 기관의 일치와 겹친 기간도 필요합니다. 현직은 같은 학교·명부 분야를 묶으며 세부 학과명으로 나누지 않습니다. 단계별 표시는 연결된 집단 수입니다. ‘겹친 상대 없음’은 경력 구간은 있지만 조건이 겹친 상대를 찾지 못한 경우이며, ‘근거 부족’은 연결에 필요한 경력 근거가 없는 경우입니다.</p>
       <p className="cd-scroll-hint">좁은 화면에서는 표를 좌우로 이동할 수 있습니다.</p>
 
       <div ref={tableScroll} className="cd-table-scroll" tabIndex={0} role="region" aria-label={`전체 교수 ${stageDescription} 경력 목록. 좌우와 위아래 스크롤 가능`}>
