@@ -26,20 +26,20 @@ test('foreign doctoral/faculty units require departments and never use current d
   assert.deepEqual(stage(groups(rows),'doctoral').groups[0].members,['A','B']);
 });
 
-test('postdoc uses institution/time only while excluding unproved faculty roles',()=>{
-  const rows=[{id:'A',career:[{...unit,department:null,stage:'postdoc',start_year:2000,end_year:2002,is_estimated:false}]},
+test('postdoc uses institution and recorded field with time while excluding unproved faculty roles',()=>{
+  const rows=[{id:'A',subject:'physics',career:[{...unit,department:null,stage:'postdoc',start_year:2000,end_year:2002,is_estimated:false}]},
     student('B',2003,{phd_department:null}),
-    {id:'C',faculty_appointments:[appointment(2001,2002,{department:null})]},
-    {id:'D',career:[{...unit,stage:'faculty',start_year:2001,end_year:2002,is_estimated:false}]}];
+    {id:'C',subject:'physics',faculty_appointments:[appointment(2001,2002,{department:null})]},
+    {id:'D',subject:'physics',career:[{...unit,stage:'faculty',start_year:2001,end_year:2002,is_estimated:false}]}];
   const group=stage(groups(rows),'postdoc').groups[0];
   assert.deepEqual(group.members,['A','B','C']);assert.equal(group.department,undefined);
   assert.ok(group.memberEvidence.every(e=>e.inferredDepartment===false));
 });
 
 test('first assistant requires explicit rank and first-appointment evidence, not earliest faculty position',()=>{
-  const rows=[{id:'A',career:[{...unit,stage:'faculty',position_no:1,rank:'assistant_professor',start_year:2000,end_year:2003,is_estimated:false}],
+  const rows=[{id:'A',subject:'physics',career:[{...unit,stage:'faculty',position_no:1,rank:'assistant_professor',start_year:2000,end_year:2003,is_estimated:false}],
     faculty_appointments:[appointment(2000,2003,{rank:'assistant_professor'})]},
-    {id:'B',faculty_appointments:[appointment(2001,2004)]}];
+    {id:'B',subject:'physics',faculty_appointments:[appointment(2001,2004)]}];
   assert.equal(stage(groups(rows),'first_faculty').intervals.length,0);
   rows[0].faculty_appointments[0].first_assistant_professor_verified=true;
   const group=stage(groups(rows),'first_faculty').groups[0];
@@ -50,7 +50,7 @@ test('first assistant requires explicit rank and first-appointment evidence, not
 
 test('conflicting first-assistant institutions remain unavailable instead of choosing one',()=>{
   const extra={rank:'assistant_professor',first_assistant_professor_verified:true};
-  const result=groups([{id:'A',faculty_appointments:[appointment(2000,2002,extra),appointment(2001,2003,{...extra,institution:'Other'})]}]);
+  const result=groups([{id:'A',subject:'physics',faculty_appointments:[appointment(2000,2002,extra),appointment(2001,2003,{...extra,institution:'Other'})]}]);
   assert.equal(stage(result,'first_faculty').intervals.length,0);
   assert.ok(stage(result,'first_faculty').excludedReasons.some(r=>r.includes('충돌')));
 });
@@ -90,7 +90,7 @@ test('stage filters affect groups and peer membership without inventing unavaila
 });
 
 test('raw identity fields and URLs never enter graph evidence; duplicate identities are deduplicated',()=>{
-  const a=student('A',2010,{name:'SECRET NAME'}), b={id:'B',faculty_appointments:[{...appointment(2000,2010),source_url:'https://SECRET.example/person'}]};
+  const a=student('A',2010,{name:'SECRET NAME'}), b={id:'B',subject:'physics',faculty_appointments:[{...appointment(2000,2010),source_url:'https://SECRET.example/person'}]};
   const result=groups([a,a,b,b]);assert.equal(result.peers.length,1);
   assert.ok(!JSON.stringify(result).includes('SECRET'));
 });
@@ -113,20 +113,36 @@ function indexFixture(){const current={...unit,observation_year:2026,evidence_ki
  student('foreign',2010,{phd_country:'US'}),student('missing',2010,{phd_department:null}),{id:'inferred-faculty',career:[{...unit,stage:'faculty',start_year:2005,end_year:2026,is_estimated:false}]},
  {id:'stale',subject:'physics',current_position:{...current,observation_year:2025}},student('B',2020),student(' ',2010)];}
 
-test('indexed historical queries preserve legacy evidence, ordering and coverage after current grouping changes',()=>{
-  // Legacy historical-only results from 4763ab5. Current grouping intentionally
-  // changed to school + subject, so current-stage prose is omitted and current
-  // queries are disabled. The dedicated currentGroups tests verify its new rules.
+function historicalProjection(result) {
+  const interval = value => ({ institution: value.institution, department: value.department, country: value.country,
+    startYear: value.startYear, endYear: value.endYear, estimated: value.estimated, inferredDepartment: value.inferredDepartment,
+    basis: value.basis });
+  const evidence = value => ({ ...interval(value), peerId: value.peerId, selectedStage: value.selectedStage, peerStage: value.peerStage,
+    selectedStartYear: value.selectedStartYear, selectedEndYear: value.selectedEndYear,
+    peerStartYear: value.peerStartYear, peerEndYear: value.peerEndYear });
+  return { selectedId: result.selectedId, selectedFound: result.selectedFound, coverage: result.coverage,
+    stages: result.stages.filter(s => s.stage !== 'current').map(s => ({ stage: s.stage,
+      intervals: s.intervals.map(interval), groups: s.groups.map(g => ({ ...interval(g), members: g.members,
+        memberEvidence: g.memberEvidence.map(evidence), temporalSemantics: g.temporalSemantics })), excludedReasons: s.excludedReasons })),
+    peers: result.peers.map(p => ({ id: p.id, score: p.score, sharedUnitYears: p.sharedUnitYears,
+      comparedUnitYears: p.comparedUnitYears, stageCount: p.stageCount, evidence: p.evidence.map(evidence) })) };
+}
+
+test('same-field historical queries preserve legacy dates, departments, evidence and ordering',()=>{
+  // Baselines executed from e6c7765 using this same-field fixture. The projection
+  // retains dates, departments, roles, evidence, ordering and coverage, excluding
+  // intentionally new subject keys/provenance/labels. fieldGuards tests verify
+  // the added cross-field exclusions independently; current is tested separately.
   const cases=[
-    [{includeInferredDepartments:true,stages:['doctoral','postdoc','first_faculty']},'4e7246697a8e6789abdf22d04ff439033685a11011e28e96b6ea66e5ee952ad1'],
-    [{includeInferredDepartments:false,stages:['doctoral','postdoc','first_faculty']},'6b6bf0fea7804be0c23877ada33ff793e5a2483974d1189fcaac91168bb90036'],
-    [{includeInferredDepartments:true,includeEstimated:false,stages:['doctoral','postdoc','first_faculty']},'73a06e6f237e236334d768f447fcea2d559c1b7d54b4f7bf57006ae6584a5d19'],
-    [{includeInferredDepartments:true,estimatedYears:4,stages:['postdoc']},'f1101fdf08894db04e8f8c30e8f9dc0b0fc48becede24c5d744cc219f58bf4ec'],
+    [{includeInferredDepartments:true,stages:['doctoral','postdoc','first_faculty']},'25467c5928b71e835633e96a1352c26930dcc58f33aa31bee29d225cd4b0d114'],
+    [{includeInferredDepartments:false,stages:['doctoral','postdoc','first_faculty']},'024357ada482adeff18258395ff3a6f41b4089d29bcb749585ae9d8fdd01fc41'],
+    [{includeInferredDepartments:true,includeEstimated:false,stages:['doctoral','postdoc','first_faculty']},'defffbdce30eedd460b929de1288f03bdea05e5c3c8ab6d436e17530dc4d0c0e'],
+    [{includeInferredDepartments:true,estimatedYears:4,stages:['postdoc']},'eeecc1bc8e30ef0d67777a4c6f2f17dfba24a9f55010c2b1a398606e9da5feb1'],
   ];
   for(const [options,digest] of cases){
     const index=createLifetimeIndex(indexFixture(),{releaseYear:2026,...options});
     assert.deepEqual(index.ids,['Z','B','teacher','A','foreign','missing','inferred-faculty','stale']);
-    const actual=index.ids.map(id=>{const result=index.get(id);return {...result,stages:result.stages.filter(s=>s.stage!=='current')};});
+    const actual=index.ids.map(id=>historicalProjection(index.get(id)));
     assert.equal(createHash('sha256').update(JSON.stringify(actual)).digest('hex'),digest);
   }
 });

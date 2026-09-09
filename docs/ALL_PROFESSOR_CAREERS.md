@@ -4,7 +4,7 @@ The career page starts with a searchable directory of all 3,937 professors in th
 
 The three default columns summarize doctoral, postdoc, and current-institution groups. An optional checkbox adds explicitly verified first-assistant groups to both the directory and graph. A supported interval without a matching peer is distinguished from a stage with insufficient evidence. Incomplete computation is never displayed as zero connections. Total peers count distinct other researchers across the enabled stages, rather than summing stage totals. These are individual-centred groups; summing their counts would not measure unique hyperedges in a global graph.
 
-Current-institution groups use the same canonical school and recorded broad subject (mathematics, physics, chemistry, or biology), with employment observed in the release year. Different, missing, or inferred department strings do not split current colleagues. Historical doctoral and first-assistant groups still require department evidence, and postdoc groups compare institutions. Each researcher can belong to all applicable stage groups at once.
+All career stages require the same recorded broad subject (mathematics, physics, chemistry, or biology). Doctoral and first-assistant groups additionally require matching historical school/department evidence; postdoc groups require the same institution and overlapping dates. Current-institution groups use the same canonical school and recorded subject, with employment observed in the release year. Different, missing, or inferred department strings do not split current colleagues. The roster field filter is identified separately from historical department evidence; it never fills a missing past department. Each researcher can belong to all applicable stage groups at once.
 
 ## Current coverage
 
@@ -13,14 +13,14 @@ With the UI defaults (doctoral, postdoc and current stages; estimated doctoral w
 | Coverage | Professors |
 | --- | ---: |
 | All directory entries | 3,937 |
-| At least one supported group | 3,309 |
-| Eligible interval, but no matching peer | 24 |
+| At least one supported group | 3,305 |
+| Eligible interval, but no matching peer | 28 |
 | No eligible interval in the enabled stages | 604 |
 
 | Stage | Eligible interval | At least one group |
 | --- | ---: | ---: |
-| Doctoral | 800 | 446 |
-| Postdoc | 2,392 | 2,183 |
+| Doctoral | 800 | 427 |
+| Postdoc | 2,392 | 2,016 |
 | Verified first assistant professor (optional) | 1 | 0 |
 | Current institution | 3,241 | 3,240 |
 
@@ -45,3 +45,7 @@ A department is attached to a historical degree or career only when its source i
 Checks cover full-release ID retention, isolated researchers, stage counts, evidence-preserving index parity with the previous implementation, source-institution mismatches, aliases, and anonymous worker projections. Sampled detailed graphs agree with their directory summaries. TypeScript, lint, the complete JavaScript suite and the production build are checked before deployment. The simultaneous-membership update also tests shared doctoral/current peers with different postdocs, optional first-assistant/current edges with identical members, visible edge context, and deterministic collision-free layout.
 
 The current-school/subject regression checks all ten Gyeongsang National University physics researchers from either side of the former six/four department-text split, with inferred departments both enabled and disabled. Whole-release checks retain specific current schools with missing country without filling that country, preserve explicit campuses and dated merger rules, and exclude stale or unsupported current observations. Detailed layout workers consume the prepared lifetime groups so narrowing the graph's node set cannot reinterpret membership or change group IDs.
+
+The career-field regression excludes different-field doctoral peers even when their historical department text matches, and separates physics/mathematics postdoc connections at institutions such as the Korea Institute for Advanced Study. Same-field colleagues remain eligible across all applicable stages, including doctoral/faculty overlaps and simultaneous doctoral/postdoc/current membership.
+
+For anonymous researcher `P-XKPSPQXY7D`, the same-field guard changes the doctoral group from 22 to 21 members, the Oxford postdoc group from 7 to 3, and the Korea Institute for Advanced Study postdoc group from 34 to 14. The current group stays at 10 members. All four groups remain present, with 41 distinct nodes rather than 66; these group counts include the selected researcher. This checks membership filtering rather than only recoloring nodes.

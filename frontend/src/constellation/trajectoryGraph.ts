@@ -30,7 +30,7 @@ export function buildTrajectoryHypergraph(records: readonly ResearcherRecord[], 
       label: group.label, members, institution: group.institution, department: group.department, country: group.country,
       years: Array.from({ length: group.endYear - group.startYear + 1 }, (_, i) => group.startYear + i),
       lifetimeStage: group.stage, condition: group.condition, startYear: group.startYear, endYear: group.endYear,
-      ...(group.matchingBasis ? { matchingBasis: group.matchingBasis, subject: group.subject } : {}),
+      ...(group.matchingBasis ? { matchingBasis: group.matchingBasis, subject: group.subject, subjectProvenance: group.subjectProvenance } : {}),
       estimated: group.estimated, inferredDepartment: group.inferredDepartment,
       temporalSemantics: group.temporalSemantics, memberEvidence: evidence,
       weight: 1, sizeAdjustment: 1, overlapAdjustment: 1 });
