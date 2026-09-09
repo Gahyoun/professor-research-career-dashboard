@@ -14,7 +14,8 @@ export interface LifetimeOptions {
   stages?: readonly LifetimeStage[];
 }
 export interface LifetimeInterval {
-  id: string; stage: LifetimeStage; unitKey: string; institution: string; department?: string; country: string;
+  id: string; stage: LifetimeStage; unitKey: string; institution: string; department?: string; country: string | null;
+  matchingBasis?: 'institution_subject'; subject?: string;
   startYear: number; endYear: number; estimated: boolean; inferredDepartment: boolean; basis: string[];
 }
 export interface LifetimeGroup extends LifetimeInterval {
@@ -53,15 +54,17 @@ const CONDITIONS: Record<LifetimeStage, string> = {
   doctoral: '같은 학교·학과에서 재학 기간이 겹친 박사과정 동료와 재직이 확인된 교수',
   postdoc: '같은 기관에서 포닥 기간이 겹친 박사과정·포닥 동료와 재직이 확인된 교수',
   first_faculty: '첫 조교수 임용이 명확히 확인된 구간의 같은 학교·학과 재직 교수',
-  current: '기준 연도의 현직 관측에서 같은 학교·학과에 소속된 연구자',
+  current: '기준 연도의 현직 관측에서 같은 학교·계열(수학·물리·화학·생물)에 소속된 연구자',
 };
+const SUBJECT_LABELS: Record<string, string> = { mathematics: '수학', physics: '물리', chemistry: '화학', biology: '생물' };
 type Role = LifetimeEvidence['peerStage'];
 type SourceInterval = {
   role: Role; unit: InstitutionUnit; start: number; end: number; estimated: boolean;
-  basis: string[]; firstAssistant: boolean;
+  basis: string[]; firstAssistant: boolean; subject?: string;
 };
 type Profile = { intervals: SourceInterval[]; reasons: Record<LifetimeStage, string[]>; unverifiedFaculty: number };
-type ValidUnit = { key: string; institution: string; country: string; department?: string; inferred: boolean };
+type ValidUnit = { key: string; institution: string; country: string | null; department?: string; inferred: boolean;
+  matchingBasis?: 'institution_subject'; subject?: string };
 
 function validYear(year: unknown): year is number {
   return typeof year === 'number' && Number.isInteger(year) && year >= 1900 && year <= 3000;
@@ -95,7 +98,8 @@ function profile(record: ResearcherRecord, options: LifetimeOptions): Profile {
     if (estimated && options.includeEstimated === false) {
       result.reasons[stage].push('추정 기간을 제외한 상태입니다.'); return;
     }
-    result.intervals.push({ role, unit, start, end, estimated, basis, firstAssistant });
+    result.intervals.push({ role, unit, start, end, estimated, basis, firstAssistant,
+      ...(role === 'current' ? { subject: record.subject } : {}) });
   };
   const careers = record.career ?? [];
   const actualDoctoral = careers.filter(c => stageOf(c.stage) === 'doctoral' && c.is_estimated === false &&
@@ -161,6 +165,21 @@ function validateUnit(unit: InstitutionUnit, institutionOnly: boolean, options: 
     { reason: '학교·학과 단위가 일치하는지 확인할 수 없습니다.' };
 }
 
+/** Current affiliation uses the recorded broad field, never a historical or inferred department. */
+function validateCurrentUnit(unit: InstitutionUnit, subject: string | undefined,
+  schoolCountries: ReadonlyMap<string, ReadonlySet<string>>): ReturnType<typeof validateUnit> {
+  const institution = normalizeInstitution(unit.institution_canonical) ?? normalizeInstitution(unit.institution);
+  if (!institution) return { reason: '기관 정보가 없거나 해석되지 않은 기관 코드입니다.' };
+  if (!subject || !Object.hasOwn(SUBJECT_LABELS, subject)) return { reason: '수학·물리·화학·생물 계열 정보가 없거나 확인되지 않았습니다.' };
+  const country = normalizeCountry(unit.country);
+  // A specific observed current school is sufficient when country is missing.
+  // Contradictory known countries stay separate, including an unknown partition.
+  const partition = (schoolCountries.get(institution)?.size ?? 0) > 1 ? `::country:${country ?? 'unknown'}` : '';
+  const label = (normalizeInstitution(unit.institution_canonical) ? unit.institution_canonical : unit.institution)!.trim();
+  return { unit: { key: `institution:${institution}${partition}::subject:${subject}`,
+    institution: label, country, inferred: false, matchingBasis: 'institution_subject', subject } };
+}
+
 function permittedPeer(stage: LifetimeStage, peer: SourceInterval): boolean {
   if (stage === 'doctoral') return peer.role === 'doctoral' || peer.role === 'faculty';
   if (stage === 'postdoc') return peer.role === 'doctoral' || peer.role === 'postdoc' || peer.role === 'faculty';
@@ -175,25 +194,44 @@ function selectedFor(stage: LifetimeStage, interval: SourceInterval): boolean {
  * Ego-window unions: each member overlaps the selected person's stage interval.
  * Members need not overlap one another, and yearly memberships are never implied.
  */
-export function createLifetimeIndex(records: readonly ResearcherRecord[], inputOptions: LifetimeOptions = {}): LifetimeIndex {
+export function createLifetimeIndex(records: readonly ResearcherRecord[], inputOptions: LifetimeOptions = {},
+  currentContextRecords: readonly ResearcherRecord[] = records): LifetimeIndex {
   // Capture options so an existing index cannot change when caller state changes.
   const options = { ...inputOptions, stages: inputOptions.stages ? [...inputOptions.stages] : undefined };
   const distinct = new Map<string, ResearcherRecord>();
   for (const record of records) if (typeof record.id === 'string' && record.id.trim() && !distinct.has(record.id)) distinct.set(record.id, record);
   const profiles = new Map([...distinct].map(([id, record]) => [id, profile(record, options)]));
   const unverifiedFacultyIntervals = [...profiles.values()].reduce((sum, p) => sum + p.unverifiedFaculty, 0);
+  // Current country conflicts belong to the full comparison population even
+  // when a subject/search filter narrows the candidate records. Reuse prepared
+  // profiles for shared objects; this context never adds members to the index.
+  const contextProfiles = currentContextRecords === records ? profiles : new Map<string, Profile>();
+  if (currentContextRecords !== records) for (const record of currentContextRecords) {
+    if (typeof record.id !== 'string' || !record.id.trim() || contextProfiles.has(record.id)) continue;
+    contextProfiles.set(record.id, distinct.get(record.id) === record ? profiles.get(record.id)! : profile(record, options));
+  }
+  const currentSchoolCountries = new Map<string, Set<string>>();
+  for (const prepared of contextProfiles.values()) for (const interval of prepared.intervals) {
+    if (interval.role !== 'current') continue;
+    const school = normalizeInstitution(interval.unit.institution_canonical) ?? normalizeInstitution(interval.unit.institution);
+    const country = normalizeCountry(interval.unit.country);
+    if (!school || !country) continue;
+    if (!currentSchoolCountries.has(school)) currentSchoolCountries.set(school, new Set());
+    currentSchoolCountries.get(school)!.add(country);
+  }
   type UnitCheck = ReturnType<typeof validateUnit>;
   type PreparedPeer = { source: SourceInterval; unit: ValidUnit };
-  const checks = new Map<SourceInterval, { department: UnitCheck; institution: UnitCheck }>();
+  const checks = new Map<SourceInterval, { department: UnitCheck; institution: UnitCheck; current: UnitCheck }>();
   // Stage -> matching unit -> peer -> intervals. Insertion order preserves the
   // original researcher order and evidence precedence without a full scan per ego.
   const candidates = new Map<LifetimeStage, Map<string, Map<string, PreparedPeer[]>>>(STAGES.map(stage => [stage, new Map()]));
   for (const [peerId, peerProfile] of profiles) for (const source of peerProfile.intervals) {
-    const checked = { department: validateUnit(source.unit, false, options), institution: validateUnit(source.unit, true, options) };
+    const checked = { department: validateUnit(source.unit, false, options), institution: validateUnit(source.unit, true, options),
+      current: source.role === 'current' ? validateCurrentUnit(source.unit, source.subject, currentSchoolCountries) : {} };
     checks.set(source, checked);
     for (const stage of STAGES) {
       if (!permittedPeer(stage, source)) continue;
-      const unit = (stage === 'postdoc' ? checked.institution : checked.department).unit;
+      const unit = (stage === 'current' ? checked.current : stage === 'postdoc' ? checked.institution : checked.department).unit;
       if (!unit) continue;
       const stageCandidates = candidates.get(stage)!;
       if (!stageCandidates.has(unit.key)) stageCandidates.set(unit.key, new Map());
@@ -221,7 +259,7 @@ export function createLifetimeIndex(records: readonly ResearcherRecord[], inputO
       const intervalKeys = new Set<string>();
       for (const source of selected.intervals.filter(i => selectedFor(stage, i))) {
         coverage.totalIntervals++;
-        const checked = stage === 'postdoc' ? checks.get(source)!.institution : checks.get(source)!.department;
+        const checked = stage === 'current' ? checks.get(source)!.current : stage === 'postdoc' ? checks.get(source)!.institution : checks.get(source)!.department;
         if (!checked.unit) {
           stageResult.excludedReasons.push(checked.reason!);
           if (checked.reason!.startsWith('해당 시기의 학과')) coverage.missingDepartmentIntervals++;
@@ -230,15 +268,16 @@ export function createLifetimeIndex(records: readonly ResearcherRecord[], inputO
           continue;
         }
         const unit = checked.unit;
+        const matching = unit.matchingBasis ? { matchingBasis: unit.matchingBasis, subject: unit.subject } : {};
         const id = `lifetime:${stage}:${unit.key}:${source.start}:${source.end}`;
         if (intervalKeys.has(id)) continue;
         intervalKeys.add(id);
         const interval: LifetimeInterval = { id, stage, unitKey: unit.key, institution: unit.institution,
           country: unit.country, department: unit.department, startYear: source.start, endYear: source.end,
-          estimated: source.estimated, inferredDepartment: unit.inferred, basis: [...source.basis] };
+          estimated: source.estimated, inferredDepartment: unit.inferred, basis: [...source.basis], ...matching };
         stageResult.intervals.push(interval); coverage.eligibleIntervals++;
         for (let year = source.start; year <= source.end; year++) selectedTokens.add(`${stage}:${unit.key}:${year}`);
-        const group: LifetimeGroup = { ...interval, label: `${LABELS[stage]} · ${unit.institution}${unit.department ? ` · ${unit.department}` : ''} · ${source.start === source.end ? source.start : `${source.start}–${source.end}`}`,
+        const group: LifetimeGroup = { ...interval, label: `${LABELS[stage]} · ${unit.institution}${unit.subject ? ` · ${SUBJECT_LABELS[unit.subject]}` : unit.department ? ` · ${unit.department}` : ''} · ${source.start === source.end ? source.start : `${source.start}–${source.end}`}`,
           condition: CONDITIONS[stage], members: [selectedId], memberEvidence: [], temporalSemantics: 'selected_interval_union' };
         for (const [peerId, peerIntervals] of candidates.get(stage)!.get(unit.key) ?? []) {
           if (peerId === selectedId) continue;
@@ -250,11 +289,12 @@ export function createLifetimeIndex(records: readonly ResearcherRecord[], inputO
             if (evidenceKeys.has(key)) continue;
             evidenceKeys.add(key);
             const evidence: LifetimeEvidence = { peerId, unitKey: unit.key, institution: unit.institution,
-              country: unit.country, department: unit.department, selectedStage: stage, peerStage: peer.role,
+              country: stage === 'current' && (!unit.country || !peerUnit.country) ? null : unit.country,
+              department: unit.department, selectedStage: stage, peerStage: peer.role,
               startYear, endYear, selectedStartYear: source.start, selectedEndYear: source.end,
               peerStartYear: peer.start, peerEndYear: peer.end, estimated: source.estimated || peer.estimated,
               inferredDepartment: unit.inferred || peerUnit.inferred,
-              basis: [...new Set([...source.basis, ...peer.basis])], };
+              basis: [...new Set([...source.basis, ...peer.basis])], ...matching };
             group.memberEvidence.push(evidence);
             group.inferredDepartment ||= evidence.inferredDepartment;
             group.estimated ||= evidence.estimated;

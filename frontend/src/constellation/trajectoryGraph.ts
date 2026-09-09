@@ -1,9 +1,15 @@
 import { buildHypergraph, type Hypergraph, type ResearcherRecord } from './hypergraph';
-import { buildLifetimeTrajectory, type LifetimeOptions } from './lifetime';
+import { buildLifetimeTrajectory, type LifetimeOptions, type LifetimeResult } from './lifetime';
 
-/** Stage-window ego unions, with individual overlap evidence on every member. */
+/**
+ * Stage-window ego unions, with individual overlap evidence on every member.
+ * An induced node subset must receive the result prepared against the full
+ * comparison population: country conflicts and membership cannot be re-inferred
+ * from the subset after a potentially conflicting school record disappears.
+ */
 export function buildTrajectoryHypergraph(records: readonly ResearcherRecord[], selectedId: string,
-  options: LifetimeOptions = {}): Hypergraph {
+  options: LifetimeOptions = {}, preparedLifetime?: LifetimeResult): Hypergraph {
+  if (preparedLifetime && preparedLifetime.selectedId !== selectedId) throw new Error('Lifetime selection does not match graph selection.');
   const graph = buildHypergraph(records, { spatialEnabled: false, temporalEnabled: false, cohortEnabled: false,
     includeEstimated: options.includeEstimated, estimatedYears: options.estimatedYears,
     includeInferredDepartments: options.includeInferredDepartments });
@@ -11,17 +17,20 @@ export function buildTrajectoryHypergraph(records: readonly ResearcherRecord[], 
   const selectedIndex = index.get(selectedId);
   graph.timeWindows = [];
   if (selectedIndex === undefined) return graph;
-  const lifetime = buildLifetimeTrajectory(records, selectedId, options);
-  const groups = lifetime.stages.flatMap(stage => stage.groups);
+  const lifetime = preparedLifetime ?? buildLifetimeTrajectory(records, selectedId, options);
+  const enabled = options.stages ? new Set(options.stages) : null;
+  const groups = lifetime.stages.filter(stage => !enabled || enabled.has(stage.stage)).flatMap(stage => stage.groups);
   const sharedYears = graph.nodes.map(() => new Set<number>());
   for (const group of groups) {
     const members = group.members.map(id => index.get(id)).filter((i): i is number => i !== undefined).sort((a, b) => a - b);
     if (members.length < 2) continue;
-    const evidence = group.memberEvidence.filter(item => index.has(item.peerId));
+    const evidence = group.memberEvidence.filter(item => index.has(item.peerId))
+      .map(item => ({ ...item, basis: [...item.basis] }));
     graph.edges.push({ id: group.id, kind: 'cohort', degree: group.stage === 'doctoral' ? 'phd' : undefined,
       label: group.label, members, institution: group.institution, department: group.department, country: group.country,
       years: Array.from({ length: group.endYear - group.startYear + 1 }, (_, i) => group.startYear + i),
       lifetimeStage: group.stage, condition: group.condition, startYear: group.startYear, endYear: group.endYear,
+      ...(group.matchingBasis ? { matchingBasis: group.matchingBasis, subject: group.subject } : {}),
       estimated: group.estimated, inferredDepartment: group.inferredDepartment,
       temporalSemantics: group.temporalSemantics, memberEvidence: evidence,
       weight: 1, sizeAdjustment: 1, overlapAdjustment: 1 });
