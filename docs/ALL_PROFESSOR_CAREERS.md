@@ -2,24 +2,24 @@
 
 The career page starts with a searchable directory of all 3,937 professors in the public release. Each row opens that professor's lifetime hypergraph, including a singleton graph when no supported colleague can be found. The directory supports institution, subject and connection-status filters, with 50 rows per page and direct page selection. Opening a row clears the graph's subject filter so the selected professor is compared with the entire release.
 
-The four columns summarize doctoral, postdoc, explicitly verified first-assistant, and current-institution groups. A supported interval without a matching peer is distinguished from a stage with insufficient evidence. Incomplete computation is never displayed as zero connections. Total peers count distinct other researchers across all four stages, rather than summing stage totals. These are individual-centred groups; summing their counts would not measure unique hyperedges in a global graph.
+The three default columns summarize doctoral, postdoc, and current-institution groups. An optional checkbox adds explicitly verified first-assistant groups to both the directory and graph. A supported interval without a matching peer is distinguished from a stage with insufficient evidence. Incomplete computation is never displayed as zero connections. Total peers count distinct other researchers across the enabled stages, rather than summing stage totals. These are individual-centred groups; summing their counts would not measure unique hyperedges in a global graph.
 
 ## Current coverage
 
-With the UI defaults (estimated doctoral windows enabled, five-year backward offset, inferred departments included), the release produces:
+With the UI defaults (doctoral, postdoc and current stages; estimated doctoral windows enabled, five-year backward offset, inferred departments included), the release produces:
 
 | Coverage | Professors |
 | --- | ---: |
 | All directory entries | 3,937 |
 | At least one supported group | 2,899 |
 | Eligible interval, but no matching peer | 180 |
-| No eligible interval in the four stages | 858 |
+| No eligible interval in the enabled stages | 858 |
 
 | Stage | Eligible interval | At least one group |
 | --- | ---: | ---: |
 | Doctoral | 800 | 446 |
 | Postdoc | 2,392 | 2,183 |
-| Verified first assistant professor | 1 | 0 |
+| Verified first assistant professor (optional) | 1 | 0 |
 | Current institution | 2,298 | 2,098 |
 
 Stage counts overlap and must not be added. A missing connection does not establish the absence of a real relationship. These figures describe the current evidence and settings, not complete or independently verified biographies. In particular, paper-derived departments remain inferred; their observation dates are retained. The first-assistant stage is not inferred from career order. Matching and interval semantics are documented in [HYPERGRAPH_METHOD.md](HYPERGRAPH_METHOD.md).
@@ -38,4 +38,4 @@ A department is attached to a historical degree or career only when its source i
 
 ## Validation
 
-Checks cover full-release ID retention, isolated researchers, stage counts, evidence-preserving index parity with the previous implementation, source-institution mismatches, aliases, and anonymous worker projections. Sampled detailed graphs agree with their directory summaries. TypeScript, lint, the complete JavaScript suite and the production build are checked before deployment. Interactive browser QA was unavailable because the host screen was locked.
+Checks cover full-release ID retention, isolated researchers, stage counts, evidence-preserving index parity with the previous implementation, source-institution mismatches, aliases, and anonymous worker projections. Sampled detailed graphs agree with their directory summaries. TypeScript, lint, the complete JavaScript suite and the production build are checked before deployment. The simultaneous-membership update also tests shared doctoral/current peers with different postdocs, optional first-assistant/current edges with identical members, visible edge context, and deterministic collision-free layout.

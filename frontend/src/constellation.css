@@ -44,6 +44,18 @@
 .atlas-sidebar { border-left: 1px solid #b1b8be; background: #f4f5f6; }
 .atlas-sidebar-section { padding: 24px 22px; border-bottom: 1px solid #e8edef; }
 .atlas-sidebar-section:last-child { border-bottom: 0; }
+.atlas-memberships > strong { display: block; font-size: 14px; overflow-wrap: anywhere; }
+.atlas-memberships > p { font-size: 12px; color: #58616a; line-height: 1.6; overflow-wrap: anywhere; }
+.atlas-memberships > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.atlas-memberships > div button { display: flex; align-items: center; gap: 7px; padding: 7px 9px; background: #fff; border: 1px solid #cdd1d5; border-radius: 4px; color: #343b43; text-align: left; }
+.atlas-memberships > div button[aria-pressed=true] { border-color: var(--membership-color); box-shadow: inset 0 0 0 1px var(--membership-color); }
+.atlas-memberships i { width: 8px; height: 8px; border-radius: 50%; background: var(--membership-color); flex-shrink: 0; }
+.atlas-memberships small { display: block; font-size: 11px; color: #58616a; margin-top: 3px; }
+.atlas-member-recenter { border: 0; padding: 6px 0; color: #0b50d0; background: transparent; font-size: 13px; }
+.lifetime-first-option { margin: 0 0 16px; color: #464c53; }
+.lifetime-shared-memberships { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 9px; }
+.lifetime-shared-memberships button { border: 1px solid; border-radius: 3px; background: #fff; padding: 4px 6px; font-size: 11px; }
+.lifetime-shared-memberships button[aria-pressed=true] { background: #f0f3f7; font-weight: 700; }
 .atlas-sidebar h2 { font-size: 15px; font-weight: 700; margin: 0 0 19px; display: flex; justify-content: space-between; }
 .atlas-sidebar h2 > span { font-family: inherit; font-weight: 400; font-size: 15px; color: #6d7882; }
 .atlas-search-label { font-size: 13px; display: block; color: #758690; margin-bottom: 8px; }
@@ -212,7 +224,7 @@
 .lifetime-explorer { margin: 22px 0; }
 .lifetime-explorer .atlas-section-title > button { border: 1px solid #b1b8be; border-radius: 6px; padding: 10px 16px; font-size: 15px; background: #fff; }
 .lifetime-explorer .atlas-section-title > button.selected { border-color: #256ef4; color: #0b50d0; background: #ecf2fe; }
-.lifetime-stage-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.lifetime-stage-filters { display: grid; grid-template-columns: repeat(var(--stage-count, 3), minmax(0, 1fr)); gap: 12px; }
 .lifetime-stage-filters > button { display: grid; align-content: start; gap: 9px; min-width: 0; text-align: left; padding: 16px 18px; background: #fff; border: 1px solid #cdd1d5; border-top: 4px solid var(--stage-color); border-radius: 6px; color: #1e2124; line-height: 1.5; }
 .lifetime-stage-filters > button.active { border-color: var(--stage-color); box-shadow: inset 0 0 0 1px var(--stage-color); background: #f4f5f6; }
 .lifetime-stage-filters > button:hover { background: #f4f5f6; }

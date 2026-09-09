@@ -13,10 +13,12 @@ type Props = {
   progress: number;
   error?: string;
   selectedId: string;
+  includeFirstFaculty?: boolean;
   onSelect: (id: string) => void;
 };
 type ConnectionFilter = 'all' | 'connected' | 'unconnected';
-const stages: LifetimeStage[] = ['doctoral', 'postdoc', 'first_faculty', 'current'];
+const defaultStages: LifetimeStage[] = ['doctoral', 'postdoc', 'current'];
+const allStages: LifetimeStage[] = ['doctoral', 'postdoc', 'first_faculty', 'current'];
 const subjectLabels: Record<string, string> = { mathematics: '수학', physics: '물리학', chemistry: '화학', biology: '생물학' };
 const pageSize = 50;
 const count = (value: number) => value.toLocaleString('ko-KR');
@@ -25,7 +27,9 @@ const searchable = (value: string) => value.normalize('NFKC').toLocaleLowerCase(
 const institutionValue = (value: string | null) => JSON.stringify(value?.trim() || null);
 const institutionLabel = (value: string | null) => value?.trim() ? institutionDisplayName(value) : '재직기관 미확인';
 
-export default function CareerDirectory({ professors, names, summaries, progress, error, selectedId, onSelect }: Props) {
+export default function CareerDirectory({ professors, names, summaries, progress, error, selectedId, includeFirstFaculty = false, onSelect }: Props) {
+  const stages = includeFirstFaculty ? allStages : defaultStages;
+  const stageDescription = stages.map(stage => lifetimeStageLabels[stage]).join('·');
   const [open, setOpen] = useState(true);
   const [queryState, setQueryState] = useState({ names, text: '' });
   const query = queryState.names === names ? queryState.text : '';
@@ -67,7 +71,7 @@ export default function CareerDirectory({ professors, names, summaries, progress
   return <details className="career-directory" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary className="cd-summary"><span><strong>전체 교수 경력 탐색</strong><span className="cd-total">전체 대상 {count(professors.length)}명</span></span><span className="cd-toggle" aria-hidden="true">{open ? '목록 접기' : '목록 펼치기'} <span>{open ? '−' : '+'}</span></span></summary>
     <div className="cd-body">
-      <div className="cd-intro"><p>모든 교수의 네 단계 경력 연결을 확인하고 개인 그래프를 여세요. 경력 근거가 부족하거나 연결 상대가 없는 교수도 목록에 포함합니다.</p><span className="cd-privacy">{names ? '이름 공개 상태' : '익명 탐색 중'}</span></div>
+      <div className="cd-intro"><p>모든 교수의 {stageDescription} 경력 연결을 확인하고 개인 그래프를 여세요. 경력 근거가 부족하거나 연결 상대가 없는 교수도 목록에 포함합니다.</p><span className="cd-privacy">{names ? '이름 공개 상태' : '익명 탐색 중'}</span></div>
       <p className="cd-coverage">전체 {count(professors.length)}명 중 요약 완료 {count(completedCount)}명 · 하나 이상 연결된 교수 {count(connectedCount)}명{incompleteCount > 0 ? ' (계산 완료 기준)' : ''}</p>
 
       <div className="cd-filters" role="group" aria-label="교수 목록 필터">
@@ -84,8 +88,8 @@ export default function CareerDirectory({ professors, names, summaries, progress
       <p className="cd-guide">현재 추정 설정을 적용해 전체 분야를 비교한 결과입니다. 단계별 표시는 연결된 집단 수입니다. ‘겹친 상대 없음’은 경력 구간은 있지만 조건이 겹친 상대를 찾지 못한 경우이며, ‘근거 부족’은 연결에 필요한 경력 근거가 없는 경우입니다.</p>
       <p className="cd-scroll-hint">좁은 화면에서는 표를 좌우로 이동할 수 있습니다.</p>
 
-      <div ref={tableScroll} className="cd-table-scroll" tabIndex={0} role="region" aria-label="전체 교수 경력 목록. 좌우와 위아래 스크롤 가능">
-        <table className="cd-table"><caption className="cd-sr-only">전체 대상 {count(professors.length)}명 중 필터 결과 {count(rows.length)}명. 박사과정, 포닥, 첫 조교수, 현직의 연결 집단과 전체 동료 수</caption><colgroup><col className="cd-col-person" /><col className="cd-col-subject" />{stages.map(stage => <col key={stage} className="cd-col-stage" />)}<col className="cd-col-peers" /><col className="cd-col-action" /></colgroup>
+      <div ref={tableScroll} className="cd-table-scroll" tabIndex={0} role="region" aria-label={`전체 교수 ${stageDescription} 경력 목록. 좌우와 위아래 스크롤 가능`}>
+        <table className="cd-table"><caption className="cd-sr-only">전체 대상 {count(professors.length)}명 중 필터 결과 {count(rows.length)}명. {stageDescription}의 연결 집단과 전체 동료 수</caption><colgroup><col className="cd-col-person" /><col className="cd-col-subject" />{stages.map(stage => <col key={stage} className="cd-col-stage" />)}<col className="cd-col-peers" /><col className="cd-col-action" /></colgroup>
           <thead><tr><th scope="col">연구자 · 현재 재직기관</th><th scope="col">분야</th>{stages.map(stage => <th key={stage} scope="col"><span className="cd-stage-title"><i style={{ backgroundColor: lifetimeStageColors[stage] }} aria-hidden="true" />{lifetimeStageLabels[stage]}</span></th>)}<th scope="col" className="cd-number">전체 동료</th><th scope="col">개인 그래프</th></tr></thead>
           <tbody>{pageRows.map(person => {
             const summary = summaries?.[person.id];
@@ -108,7 +112,7 @@ export default function CareerDirectory({ professors, names, summaries, progress
       </div>
 
       <nav className="cd-pagination" aria-label="전체 교수 목록 페이지"><span>{rows.length ? `${count(currentPage * pageSize + 1)}–${count(Math.min((currentPage + 1) * pageSize, rows.length))} / ${count(rows.length)}명` : '0명'}</span><div><button type="button" className="cd-button" disabled={currentPage === 0} onClick={() => goToPage(currentPage - 1)}>← 이전</button><label className="cd-page-select"><span className="cd-sr-only">이동할 페이지</span><select value={currentPage} onChange={event => goToPage(Number(event.target.value))}>{Array.from({ length: pageCount }, (_, index) => <option key={index} value={index}>{count(index + 1)}</option>)}</select><span> / {count(pageCount)}</span></label><button type="button" className="cd-button" disabled={currentPage + 1 >= pageCount} onClick={() => goToPage(currentPage + 1)}>다음 →</button></div></nav>
-      <p className="cd-note">전체 동료는 네 단계에서 연결된 서로 다른 연구자 수이며, 단계별 인원을 더한 값이 아닙니다. 계산된 연결이 없다는 표시는 실제 인적 관계가 없다는 뜻이 아닙니다. {names ? '이름과 익명 ID로 검색할 수 있습니다.' : '비밀번호로 이름을 공개하기 전에는 익명 ID와 현직 기관으로 탐색합니다.'}</p>
+      <p className="cd-note">전체 동료는 표시된 {stageDescription} 단계에서 연결된 서로 다른 연구자 수이며, 단계별 인원을 더한 값이 아닙니다. 계산된 연결이 없다는 표시는 실제 인적 관계가 없다는 뜻이 아닙니다. {names ? '이름과 익명 ID로 검색할 수 있습니다.' : '비밀번호로 이름을 공개하기 전에는 익명 ID와 현직 기관으로 탐색합니다.'}</p>
     </div>
   </details>;
 }
