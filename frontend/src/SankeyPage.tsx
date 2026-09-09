@@ -1,9 +1,10 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useId, useMemo, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { Professor } from './types';
 import { buildInstitutionOptions, buildSankey, colorOfOrigin, institutionLabel, layoutSankey, ribbonPath, STAGES, STAGE_LABELS, SUBJECT_LABELS } from './sankey';
 import type { FlowNode, FlowLink, FlowRoute, FlowStage } from './sankey';
 import { institutionSearchText } from './schoolIdentity';
+import ZoomableFlowViewport from './ZoomableFlowViewport';
 import './sankey.css';
 
 type Props = { professors: Professor[]; names: Record<string, string> | null; onSelect: (id: string) => void; releaseYear: number };
@@ -48,8 +49,7 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
   const [previousData, setPreviousData] = useState(data);
   // A changed cohort or grouping invalidates all interactions, including stale prop updates.
   if (previousData !== data) { setPreviousData(data); setSelection(null); setHover(null); setPage(0); setPeoplePage(0); setSearchState({ names, text: '' }); }
-  const chartScroll = useRef<HTMLDivElement>(null);
-  useEffect(() => { chartScroll.current?.scrollTo({ top: 0, left: 0 }); }, [data]);
+  const clearGraphHover = useCallback(() => setHover(null), []);
   const labelLines = useMemo(() => new Map(data.nodes.map(node => [node.id, nodeTextLines(node.label)])), [data]);
   const layout = useMemo(() => layoutSankey(data, new Map([...labelLines].map(([id, lines]) => [id, (lines.length + 1) * labelLineHeight + 12]))), [data, labelLines]);
   const professorMap = useMemo(() => new Map(professors.map(p => [p.id, p])), [professors]);
@@ -120,8 +120,7 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
       <div className="sk-chart-heading"><div><h2 id="sk-chart-title">학사 → 박사 → 현재 재직</h2><p>흐름의 두께는 연구자 수에 비례합니다. 기관이나 연결을 선택하면 해당 연구자의 경로가 드러납니다.</p></div><div className="sk-chart-actions"><button className="sk-button sk-button-subtle" onClick={() => { const heading = document.getElementById('sk-routes-title'); heading?.focus({ preventScroll: true }); heading?.scrollIntoView({ block: 'start' }); }}>경로 표로 이동</button><button className="sk-button sk-button-subtle" onClick={resetSelection} disabled={!selection}>선택 초기화</button></div></div>
       <div className="sk-legend" aria-label="흐름 색상 설명"><p><strong>학부 출신기관별 색상</strong> · 흐름을 가리키거나 아래 경로를 선택하면 실제 학부 기관을 확인할 수 있습니다.</p><p className="sk-legend-self"><i aria-hidden="true"/><span>진한 흐름: 학부 모교 재직</span></p></div>
       {data.count === 0 ? <div className="sk-empty"><strong>선택한 조건에 맞는 완비 경로가 없습니다.</strong><p>기관·연구 분야 필터를 조정하거나 모든 필터를 초기화해 주세요.</p></div> : <>
-        <div className="sk-scroll-note">모든 해당 기관을 표시합니다. 도표 안에서 위아래·좌우로 이동하거나 아래 경로 표로 탐색하세요.</div>
-        <div ref={chartScroll} className="sk-chart-scroll" tabIndex={0} role="region" aria-label="학력 흐름 도표. 위아래와 좌우 스크롤 가능">
+        <ZoomableFlowViewport width={layout.width} height={layout.height + 72} resetToken={data} onGestureStart={clearGraphHover}>
           <div className="sk-column-labels">{STAGES.map((s, i) => <div key={s}><span>0{i + 1}</span><strong>{STAGE_LABELS[s]}</strong><small>{count(data.count)}명 · {count(data.nodes.filter(node => node.stage === s).length)}개 표시 단위</small></div>)}</div>
           <svg className="sk-svg" viewBox={`0 0 ${layout.width} ${layout.height}`} width={layout.width} height={layout.height} aria-labelledby="sk-svg-title sk-svg-description">
             <title id="sk-svg-title">{SUBJECT_LABELS[subject] ?? '전체 분야'} 연구자 {count(data.count)}명의 학력과 재직기관 흐름</title>
@@ -154,7 +153,7 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
               </g>;
             })}</g>
           </svg>
-        </div>
+        </ZoomableFlowViewport>
         <div className="sk-chart-status" aria-live="polite">{hover ? <><strong>{hover.label}</strong><span>{count(hover.ids.length)}명 · 클릭하여 경로 고정</span></> : selection && selectedIds.size ? <><strong>{selection.label}</strong><span>{count(selectedIds.size)}명 선택됨</span></> : <><strong>어떤 경로가 궁금한가요?</strong><span>기관이나 흐름을 선택해 보세요.</span></>}</div>
       </>}
     </section>

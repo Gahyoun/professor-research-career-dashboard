@@ -18,6 +18,7 @@
     "frontend/src/privacy.ts",
     "frontend/src/metadata.ts",
     "frontend/src/sankey.ts",
+    "frontend/src/flowCamera.ts",
     "frontend/src/schoolIdentity.ts",
     "frontend/src/institutionStatistics.ts"
   ],
