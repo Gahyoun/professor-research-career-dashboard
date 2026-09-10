@@ -74,6 +74,32 @@ def riss_collection(country="KR"):
                     "department": None, "verification_status": "candidate_needs_degree_detail"}]}]}
 
 
+def library_seed(provider="kaist"):
+    payload = seed()
+    school = "Korea Advanced Institute of Science and Technology" if provider == "kaist" else "Seoul National University"
+    payload["education_records"][0].update(institution_canonical=school, institution_raw=school)
+    return payload
+
+
+def library_collection(provider="kaist", catalog=False):
+    anchor = library_seed(provider)["education_records"][0]
+    if provider == "kaist":
+        identifier, url = ("bib:123", "https://library.kaist.ac.kr/search/detail/view.do?bibCtrlNo=123&flag=dissertation") if catalog else ("10203/123", "https://koasas.kaist.ac.kr/handle/10203/123")
+    else:
+        identifier, url = ("dcollection:000000000123", "https://dcollection.snu.ac.kr/srch/srchDetail/000000000123") if catalog else ("10371/123", "https://s-space.snu.ac.kr/handle/10371/123")
+    item = thesis()
+    item.update(provider=provider, provider_record_id=identifier, source_url=url,
+                publisher=anchor["institution_canonical"], reported_degree_level="phd", reported_department="Physics")
+    return {"schema_version": 1, "source": "Official university repository", "candidates": [{
+        "degree_id": 1, "source_snapshot_sha256": SNAPSHOT,
+        "anchors": {key: anchor[key] for key in registry.LIBRARY_ANCHORS}, "thesis": item,
+        "observation": {"fetched_at": "2025-01-01T00:00:00Z", "retrieval_method": "direct_http",
+            "source_sha256": "c" * 64, "record_reference": "private/synthetic-record.html",
+            "authors": ["Synthetic Author 1", "Synthetic, Author 1"],
+            "source_metadata": {"degree_statement": "Thesis (Ph.D.) -- Synthetic Department of Physics, 2000.",
+                                "dc.contributor.author": ["Synthetic Author 1"], "dc.contributor.advisor": "Synthetic Advisor"}}}]}
+
+
 class ThesisRegistryTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -346,6 +372,188 @@ class ThesisRegistryTests(unittest.TestCase):
             self.assertEqual(registry.main(), 1)
         for private_value in ("SYNTHETIC_SECRET", "Synthetic Author", "fixture-1", str(self.database)):
             self.assertNotIn(private_value, output.getvalue())
+
+    def create_v2(self):
+        """A real v2 fixture, before the new migration or import API exists."""
+        with identities._connect(self.database) as conn:
+            conn.executescript(registry.SCHEMA.read_text() + "\nPRAGMA user_version=2;")
+            registry._insert_education(conn, SNAPSHOT, registry._education(education()))
+            registry._insert_thesis(conn, registry._thesis(thesis()), SNAPSHOT)
+            registry._insert_link(conn, 1, 1, "synthetic", {"notes": "Original candidate"})
+            registry._finish_batch(conn, "d" * 64, "normalized_seed", {"synthetic": 1})
+
+    def test_v2_migration_preserves_every_row_keys_and_append_only_reviews(self):
+        self.create_v2()
+        evidence = review()["evidence"]
+        with identities._connect(self.database) as conn:
+            conn.execute("UPDATE degree_thesis_links SET status='verified',reviewed_by='Synthetic reviewer',checked_at='2025-01-01T00:00:00Z',evidence=?", (json.dumps(evidence),))
+            conn.execute("INSERT INTO thesis_link_reviews VALUES(1,1,1,'candidate','verified','Synthetic reviewer','2025-01-01T00:00:00Z',?)", (json.dumps(evidence),))
+        tables = ("researchers", "education_records", "thesis_records", "degree_thesis_links", "thesis_link_reviews", "thesis_import_batches")
+        before = {table: self.rows("SELECT * FROM " + table) for table in tables}
+        result = registry.migrate(self.database)
+        self.assertEqual(result["schema_version"], 3)
+        self.assertEqual(result["source_observations"], 0)
+        self.assertEqual(before, {table: self.rows("SELECT * FROM " + table) for table in tables})
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+        self.assertEqual(self.rows("PRAGMA integrity_check"), [{"integrity_check": "ok"}])
+        self.assertEqual(len(self.rows("SELECT * FROM v_domestic_phd_theses")), 1)
+        with identities._connect(self.database) as conn, self.assertRaises(sqlite3.IntegrityError):
+            conn.execute("DELETE FROM thesis_link_reviews")
+
+    def test_v2_migration_late_failure_rolls_back_table_replacement(self):
+        self.create_v2()
+        original = self.rows("SELECT * FROM sqlite_master ORDER BY name")
+        with identities._connect(self.database) as conn:
+            conn.execute("CREATE TABLE thesis_source_observations(dummy TEXT)")
+        with self.assertRaises(sqlite3.Error):
+            registry.migrate(self.database)
+        self.assertEqual(self.rows("PRAGMA user_version"), [{"user_version": 2}])
+        self.assertEqual(self.rows("SELECT * FROM sqlite_master WHERE name<>'thesis_source_observations' ORDER BY name"), original)
+        self.assertEqual(self.rows("SELECT provider FROM thesis_records"), [{"provider": "openalex"}])
+
+    def test_v2_migration_invalid_foreign_key_prevents_commit(self):
+        self.create_v2()
+        with sqlite3.connect(self.database) as conn:
+            conn.execute("UPDATE degree_thesis_links SET degree_id=999")
+        with self.assertRaises(identities.RegistryError):
+            registry.migrate(self.database)
+        self.assertEqual(self.rows("PRAGMA user_version"), [{"user_version": 2}])
+        self.assertFalse(self.rows("SELECT name FROM sqlite_master WHERE name='thesis_source_observations'"))
+
+    def test_library_handles_and_catalogs_are_candidates_with_immutable_observations(self):
+        for provider in ("kaist", "snu"):
+            with self.subTest(provider=provider):
+                self.populate(library_seed(provider))
+                for catalog in (False, True):
+                    payload = library_collection(provider, catalog)
+                    result = registry.import_library(self.database, payload)
+                    self.assertEqual(result["reviews"], 0)
+                    self.assertNotIn("verified", result["links"])
+                    self.assertTrue(registry.import_library(self.database, payload)["already_imported"])
+                self.assertEqual(registry.summary(self.database)["source_observations"], 2)
+                observed = self.rows("SELECT * FROM thesis_source_observations")[0]
+                self.assertEqual(observed["source_sha256"], "c" * 64)
+                self.assertEqual(observed["source_snapshot_sha256"], SNAPSHOT)
+                self.assertEqual(json.loads(observed["metadata"])["source_metadata"]["dc.contributor.advisor"], "Synthetic Advisor")
+                with identities._connect(self.database) as conn:
+                    for sql in ("UPDATE thesis_source_observations SET fetched_at='changed'", "DELETE FROM thesis_source_observations", "UPDATE thesis_records SET provider='unapproved'"):
+                        with self.assertRaises(sqlite3.IntegrityError):
+                            conn.execute(sql)
+                # Separate actual v1 registries let each provider own the anchor.
+                self.tearDown()
+                self.setUp()
+
+    def test_library_wrong_anchor_url_author_degree_and_year_roll_back_batch(self):
+        self.populate(library_seed())
+        mutations = [
+            lambda c: c.update(degree_id=999),
+            lambda c: c.update(source_snapshot_sha256="b" * 64),
+            lambda c: c["anchors"].update(source_education_id=999),
+            lambda c: c["anchors"].update(institution_unit_id=999),
+            lambda c: c["thesis"].update(provider_record_id="10203/999"),
+            lambda c: c["thesis"].update(source_url="https://koasas.kaist.ac.kr.evil.example/handle/10203/123"),
+            lambda c: c["thesis"].update(source_url="https://user@koasas.kaist.ac.kr/handle/10203/123"),
+            lambda c: c["thesis"].update(source_url="https://koasas.kaist.ac.kr/handle/10203/123?token=secret"),
+            lambda c: c["thesis"].update(publication_year=2002),
+            lambda c: c["thesis"].update(reported_degree_level="master"),
+            lambda c: c["observation"]["source_metadata"].update(degree_statement="Master of Science"),
+            lambda c: c["observation"]["source_metadata"].update(degree_statement="Thesis"),
+            lambda c: c["observation"].update(authors=["Synthetic Advisor"]),
+            lambda c: c["thesis"].update(author_text="Synthetic Advisor"),
+            lambda c: c["observation"].update(retrieval_method="claimed_human_review"),
+            lambda c: c["observation"].update(source_sha256="invalid"),
+            lambda c: c.update(status="verified"),
+        ]
+        for mutation in mutations:
+            payload = library_collection()
+            candidate = copy.deepcopy(payload["candidates"][0])
+            mutation(candidate)
+            payload["candidates"].append(candidate)
+            with self.subTest(mutation=mutations.index(mutation)), self.assertRaises(identities.RegistryError):
+                registry.import_library(self.database, payload)
+            self.assertEqual(registry.summary(self.database)["source_observations"], 0)
+            self.assertEqual(registry.summary(self.database)["thesis_records"], 1)
+        self.assertEqual(registry.summary(self.database)["import_batches"], 1)
+
+    def test_library_provider_cannot_attach_to_other_university_or_bypass_observation(self):
+        self.populate(library_seed("snu"))
+        payload = library_collection("kaist")
+        payload["candidates"][0]["anchors"] = library_collection("snu")["candidates"][0]["anchors"]
+        with self.assertRaises(identities.RegistryError):
+            registry.import_library(self.database, payload)
+        raw = library_seed("snu")
+        raw["thesis_records"] = [library_collection("snu")["candidates"][0]["thesis"]]
+        raw["links"] = [link(provider="snu", identifier="10371/123")]
+        with self.assertRaises(identities.RegistryError):
+            registry.import_records(self.database, raw)
+
+    def test_library_conflicting_country_and_multiple_owners_remain_conflicts(self):
+        payload = library_seed()
+        payload["education_records"][0].update(institution_country_code="US", domestic_status="country_conflict", query_status="anchor_review_required")
+        second = copy.deepcopy(payload["education_records"][0])
+        second.update(source_education_id=2, source_professor_uid="fixture-2")
+        payload["education_records"].append(second)
+        self.populate(payload)
+        collection = library_collection()
+        collection["candidates"][0]["anchors"]["institution_country_code"] = "US"
+        first = registry.import_library(self.database, collection)
+        self.assertEqual(first["links"], {"candidate": 1, "conflict": 1})
+        collection["candidates"][0].update(degree_id=2)
+        collection["candidates"][0]["anchors"].update(source_education_id=2, source_professor_uid="fixture-2")
+        self.assertEqual(registry.import_library(self.database, collection)["links"], {"candidate": 1, "conflict": 2})
+
+    def test_library_recollection_retains_human_decision_and_adds_observation(self):
+        self.populate(library_seed())
+        collection = library_collection()
+        registry.import_library(self.database, collection)
+        registry.review_links(self.database, [review(1, 2, "rejected")])
+        collection["candidates"][0]["observation"].update(fetched_at="2025-02-01T00:00:00Z", retrieval_method="web_indexed", source_sha256="e" * 64)
+        result = registry.import_library(self.database, collection)
+        self.assertEqual(result["links"], {"candidate": 1, "rejected": 1})
+        self.assertEqual(result["source_observations"], 2)
+        self.assertEqual(result["reviews"], 1)
+        self.assertEqual(len(self.rows("SELECT * FROM thesis_records WHERE provider='kaist'")), 1)
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+
+    def test_library_detail_can_support_explicit_review_only_with_same_record(self):
+        self.populate(library_seed())
+        collection = library_collection()
+        registry.import_library(self.database, collection)
+        observed_url = collection["candidates"][0]["thesis"]["source_url"]
+        evidence = {"source_url": observed_url, "source_department": "Physics", "confirmed_department": True}
+        with self.assertRaises(identities.RegistryError):
+            registry.review_links(self.database, [review(1, 2, **{**evidence, "source_url": "https://koasas.kaist.ac.kr/handle/10203/999"})])
+        result = registry.review_links(self.database, [review(1, 2, **evidence)])
+        self.assertEqual(result["links"], {"candidate": 1, "verified": 1})
+        self.assertEqual(self.rows("SELECT verified_department FROM v_phd_theses WHERE provider='kaist'"), [{"verified_department": "Physics"}])
+
+    def test_library_review_cannot_approve_foreign_country_anchors_even_when_agreeing(self):
+        payload = library_seed()
+        payload["education_records"][0].update(education_country_code="US", institution_country_code="US",
+                                                domestic_status="foreign", query_status="anchor_review_required")
+        self.populate(payload)
+        collection = library_collection()
+        collection["candidates"][0]["anchors"].update(education_country_code="US", institution_country_code="US")
+        result = registry.import_library(self.database, collection)
+        self.assertEqual(result["links"], {"candidate": 1, "conflict": 1})
+        evidence = {"source_url": collection["candidates"][0]["thesis"]["source_url"],
+                    "source_department": "Physics", "confirmed_department": True}
+        for thesis_id in (1, 2):
+            with self.subTest(thesis_id=thesis_id), self.assertRaises(identities.RegistryError):
+                registry.review_links(self.database, [review(1, thesis_id, **evidence)])
+        self.assertEqual(registry.summary(self.database)["reviews"], 0)
+        self.assertEqual(registry.summary(self.database)["links"], {"candidate": 1, "conflict": 1})
+
+    def test_library_catalog_alias_normalization_and_duplicate_parameter_guard(self):
+        self.assertEqual(registry._library_url("https://dcollection.snu.ac.kr/common/orgView/000000000123"), ("snu", "https://dcollection.snu.ac.kr/srch/srchDetail/000000000123", "dcollection:000000000123"))
+        for url in (
+            "https://library.kaist.ac.kr/search/detail/view.do?bibCtrlNo=123&flag=other",
+            "https://library.kaist.ac.kr/search/detail/view.do?bibCtrlNo=123&bibCtrlNo=999&flag=dissertation",
+            "https://library.kaist.ac.kr/search/detail/view.do?bibCtrlNo=123&flag=dissertation&extra=1",
+            "https://s-space.snu.ac.kr/handle/10203/123",
+        ):
+            with self.subTest(url=url), self.assertRaises(identities.RegistryError):
+                registry._library_url(url)
 
 
 if __name__ == "__main__":
