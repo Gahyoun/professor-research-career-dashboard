@@ -1,6 +1,7 @@
 """Synthetic tests only: no real names, private source reads, or network calls."""
 import contextlib
 import copy
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -96,8 +97,15 @@ def library_collection(provider="kaist", catalog=False):
         "observation": {"fetched_at": "2025-01-01T00:00:00Z", "retrieval_method": "direct_http",
             "source_sha256": "c" * 64, "record_reference": "private/synthetic-record.html",
             "authors": ["Synthetic Author 1", "Synthetic, Author 1"],
-            "source_metadata": {"degree_statement": "Thesis (Ph.D.) -- Synthetic Department of Physics, 2000.",
+            "source_metadata": {"institution_statement": anchor["institution_canonical"] + " Graduate School", "degree_statement": "Thesis (Ph.D.) -- Synthetic Department of Physics, 2000.",
                                 "dc.contributor.author": ["Synthetic Author 1"], "dc.contributor.advisor": "Synthetic Advisor"}}}]}
+
+
+def riss_public_collection():
+    payload = library_collection()
+    payload["source"] = "RISS public degree details"
+    payload["candidates"][0]["thesis"].update(provider="riss", provider_record_id="T123", source_url="https://www.riss.kr/link?id=T123")
+    return payload
 
 
 class ThesisRegistryTests(unittest.TestCase):
@@ -391,7 +399,7 @@ class ThesisRegistryTests(unittest.TestCase):
         tables = ("researchers", "education_records", "thesis_records", "degree_thesis_links", "thesis_link_reviews", "thesis_import_batches")
         before = {table: self.rows("SELECT * FROM " + table) for table in tables}
         result = registry.migrate(self.database)
-        self.assertEqual(result["schema_version"], 3)
+        self.assertEqual(result["schema_version"], 4)
         self.assertEqual(result["source_observations"], 0)
         self.assertEqual(before, {table: self.rows("SELECT * FROM " + table) for table in tables})
         self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
@@ -554,6 +562,157 @@ class ThesisRegistryTests(unittest.TestCase):
         ):
             with self.subTest(url=url), self.assertRaises(identities.RegistryError):
                 registry._library_url(url)
+
+    def create_v3(self):
+        self.create_v2()
+        with identities._connect(self.database) as conn:
+            conn.executescript("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;\n" + registry.SCHEMA_V3.read_text() + "\nPRAGMA user_version=3; COMMIT; PRAGMA foreign_keys=ON;")
+            school = library_seed()["education_records"][0]["institution_canonical"]
+            conn.execute("UPDATE education_records SET institution_canonical=?,institution_raw=?", (school, school))
+            old_payload = library_collection()
+            old_payload["candidates"][0]["observation"]["source_metadata"].pop("institution_statement")
+            candidate = old_payload["candidates"][0]
+            item = registry._thesis(candidate["thesis"])
+            registry._insert_thesis(conn, item, "c" * 64)
+            registry._insert_link(conn, 1, 2, "library_author_institution_phd_year_candidate", {"old": True})
+            observation = candidate["observation"]
+            observation_hash = hashlib.sha256(registry._json({"thesis": item, "observation": observation}).encode()).hexdigest()
+            conn.execute("INSERT INTO thesis_source_observations VALUES(1,1,2,?,?,?,?,?,?,?)", (observation_hash, "c" * 64, SNAPSHOT, observation["fetched_at"], "direct_http", observation["record_reference"], registry._json({"authors": observation["authors"], "source_metadata": observation["source_metadata"], "thesis": item})))
+            registry._finish_batch(conn, registry._batch_key("library_candidates", old_payload), "library_candidates", {"input_candidates_linked": 1})
+        return old_payload
+
+    def test_v3_to_v4_preserves_observations_and_exact_old_batch_replay(self):
+        old_payload = self.create_v3()
+        tables = ("researchers", "education_records", "thesis_records", "degree_thesis_links", "thesis_link_reviews", "thesis_import_batches", "thesis_source_observations")
+        before = {table: self.rows("SELECT * FROM " + table) for table in tables}
+        registry.migrate(self.database)
+        self.assertEqual(before, {table: self.rows("SELECT * FROM " + table) for table in tables})
+        self.assertTrue(registry.import_library(self.database, old_payload)["already_imported"])
+        self.assertEqual(self.rows("PRAGMA foreign_key_check"), [])
+        self.assertEqual(self.rows("PRAGMA integrity_check"), [{"integrity_check": "ok"}])
+        with identities._connect(self.database) as conn:
+            self.assertEqual(conn.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("DELETE FROM thesis_source_observations")
+        registry.migrate(self.database)
+        providers = self.rows("SELECT provider FROM thesis_providers ORDER BY provider")
+        self.assertEqual(len(providers), 2 + len(registry.LIBRARY_INSTITUTIONS))
+
+    def test_v3_to_v4_late_failure_preserves_old_parent_tables_and_observations(self):
+        self.create_v3()
+        with identities._connect(self.database) as conn:
+            conn.execute("CREATE TABLE thesis_import_batches_v4(dummy TEXT)")
+        before = self.rows("SELECT * FROM sqlite_master ORDER BY name")
+        observations = self.rows("SELECT * FROM thesis_source_observations")
+        with self.assertRaises(sqlite3.Error):
+            registry.migrate(self.database)
+        self.assertEqual(self.rows("PRAGMA user_version"), [{"user_version": 3}])
+        self.assertEqual(before, self.rows("SELECT * FROM sqlite_master ORDER BY name"))
+        self.assertEqual(observations, self.rows("SELECT * FROM thesis_source_observations"))
+
+    def test_riss_public_is_distinct_from_openapi_and_deduplicates_real_record_ids(self):
+        self.populate(library_seed())
+        api = riss_collection()
+        school = library_seed()["education_records"][0]["institution_canonical"]
+        query = api["queries"][0]
+        query.update(institution_canonical=school, institution_query=school)
+        query["query"]["publisher"] = school
+        registry.import_riss(self.database, api)
+        payload = riss_public_collection()
+        payload["candidates"][0]["thesis"].update(publisher=None, reported_department=None)
+        result = registry.import_riss_public(self.database, payload)
+        self.assertEqual(result["thesis_records"], 2)
+        self.assertEqual(result["links"], {"candidate": 2})
+        self.assertEqual(result["source_observations"], 1)
+        self.assertTrue(registry.import_riss_public(self.database, payload)["already_imported"])
+        self.assertEqual([r["source_kind"] for r in self.rows("SELECT source_kind FROM thesis_import_batches ORDER BY source_kind")], ["normalized_seed", "riss_candidates", "riss_public_details"])
+        for importer, wrong in ((registry.import_riss, payload), (registry.import_riss_public, api), (registry.import_library, payload)):
+            with self.assertRaises(identities.RegistryError):
+                importer(self.database, wrong)
+
+    def test_observed_institution_required_independently_of_repository_host_and_publisher(self):
+        self.populate(library_seed("snu"))
+        for importer, base in ((registry.import_library, library_collection("snu")), (registry.import_riss_public, riss_public_collection())):
+            if importer == registry.import_riss_public:
+                base["candidates"][0]["anchors"] = library_collection("snu")["candidates"][0]["anchors"]
+            for wrong in (None, "Seoul Women's University", "Seoul National University Hospital", "서울여자대학교 대학원", "고려대학교 대학원"):
+                payload = copy.deepcopy(base)
+                payload["candidates"][0]["observation"]["source_metadata"]["institution_statement"] = wrong
+                # Even a plausible/correct publisher cannot replace the degree institution.
+                payload["candidates"][0]["thesis"]["publisher"] = "Seoul National University"
+                with self.subTest(wrong=wrong), self.assertRaises(identities.RegistryError):
+                    importer(self.database, payload)
+        self.assertEqual(registry.summary(self.database)["source_observations"], 0)
+
+    def test_public_institution_country_conflict_cannot_be_reviewed_away(self):
+        payload = library_seed()
+        payload["education_records"][0].update(education_country_code="US", institution_country_code="US", domestic_status="foreign", query_status="anchor_review_required")
+        self.populate(payload)
+        observed = riss_public_collection()
+        observed["candidates"][0]["anchors"].update(education_country_code="US", institution_country_code="US")
+        self.assertEqual(registry.import_riss_public(self.database, observed)["links"], {"candidate": 1, "conflict": 1})
+        for thesis_id in (1, 2):
+            with self.assertRaises(identities.RegistryError):
+                registry.review_links(self.database, [review(1, thesis_id, source_department="Physics", confirmed_department=True)])
+        self.assertEqual(registry.summary(self.database)["reviews"], 0)
+
+    def test_public_unconfigured_institution_needs_observed_country_not_riss_host_country(self):
+        self.populate()
+        payload = riss_public_collection()
+        candidate = payload["candidates"][0]
+        candidate["anchors"] = {key: education()[key] for key in registry.LIBRARY_ANCHORS}
+        candidate["observation"]["source_metadata"]["institution_statement"] = "Fixture University Graduate School"
+        with self.assertRaises(identities.RegistryError):
+            registry.import_riss_public(self.database, payload)
+        candidate["observation"]["source_metadata"]["institution_country_code"] = "GB"
+        self.assertEqual(registry.import_riss_public(self.database, payload)["links"], {"candidate": 1, "conflict": 1})
+        with self.assertRaises(identities.RegistryError):
+            registry.review_links(self.database, [review(1, 2, source_department="Physics", confirmed_department=True)])
+
+    def test_observed_institution_aliases_are_exact_and_do_not_merge_different_schools(self):
+        for canonical, observed in (("Chungnam National University", "忠南大學校 一般大學院"), ("Korea University", "고려대학교 大學院"), ("Yonsei University", "연세대학교 대학원"), ("Sogang University", "Graduate School of Sogang University")):
+            degree = {"institution_canonical": canonical, "institution_raw": canonical}
+            self.assertEqual(registry._observed_institution(degree, {"institution_statement": observed}), "KR")
+        for observed in ("Korea National University", "Yonsei University Hospital", "Yonsei University Mirae Campus", "Seoul Women's University"):
+            with self.assertRaises(identities.RegistryError):
+                registry._observed_institution({"institution_canonical": "Yonsei University", "institution_raw": observed}, {"institution_statement": observed})
+        with self.assertRaises(identities.RegistryError):
+            registry._observed_institution({"institution_canonical": "Hanyang University", "institution_raw": "이화여자대학교"}, {"institution_statement": "한양대학교 대학원"})
+        for unresolved_raw in ("Pukyong", "Hanyang-ERICA", "Unknown source school"):
+            with self.subTest(raw=unresolved_raw), self.assertRaises(identities.RegistryError):
+                registry._observed_institution({"institution_canonical": "Hanyang University", "institution_raw": unresolved_raw}, {"institution_statement": "한양대학교 대학원"})
+        self.assertEqual(registry._observed_institution({"institution_canonical": "Hanyang University", "institution_raw": "Hanyang"}, {"institution_statement": "漢陽大學校 大學院"}), "KR")
+
+    def test_new_official_repository_url_and_provider_registration_guards(self):
+        self.populate()
+        for host, provider in registry.DCOLLECTION_DOMAINS.items():
+            actual_provider, canonical, record = registry._library_url("https://" + host + "/srch/popup/srchMetaViewPopup/000000000123")
+            self.assertEqual((actual_provider, record), (provider, "dcollection:000000000123"))
+            self.assertEqual(canonical, "https://" + host + "/srch/srchDetail/000000000123")
+        postech = "https://postech.primo.exlibrisgroup.com/primaws/rest/pub/pnxs/L/alma991003548901303286?vid=82POSTECH_INST%3A82POSTECH&lang=ko"
+        self.assertEqual(registry._library_url(postech), ("postech", postech, "alma:991003548901303286"))
+        khu = "https://lib.khu.ac.kr/search/detail/CATSAZ000000843116"
+        self.assertEqual(registry._library_url(khu), ("khu", khu, "catalog:CATSAZ000000843116"))
+        for invalid in (postech.replace("82POSTECH_INST", "OTHER_INST"), postech.replace("postech.primo.exlibrisgroup.com", "ap01.alma.exlibrisgroup.com"), postech + "&vid=82POSTECH_INST%3A82POSTECH", postech + "&apiKey=secret"):
+            with self.assertRaises(identities.RegistryError):
+                registry._library_url(invalid)
+        with identities._connect(self.database) as conn:
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute("UPDATE thesis_records SET provider='unregistered'")
+
+    def test_observed_specialized_graduate_school_alias_is_exact(self):
+        degree = {"institution_canonical": "Korea University", "institution_raw": "Korea"}
+        self.assertEqual(registry._observed_institution(degree, {"institution_statement": "고려대학교 정보경영공학전문대학원"}), "KR")
+        for unobserved in ("고려대학교 다른전문대학원", "고려대학교 세종캠퍼스 정보경영공학전문대학원", "서울대학교 정보경영공학전문대학원", "고려대학교 정보경영공학전문대학원 정보보호전공"):
+            with self.subTest(institution=unobserved), self.assertRaises(identities.RegistryError):
+                registry._observed_institution(degree, {"institution_statement": unobserved})
+
+    def test_observed_snu_public_health_graduate_school_does_not_include_hospitals(self):
+        degree = {"institution_canonical": "Seoul National University", "institution_raw": "Seoul"}
+        self.assertEqual(registry._observed_institution(degree, {"institution_statement": "서울대학교 보건대학원"}), "KR")
+        for unobserved in ("서울대학교병원", "서울대학교 보건환경연구소", "서울대학교 보건대학원 보건학과", "서울여자대학교 보건대학원"):
+            with self.subTest(institution=unobserved), self.assertRaises(identities.RegistryError):
+                registry._observed_institution(degree, {"institution_statement": unobserved})
 
 
 if __name__ == "__main__":

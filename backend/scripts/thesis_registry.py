@@ -21,6 +21,7 @@ from riss_api import ISO_COUNTRY_CODES, normalize_detail_url
 
 SCHEMA = Path(__file__).with_name("thesis_registry_schema.sql")
 SCHEMA_V3 = Path(__file__).with_name("thesis_registry_v3.sql")
+SCHEMA_V4 = Path(__file__).with_name("thesis_registry_v4.sql")
 LIBRARY_ANCHORS = (
     "source_education_id", "source_professor_uid", "source_author_name", "institution_unit_id",
     "institution_canonical", "award_year", "education_country_code", "institution_country_code",
@@ -28,7 +29,41 @@ LIBRARY_ANCHORS = (
 LIBRARY_INSTITUTIONS = {
     "kaist": {"kaist", "koreaadvancedinstituteofscienceandtechnology", "한국과학기술원", "한국과학기술대학"},
     "snu": {"snu", "seoulnationaluniversity", "seoul", "서울대학교", "서울대"},
+    "yonsei": {"yonsei", "yonseiuniversity", "yonseiuniversityseoulcampus", "연세대학교", "연세대"},
+    "korea": {"korea", "koreauniversity", "고려대학교", "고려대"},
+    "postech": {"postech", "pohanguniversityofscienceandtechnology", "포항공과대학교", "포항공과대학", "포항공대"},
+    "ewha": {"ewhawomansuniversity", "ewha", "이화여자대학교", "이화여대"},
+    "cau": {"chunganguniversity", "chungang", "중앙대학교", "중앙대"},
+    "skku": {"sungkyunkwanuniversity", "sungkyunkwan", "skku", "성균관대학교", "성균관대"},
+    "dongguk": {"donggukuniversity", "dongguk", "동국대학교", "동국대"},
+    "sookmyung": {"sookmyungwomensuniversity", "sookmyung", "숙명여자대학교", "숙명여대"},
+    "khu": {"kyungheeuniversity", "kyunghee", "khu", "경희대학교", "경희대"},
 }
+DCOLLECTION_DOMAINS = {
+    "dcollection.snu.ac.kr": "snu", "dcollection.yonsei.ac.kr": "yonsei",
+    "dcollection.korea.ac.kr": "korea", "dcollection.ewha.ac.kr": "ewha", "dcollection.cau.ac.kr": "cau",
+    "dcollection.skku.edu": "skku", "dcol.dongguk.edu": "dongguk", "dcollection.sookmyung.ac.kr": "sookmyung",
+}
+# Only observed, exact graduate-school names map to the awarding university.
+# This is not a rule for stripping arbitrary departments or campus qualifiers.
+OBSERVED_GRADUATE_SCHOOLS = {
+    "고려대학교정보경영공학전문대학원": "고려대학교",
+    "서울대학교보건대학원": "서울대학교",
+}
+# These aliases identify observed awarding institutions in RISS records; they
+# do not enable unobserved library URL providers or collapse branch campuses.
+RISS_INSTITUTIONS = (
+    {"sungkyunkwanuniversity", "sungkyunkwan", "skku", "성균관대학교", "성균관대"},
+    {"kyungpooknationaluniversity", "kyungpook", "경북대학교", "경북대"},
+    {"pusannationaluniversity", "busannationaluniversity", "pusan", "부산대학교", "부산대"},
+    {"ewhawomansuniversity", "ewha", "이화여자대학교", "이화여대"},
+    {"chungnamnationaluniversity", "chungnam", "충남대학교", "충남대", "忠南大學校"},
+    {"hanyanguniversity", "hanyanguniversityseoulcampus", "hanyang", "한양대학교", "한양대", "漢陽大學校"},
+    {"soganguniversity", "sogang", "서강대학교", "서강대"},
+    {"chunganguniversity", "chungang", "중앙대학교", "중앙대"},
+    {"konkukuniversity", "konkuk", "건국대학교", "건국대"},
+    {"gyeongsangnationaluniversity", "gyeongsang", "경상대학교", "경상대", "경상국립대학교", "경상국립대"},
+)
 EDUCATION_FIELDS = (
     "source_education_id", "source_professor_uid", "source_author_name", "degree_level",
     "institution_unit_id", "institution_canonical", "institution_raw", "education_country_code",
@@ -136,22 +171,73 @@ def _library_url(value: Any) -> tuple[str, str, str]:
             match = re.fullmatch(r"/handle/(" + prefix + r"/[1-9][0-9]*)/?", parsed.path)
             if match:
                 return provider, "https://" + host + "/handle/" + match[1], match[1]
-        if host == "dcollection.snu.ac.kr" and not parsed.query:
-            match = re.fullmatch(r"/(?:srch/srchDetail|common/orgView)/([0-9]{12})/?", parsed.path)
+        if host in DCOLLECTION_DOMAINS and not parsed.query:
+            match = re.fullmatch(r"/(?:srch/srchDetail|common/orgView|srch/popup/srchMetaViewPopup)/([0-9]{12})/?", parsed.path)
             if match:
-                return "snu", "https://dcollection.snu.ac.kr/srch/srchDetail/" + match[1], "dcollection:" + match[1]
+                return DCOLLECTION_DOMAINS[host], "https://" + host + "/srch/srchDetail/" + match[1], "dcollection:" + match[1]
         if host == "library.kaist.ac.kr" and parsed.path == "/search/detail/view.do":
             params = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
             if set(params) == {"bibCtrlNo", "flag"} and len(params["bibCtrlNo"]) == 1 and params["flag"] == ["dissertation"] and re.fullmatch(r"[1-9][0-9]*", params["bibCtrlNo"][0]):
                 record_id = params["bibCtrlNo"][0]
                 return "kaist", "https://library.kaist.ac.kr/search/detail/view.do?bibCtrlNo=" + record_id + "&flag=dissertation", "bib:" + record_id
+        if host == "postech.primo.exlibrisgroup.com":
+            match = re.fullmatch(r"/primaws/rest/pub/pnxs/L/alma([1-9][0-9]{0,24})", parsed.path)
+            params = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
+            if match and set(params) in ({"vid"}, {"vid", "lang"}) and params.get("vid") == ["82POSTECH_INST:82POSTECH"] and params.get("lang", ["ko"]) == ["ko"]:
+                return "postech", "https://postech.primo.exlibrisgroup.com/primaws/rest/pub/pnxs/L/alma" + match[1] + "?vid=82POSTECH_INST%3A82POSTECH&lang=ko", "alma:" + match[1]
+        if host == "lib.khu.ac.kr" and not parsed.query:
+            match = re.fullmatch(r"/search/detail/(CATSAZ[0-9]{12})/?", parsed.path)
+            if match:
+                return "khu", "https://lib.khu.ac.kr/search/detail/" + match[1], "catalog:" + match[1]
     except (ValueError, TypeError):
         pass
-    raise RegistryError("An official HTTPS KAIST or Seoul National University thesis-detail URL is required.")
+    raise RegistryError("An official HTTPS thesis-detail URL from a supported university repository is required.")
 
 
 def _library_institution(provider: str, institution: Any) -> bool:
     return _name(institution) in LIBRARY_INSTITUTIONS[provider]
+
+
+def _institution_name(value: Any) -> str:
+    """Only remove generic graduate-school wrappers, never fuzzy-match schools."""
+    name = _name(value)
+    if name in OBSERVED_GRADUATE_SCHOOLS:
+        return OBSERVED_GRADUATE_SCHOOLS[name]
+    for prefix in ("graduateschoolof", "graduateschool"):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    for suffix in ("일반대학원", "대학원", "一般大學院", "大學院", "graduateschool"):
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+            break
+    return name
+
+
+def _known_korean_institution(institution: Any) -> set[str] | None:
+    name = _institution_name(institution)
+    return next((aliases for aliases in (*LIBRARY_INSTITUTIONS.values(), *RISS_INSTITUTIONS) if name in aliases), None)
+
+
+def _observed_institution(degree: sqlite3.Row, metadata: dict) -> str:
+    observed = _institution_name(_text(metadata.get("institution_statement"), 2000, "observed awarding institution"))
+    canonical = _institution_name(degree["institution_canonical"])
+    aliases = _known_korean_institution(degree["institution_canonical"])
+    if aliases and degree["institution_raw"] and _institution_name(degree["institution_raw"]) not in aliases:
+        raise RegistryError("The raw degree institution does not resolve to its canonical institution; review the source snapshot first.")
+    # If the canonical institution is configured, contradictory raw labels must
+    # not widen its identity. Unknown schools allow an exact source raw label.
+    permitted = aliases or {canonical, *([_institution_name(degree["institution_raw"])] if degree["institution_raw"] else [])}
+    if observed not in permitted:
+        raise RegistryError("The observed degree-awarding institution does not match the stored institution.")
+    country = _country(metadata.get("institution_country_code"))
+    if aliases:
+        if country not in {None, "KR"}:
+            raise RegistryError("The observed country contradicts the known degree-awarding institution.")
+        return "KR"
+    if country is None:
+        raise RegistryError("An unconfigured institution requires an observed institution country code.")
+    return country
 
 
 def _education(value: Any) -> dict[str, Any]:
@@ -211,15 +297,15 @@ def _thesis(value: Any) -> dict[str, Any]:
 
 def _open(database: str | Path) -> sqlite3.Connection:
     connection = _connect(_private_path(database, exists=True))
-    if connection.execute("PRAGMA user_version").fetchone()[0] != 3:
+    if connection.execute("PRAGMA user_version").fetchone()[0] != 4:
         connection.close()
-        raise RegistryError("Thesis registry requires migration to schema version 3.")
+        raise RegistryError("Thesis registry requires migration to schema version 4.")
     return connection
 
 
 def _summary(connection: sqlite3.Connection) -> dict[str, Any]:
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "education_records": connection.execute("SELECT count(*) FROM education_records").fetchone()[0],
         "thesis_records": connection.execute("SELECT count(*) FROM thesis_records").fetchone()[0],
         "education_statuses": {r[0]: r[1] for r in connection.execute("SELECT domestic_status,count(*) FROM education_records GROUP BY domestic_status")},
@@ -240,28 +326,42 @@ def summary(database: str | Path) -> dict[str, Any]:
         connection.close()
 
 
+def _register_providers(connection: sqlite3.Connection) -> None:
+    for provider, source_type in {"openalex": "openalex", "riss": "riss", **{key: "university_library" for key in LIBRARY_INSTITUTIONS}}.items():
+        connection.execute("INSERT OR IGNORE INTO thesis_providers(provider,source_type) VALUES(?,?)", (provider, source_type))
+        if connection.execute("SELECT source_type FROM thesis_providers WHERE provider=?", (provider,)).fetchone()[0] != source_type:
+            raise RegistryError("A registered provider has a conflicting source type.")
+
+
 def migrate(database: str | Path) -> dict[str, Any]:
     connection = _connect(_private_path(database, exists=True))
     try:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        if version in {1, 2}:
+        if version in {1, 2, 3}:
             try:
                 # SQLite requires foreign_keys OFF before beginning a parent-table
                 # replacement. Restore it on every exit and check the rebuilt graph
                 # inside the transaction before publishing the schema version.
                 connection.execute("PRAGMA foreign_keys=OFF")
                 schema = SCHEMA.read_text(encoding="utf-8") if version == 1 else ""
-                connection.executescript("BEGIN IMMEDIATE;\n" + schema + "\n" + SCHEMA_V3.read_text(encoding="utf-8"))
+                if version <= 2:
+                    schema += "\n" + SCHEMA_V3.read_text(encoding="utf-8")
+                connection.executescript("BEGIN IMMEDIATE;\n" + schema + "\n" + SCHEMA_V4.read_text(encoding="utf-8"))
+                _register_providers(connection)
                 if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
                     raise RegistryError("Migration found an invalid foreign-key reference; all changes rolled back.")
-                connection.execute("PRAGMA user_version=3")
+                connection.execute("PRAGMA user_version=4")
                 connection.commit()
             except Exception:
                 connection.rollback()
                 raise
             finally:
                 connection.execute("PRAGMA foreign_keys=ON")
-        elif version != 3:
+        elif version == 4:
+            with connection:
+                connection.execute("BEGIN IMMEDIATE")
+                _register_providers(connection)
+        else:
             raise RegistryError("Unsupported identity registry schema version.")
         return _summary(connection)
     finally:
@@ -318,6 +418,12 @@ def _reconcile_conflicts(connection: sqlite3.Connection) -> None:
       EXISTS(SELECT 1 FROM education_records e JOIN thesis_records t ON t.thesis_id=degree_thesis_links.thesis_id
         WHERE e.degree_id=degree_thesis_links.degree_id AND t.provider IN ('kaist','snu') AND
           (e.domestic_status='country_conflict' OR e.education_country_code<>'KR' OR e.institution_country_code<>'KR'))""")
+    connection.execute("""UPDATE degree_thesis_links SET status='conflict' WHERE status<>'rejected' AND
+      EXISTS(SELECT 1 FROM thesis_source_observations o JOIN education_records e USING(degree_id)
+        WHERE o.degree_id=degree_thesis_links.degree_id AND o.thesis_id=degree_thesis_links.thesis_id AND
+          (e.domestic_status='country_conflict' OR
+           e.education_country_code<>json_extract(o.metadata,'$.observed_institution_country_code') OR
+           e.institution_country_code<>json_extract(o.metadata,'$.observed_institution_country_code')))""")
     connection.execute("""UPDATE degree_thesis_links SET status='conflict' WHERE status<>'rejected' AND thesis_id IN
       (SELECT l.thesis_id FROM degree_thesis_links l JOIN education_records e USING(degree_id)
        WHERE l.status<>'rejected' GROUP BY l.thesis_id HAVING count(DISTINCT e.source_professor_uid)>1)""")
@@ -396,6 +502,12 @@ def _verify_evidence(connection: sqlite3.Connection, degree: sqlite3.Row, thesis
             raise RegistryError("The inspected repository must agree with the degree institution and country; contradictory anchors need a corrected snapshot.")
     if thesis["provider"] != "openalex" and (source_provider != thesis["provider"] or source_id != thesis["provider_record_id"]):
         raise RegistryError("The inspected official record must match the linked thesis provider and identifier.")
+    if source_provider == "riss" and _known_korean_institution(degree["institution_canonical"]) and any(country is not None and country != "KR" for country in (ec, ic)):
+        raise RegistryError("The inspected Korean degree institution contradicts the source countries; a corrected snapshot is required.")
+    for observed in connection.execute("SELECT metadata FROM thesis_source_observations WHERE degree_id=? AND thesis_id=?", (degree["degree_id"], thesis["thesis_id"])):
+        source_country = json.loads(observed["metadata"]).get("observed_institution_country_code")
+        if source_country is not None and any(country is not None and country != source_country for country in (ec, ic)):
+            raise RegistryError("The observed degree country contradicts source anchors; a corrected snapshot is required.")
     _text(evidence.get("record_reference"), 1000, "private inspected record reference")
     if thesis["reported_degree_level"] == "master":
         raise RegistryError("A reported master's thesis cannot verify a PhD degree.")
@@ -579,6 +691,14 @@ def import_riss(database: str | Path, payload: Any, source_snapshot_sha256: str 
 
 
 def import_library(database: str | Path, payload: Any) -> dict[str, Any]:
+    return _import_public_details(database, payload, "library_candidates", "Official university repository")
+
+
+def import_riss_public(database: str | Path, payload: Any) -> dict[str, Any]:
+    return _import_public_details(database, payload, "riss_public_details", "RISS public degree details")
+
+
+def _import_public_details(database: str | Path, payload: Any, kind: str, source: str) -> dict[str, Any]:
     """Import observed library metadata as candidates, never a human decision.
 
     source_sha256 is the collector's hash of its saved observation (HTML for
@@ -586,10 +706,10 @@ def import_library(database: str | Path, payload: Any) -> dict[str, Any]:
     hash. The source is not refetched here; the method and original metadata
     remain available to an eventual human reviewer.
     """
-    if not isinstance(payload, dict) or set(payload) != {"schema_version", "source", "candidates"} or payload.get("schema_version") != 1 or payload.get("source") != "Official university repository" or not isinstance(payload.get("candidates"), list):
-        raise RegistryError("Unsupported university repository candidate collection schema.")
+    if not isinstance(payload, dict) or set(payload) != {"schema_version", "source", "candidates"} or payload.get("schema_version") != 1 or payload.get("source") != source or not isinstance(payload.get("candidates"), list):
+        raise RegistryError("Unsupported public thesis-detail candidate collection schema.")
     _no_credentials(payload)
-    key = _batch_key("library_candidates", payload)
+    key = _batch_key(kind, payload)
     connection = _open(database)
     try:
         with connection:
@@ -614,7 +734,9 @@ def import_library(database: str | Path, payload: Any) -> dict[str, Any]:
                 if degree is None or any(degree[field] != anchors[field] for field in LIBRARY_ANCHORS):
                     raise RegistryError("Library candidate anchors disagree with the stored degree snapshot.")
                 item = _thesis(candidate["thesis"])
-                if item["provider"] not in LIBRARY_INSTITUTIONS or not _library_institution(item["provider"], degree["institution_canonical"]):
+                if kind == "riss_public_details" and item["provider"] != "riss":
+                    raise RegistryError("RISS public-detail imports require official RISS records.")
+                if kind == "library_candidates" and (item["provider"] not in LIBRARY_INSTITUTIONS or not _library_institution(item["provider"], degree["institution_canonical"])):
                     raise RegistryError("Library candidate repository must agree with the degree institution.")
                 if item["reported_degree_level"] != "phd" or degree["award_year"] is None or item["publication_year"] is None or abs(item["publication_year"] - degree["award_year"]) > 1:
                     raise RegistryError("Library candidates require an explicitly reported PhD and a publication year within one year of the source award.")
@@ -630,6 +752,7 @@ def import_library(database: str | Path, payload: Any) -> dict[str, Any]:
                 source_metadata = _evidence(observation["source_metadata"])
                 if not source_metadata:
                     raise RegistryError("Library observations must retain original source metadata.")
+                observed_country = _observed_institution(degree, source_metadata)
                 degree_statement = _text(source_metadata.get("degree_statement"), 4000, "observed degree statement")
                 statement = re.sub(r"[\s.]+", "", degree_statement).casefold()
                 if not any(marker in statement for marker in ("박사", "phd", "doctoral", "doctorof", "dgri:d")) or any(marker in statement for marker in ("석사", "master")):
@@ -642,7 +765,8 @@ def import_library(database: str | Path, payload: Any) -> dict[str, Any]:
                     raise RegistryError("Library author fields must match the source degree author and stored thesis author.")
                 observation_hash = hashlib.sha256(_json({"thesis": item, "observation": observation}).encode()).hexdigest()
                 thesis_id = _insert_thesis(connection, item, source_hash)
-                _insert_link(connection, degree_id, thesis_id, "library_author_institution_phd_year_candidate", {
+                method = "riss_public_detail_author_institution_phd_year_candidate" if kind == "riss_public_details" else "library_author_institution_phd_year_candidate"
+                _insert_link(connection, degree_id, thesis_id, method, {
                     "verification_status": "candidate_needs_human_review",
                     "source_collection_sha256": key, "source_snapshot_sha256": snapshot,
                     "source_sha256": source_hash, "observation_sha256": observation_hash,
@@ -650,13 +774,16 @@ def import_library(database: str | Path, payload: Any) -> dict[str, Any]:
                     "year_distance": abs(item["publication_year"] - degree["award_year"]),
                     "reported_degree_level": item["reported_degree_level"],
                     "matched_source_author": degree["source_author_name"],
+                    "observed_institution_country_code": observed_country,
+                    "source_kind": kind,
                 })
                 connection.execute("""INSERT OR IGNORE INTO thesis_source_observations
                     (degree_id,thesis_id,observation_sha256,source_sha256,source_snapshot_sha256,fetched_at,retrieval_method,record_reference,metadata)
                     VALUES(?,?,?,?,?,?,?,?,?)""", (degree_id, thesis_id, observation_hash, source_hash, snapshot,
-                    fetched_at, observation["retrieval_method"], reference, _json({"authors": authors, "source_metadata": source_metadata, "thesis": item})))
+                    fetched_at, observation["retrieval_method"], reference, _json({"authors": authors, "source_metadata": source_metadata, "thesis": item,
+                        "source_kind": kind, "observed_institution_country_code": observed_country})))
             _reconcile_conflicts(connection)
-            result = _finish_batch(connection, key, "library_candidates", {"input_candidates_linked": len(payload["candidates"])})
+            result = _finish_batch(connection, key, kind, {"input_candidates_linked": len(payload["candidates"])})
         return {**_summary(connection), **result}
     finally:
         connection.close()
@@ -665,7 +792,7 @@ def import_library(database: str | Path, payload: Any) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("migrate", "summary", "import", "import-riss", "import-library", "review"):
+    for command in ("migrate", "summary", "import", "import-riss", "import-library", "import-riss-public", "review"):
         sub = commands.add_parser(command)
         sub.add_argument("--database", required=True)
         if command == "import":
@@ -673,7 +800,7 @@ def main() -> int:
         elif command == "import-riss":
             sub.add_argument("--candidates-json", required=True)
             sub.add_argument("--source-snapshot-sha256")
-        elif command == "import-library":
+        elif command in {"import-library", "import-riss-public"}:
             sub.add_argument("--candidates-json", required=True)
         elif command == "review":
             sub.add_argument("--reviews-json", required=True)
@@ -689,6 +816,8 @@ def main() -> int:
             result = import_riss(args.database, json.loads(Path(args.candidates_json).read_text(encoding="utf-8")), args.source_snapshot_sha256)
         elif args.command == "import-library":
             result = import_library(args.database, json.loads(Path(args.candidates_json).read_text(encoding="utf-8")))
+        elif args.command == "import-riss-public":
+            result = import_riss_public(args.database, json.loads(Path(args.candidates_json).read_text(encoding="utf-8")))
         else:
             result = review_links(args.database, json.loads(Path(args.reviews_json).read_text(encoding="utf-8")))
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
