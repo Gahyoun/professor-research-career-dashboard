@@ -84,7 +84,7 @@ class IdentityRegistryTests(unittest.TestCase):
         migrate(self.path)
         result = registry.import_identifiers(self.path, [candidate()])
         self.assertEqual(result["identifier_links"], {"national_researcher_number:candidate": 1})
-        self.assertEqual(self.query("PRAGMA user_version"), [(2,)])
+        self.assertEqual(self.query("PRAGMA user_version"), [(3,)])
 
     def test_incomplete_or_name_and_doi_only_evidence_cannot_be_accepted(self):
         self.initialize()

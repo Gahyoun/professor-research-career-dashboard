@@ -20,6 +20,15 @@ from identity_registry import RegistryError, _checked_at, _connect, _no_credenti
 from riss_api import ISO_COUNTRY_CODES, normalize_detail_url
 
 SCHEMA = Path(__file__).with_name("thesis_registry_schema.sql")
+SCHEMA_V3 = Path(__file__).with_name("thesis_registry_v3.sql")
+LIBRARY_ANCHORS = (
+    "source_education_id", "source_professor_uid", "source_author_name", "institution_unit_id",
+    "institution_canonical", "award_year", "education_country_code", "institution_country_code",
+)
+LIBRARY_INSTITUTIONS = {
+    "kaist": {"kaist", "koreaadvancedinstituteofscienceandtechnology", "한국과학기술원", "한국과학기술대학"},
+    "snu": {"snu", "seoulnationaluniversity", "seoul", "서울대학교", "서울대"},
+}
 EDUCATION_FIELDS = (
     "source_education_id", "source_professor_uid", "source_author_name", "degree_level",
     "institution_unit_id", "institution_canonical", "institution_raw", "education_country_code",
@@ -113,6 +122,38 @@ def _riss_url(value: Any) -> tuple[str, str]:
     return canonical, identifier
 
 
+def _library_url(value: Any) -> tuple[str, str, str]:
+    """Whitelist public detail records, never search pages or authentication URLs."""
+    value = _text(value, 2048, "university repository detail URL")
+    _no_credentials(value)
+    try:
+        parsed = urlsplit(value)
+        if parsed.scheme != "https" or parsed.username or parsed.password or parsed.fragment or parsed.port not in {None, 443}:
+            raise ValueError
+        host = parsed.hostname
+        if host in {"koasas.kaist.ac.kr", "s-space.snu.ac.kr"} and not parsed.query:
+            prefix, provider = ("10203", "kaist") if host == "koasas.kaist.ac.kr" else ("10371", "snu")
+            match = re.fullmatch(r"/handle/(" + prefix + r"/[1-9][0-9]*)/?", parsed.path)
+            if match:
+                return provider, "https://" + host + "/handle/" + match[1], match[1]
+        if host == "dcollection.snu.ac.kr" and not parsed.query:
+            match = re.fullmatch(r"/(?:srch/srchDetail|common/orgView)/([0-9]{12})/?", parsed.path)
+            if match:
+                return "snu", "https://dcollection.snu.ac.kr/srch/srchDetail/" + match[1], "dcollection:" + match[1]
+        if host == "library.kaist.ac.kr" and parsed.path == "/search/detail/view.do":
+            params = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
+            if set(params) == {"bibCtrlNo", "flag"} and len(params["bibCtrlNo"]) == 1 and params["flag"] == ["dissertation"] and re.fullmatch(r"[1-9][0-9]*", params["bibCtrlNo"][0]):
+                record_id = params["bibCtrlNo"][0]
+                return "kaist", "https://library.kaist.ac.kr/search/detail/view.do?bibCtrlNo=" + record_id + "&flag=dissertation", "bib:" + record_id
+    except (ValueError, TypeError):
+        pass
+    raise RegistryError("An official HTTPS KAIST or Seoul National University thesis-detail URL is required.")
+
+
+def _library_institution(provider: str, institution: Any) -> bool:
+    return _name(institution) in LIBRARY_INSTITUTIONS[provider]
+
+
 def _education(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or set(value) - set(EDUCATION_FIELDS):
         raise RegistryError("Unsupported education anchor fields.")
@@ -158,6 +199,10 @@ def _thesis(value: Any) -> dict[str, Any]:
         item["source_url"], actual_id = _riss_url(item["source_url"])
         if actual_id != identifier:
             raise RegistryError("RISS detail URL and record identifier disagree.")
+    elif item["provider"] in LIBRARY_INSTITUTIONS:
+        actual_provider, item["source_url"], actual_id = _library_url(item["source_url"])
+        if actual_provider != item["provider"] or actual_id != identifier:
+            raise RegistryError("University repository URL, provider and record identifier disagree.")
     else:
         raise RegistryError("Unsupported thesis provider.")
     item["provider_record_id"] = identifier
@@ -166,15 +211,15 @@ def _thesis(value: Any) -> dict[str, Any]:
 
 def _open(database: str | Path) -> sqlite3.Connection:
     connection = _connect(_private_path(database, exists=True))
-    if connection.execute("PRAGMA user_version").fetchone()[0] != 2:
+    if connection.execute("PRAGMA user_version").fetchone()[0] != 3:
         connection.close()
-        raise RegistryError("Thesis registry requires migration to schema version 2.")
+        raise RegistryError("Thesis registry requires migration to schema version 3.")
     return connection
 
 
 def _summary(connection: sqlite3.Connection) -> dict[str, Any]:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "education_records": connection.execute("SELECT count(*) FROM education_records").fetchone()[0],
         "thesis_records": connection.execute("SELECT count(*) FROM thesis_records").fetchone()[0],
         "education_statuses": {r[0]: r[1] for r in connection.execute("SELECT domestic_status,count(*) FROM education_records GROUP BY domestic_status")},
@@ -183,6 +228,7 @@ def _summary(connection: sqlite3.Connection) -> dict[str, Any]:
         "duplicate_doi_groups": connection.execute("SELECT count(*) FROM (SELECT doi FROM thesis_records WHERE doi IS NOT NULL GROUP BY doi HAVING count(*)>1)").fetchone()[0],
         "reviews": connection.execute("SELECT count(*) FROM thesis_link_reviews").fetchone()[0],
         "import_batches": connection.execute("SELECT count(*) FROM thesis_import_batches").fetchone()[0],
+        "source_observations": connection.execute("SELECT count(*) FROM thesis_source_observations").fetchone()[0],
     }
 
 
@@ -198,13 +244,24 @@ def migrate(database: str | Path) -> dict[str, Any]:
     connection = _connect(_private_path(database, exists=True))
     try:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        if version == 1:
+        if version in {1, 2}:
             try:
-                connection.executescript("BEGIN IMMEDIATE;\n" + SCHEMA.read_text(encoding="utf-8") + "\nPRAGMA user_version=2;\nCOMMIT;")
+                # SQLite requires foreign_keys OFF before beginning a parent-table
+                # replacement. Restore it on every exit and check the rebuilt graph
+                # inside the transaction before publishing the schema version.
+                connection.execute("PRAGMA foreign_keys=OFF")
+                schema = SCHEMA.read_text(encoding="utf-8") if version == 1 else ""
+                connection.executescript("BEGIN IMMEDIATE;\n" + schema + "\n" + SCHEMA_V3.read_text(encoding="utf-8"))
+                if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                    raise RegistryError("Migration found an invalid foreign-key reference; all changes rolled back.")
+                connection.execute("PRAGMA user_version=3")
+                connection.commit()
             except Exception:
                 connection.rollback()
                 raise
-        elif version != 2:
+            finally:
+                connection.execute("PRAGMA foreign_keys=ON")
+        elif version != 3:
             raise RegistryError("Unsupported identity registry schema version.")
         return _summary(connection)
     finally:
@@ -257,6 +314,10 @@ def _insert_link(connection: sqlite3.Connection, degree: int, thesis: int, metho
 
 
 def _reconcile_conflicts(connection: sqlite3.Connection) -> None:
+    connection.execute("""UPDATE degree_thesis_links SET status='conflict' WHERE status<>'rejected' AND
+      EXISTS(SELECT 1 FROM education_records e JOIN thesis_records t ON t.thesis_id=degree_thesis_links.thesis_id
+        WHERE e.degree_id=degree_thesis_links.degree_id AND t.provider IN ('kaist','snu') AND
+          (e.domestic_status='country_conflict' OR e.education_country_code<>'KR' OR e.institution_country_code<>'KR'))""")
     connection.execute("""UPDATE degree_thesis_links SET status='conflict' WHERE status<>'rejected' AND thesis_id IN
       (SELECT l.thesis_id FROM degree_thesis_links l JOIN education_records e USING(degree_id)
        WHERE l.status<>'rejected' GROUP BY l.thesis_id HAVING count(DISTINCT e.source_professor_uid)>1)""")
@@ -277,6 +338,8 @@ def import_records(database: str | Path, payload: Any) -> dict[str, Any]:
         raise RegistryError("Import collections must be lists.")
     educations = [_education(item) for item in payload["education_records"]]
     theses = [_thesis(item) for item in payload["thesis_records"]]
+    if any(item["provider"] in LIBRARY_INSTITUTIONS for item in theses) or any(isinstance(item, dict) and item.get("provider") in LIBRARY_INSTITUTIONS for item in payload["links"]):
+        raise RegistryError("University repository candidates require import-library with source observations and exact degree anchors.")
     links = []
     for link in payload["links"]:
         if not isinstance(link, dict) or set(link) != {"source_education_id", "provider", "provider_record_id", "match_method", "evidence"}:
@@ -324,9 +387,15 @@ def _verify_evidence(connection: sqlite3.Connection, degree: sqlite3.Row, thesis
         raise RegistryError("The inspected DOI must match the linked thesis DOI.")
     if _unit(evidence.get("source_institution_unit_id")) != degree["institution_unit_id"] or _integer(evidence.get("source_award_year"), minimum=1900, maximum=3000) != degree["award_year"] or evidence.get("source_degree_level") != "phd":
         raise RegistryError("Reviewed PhD institution and award year must match the source degree exactly.")
-    _, source_id = _riss_url(evidence.get("source_url"))
-    if thesis["provider"] == "riss" and source_id != thesis["provider_record_id"]:
-        raise RegistryError("The inspected RISS record must match the linked thesis identifier.")
+    try:
+        _, source_id = _riss_url(evidence.get("source_url"))
+        source_provider = "riss"
+    except RegistryError:
+        source_provider, _, source_id = _library_url(evidence.get("source_url"))
+        if not _library_institution(source_provider, degree["institution_canonical"]) or any(country is not None and country != "KR" for country in (ec, ic)):
+            raise RegistryError("The inspected repository must agree with the degree institution and country; contradictory anchors need a corrected snapshot.")
+    if thesis["provider"] != "openalex" and (source_provider != thesis["provider"] or source_id != thesis["provider_record_id"]):
+        raise RegistryError("The inspected official record must match the linked thesis provider and identifier.")
     _text(evidence.get("record_reference"), 1000, "private inspected record reference")
     if thesis["reported_degree_level"] == "master":
         raise RegistryError("A reported master's thesis cannot verify a PhD degree.")
@@ -509,10 +578,94 @@ def import_riss(database: str | Path, payload: Any, source_snapshot_sha256: str 
         connection.close()
 
 
+def import_library(database: str | Path, payload: Any) -> dict[str, Any]:
+    """Import observed library metadata as candidates, never a human decision.
+
+    source_sha256 is the collector's hash of its saved observation (HTML for
+    direct_http, observed index text for web_indexed), not a claimed live-page
+    hash. The source is not refetched here; the method and original metadata
+    remain available to an eventual human reviewer.
+    """
+    if not isinstance(payload, dict) or set(payload) != {"schema_version", "source", "candidates"} or payload.get("schema_version") != 1 or payload.get("source") != "Official university repository" or not isinstance(payload.get("candidates"), list):
+        raise RegistryError("Unsupported university repository candidate collection schema.")
+    _no_credentials(payload)
+    key = _batch_key("library_candidates", payload)
+    connection = _open(database)
+    try:
+        with connection:
+            connection.execute("BEGIN IMMEDIATE")
+            prior = _prior_batch(connection, key)
+            if prior:
+                return {**_summary(connection), **prior}
+            for candidate in payload["candidates"]:
+                if not isinstance(candidate, dict) or set(candidate) != {"degree_id", "source_snapshot_sha256", "anchors", "thesis", "observation"}:
+                    raise RegistryError("Library candidates require an exact degree, source snapshot, anchors and observation.")
+                degree_id = _integer(candidate["degree_id"], minimum=1)
+                snapshot = _sha(candidate["source_snapshot_sha256"])
+                anchors = candidate["anchors"]
+                if not isinstance(anchors, dict) or set(anchors) != set(LIBRARY_ANCHORS):
+                    raise RegistryError("Library candidate degree anchors are incomplete or unsupported.")
+                anchors = {**anchors, "institution_unit_id": _unit(anchors["institution_unit_id"]),
+                           "source_education_id": _integer(anchors["source_education_id"]),
+                           "award_year": _integer(anchors["award_year"], minimum=1900, maximum=3000)}
+                if anchors["institution_unit_id"] is None:
+                    raise RegistryError("Library candidates require a known degree institution identifier.")
+                degree = connection.execute("SELECT * FROM education_records WHERE degree_id=? AND source_snapshot_sha256=?", (degree_id, snapshot)).fetchone()
+                if degree is None or any(degree[field] != anchors[field] for field in LIBRARY_ANCHORS):
+                    raise RegistryError("Library candidate anchors disagree with the stored degree snapshot.")
+                item = _thesis(candidate["thesis"])
+                if item["provider"] not in LIBRARY_INSTITUTIONS or not _library_institution(item["provider"], degree["institution_canonical"]):
+                    raise RegistryError("Library candidate repository must agree with the degree institution.")
+                if item["reported_degree_level"] != "phd" or degree["award_year"] is None or item["publication_year"] is None or abs(item["publication_year"] - degree["award_year"]) > 1:
+                    raise RegistryError("Library candidates require an explicitly reported PhD and a publication year within one year of the source award.")
+                _text(item["title"], 4000, "observed thesis title")
+                observation = candidate["observation"]
+                if not isinstance(observation, dict) or set(observation) != {"fetched_at", "retrieval_method", "source_sha256", "record_reference", "source_metadata", "authors"}:
+                    raise RegistryError("Library source observations require collection method, time, hash, reference, author fields and original metadata.")
+                fetched_at = _checked_at(observation["fetched_at"])
+                source_hash = _sha(observation["source_sha256"])
+                reference = _text(observation["record_reference"], 1000, "private source observation reference")
+                if not fetched_at or observation["retrieval_method"] not in {"direct_http", "web_indexed"}:
+                    raise RegistryError("Library observations require a timestamp and an explicit retrieval method.")
+                source_metadata = _evidence(observation["source_metadata"])
+                if not source_metadata:
+                    raise RegistryError("Library observations must retain original source metadata.")
+                degree_statement = _text(source_metadata.get("degree_statement"), 4000, "observed degree statement")
+                statement = re.sub(r"[\s.]+", "", degree_statement).casefold()
+                if not any(marker in statement for marker in ("박사", "phd", "doctoral", "doctorof", "dgri:d")) or any(marker in statement for marker in ("석사", "master")):
+                    raise RegistryError("The observed library degree statement must explicitly and unambiguously report a PhD.")
+                authors = observation["authors"]
+                if not isinstance(authors, list) or not 1 <= len(authors) <= 30:
+                    raise RegistryError("Library observations require actual author-field values, excluding advisors.")
+                observed_authors = {_name(author) for author in authors}
+                if _name(degree["source_author_name"]) not in observed_authors or _name(item["author_text"]) not in observed_authors:
+                    raise RegistryError("Library author fields must match the source degree author and stored thesis author.")
+                observation_hash = hashlib.sha256(_json({"thesis": item, "observation": observation}).encode()).hexdigest()
+                thesis_id = _insert_thesis(connection, item, source_hash)
+                _insert_link(connection, degree_id, thesis_id, "library_author_institution_phd_year_candidate", {
+                    "verification_status": "candidate_needs_human_review",
+                    "source_collection_sha256": key, "source_snapshot_sha256": snapshot,
+                    "source_sha256": source_hash, "observation_sha256": observation_hash,
+                    "retrieval_method": observation["retrieval_method"],
+                    "year_distance": abs(item["publication_year"] - degree["award_year"]),
+                    "reported_degree_level": item["reported_degree_level"],
+                    "matched_source_author": degree["source_author_name"],
+                })
+                connection.execute("""INSERT OR IGNORE INTO thesis_source_observations
+                    (degree_id,thesis_id,observation_sha256,source_sha256,source_snapshot_sha256,fetched_at,retrieval_method,record_reference,metadata)
+                    VALUES(?,?,?,?,?,?,?,?,?)""", (degree_id, thesis_id, observation_hash, source_hash, snapshot,
+                    fetched_at, observation["retrieval_method"], reference, _json({"authors": authors, "source_metadata": source_metadata, "thesis": item})))
+            _reconcile_conflicts(connection)
+            result = _finish_batch(connection, key, "library_candidates", {"input_candidates_linked": len(payload["candidates"])})
+        return {**_summary(connection), **result}
+    finally:
+        connection.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("migrate", "summary", "import", "import-riss", "review"):
+    for command in ("migrate", "summary", "import", "import-riss", "import-library", "review"):
         sub = commands.add_parser(command)
         sub.add_argument("--database", required=True)
         if command == "import":
@@ -520,6 +673,8 @@ def main() -> int:
         elif command == "import-riss":
             sub.add_argument("--candidates-json", required=True)
             sub.add_argument("--source-snapshot-sha256")
+        elif command == "import-library":
+            sub.add_argument("--candidates-json", required=True)
         elif command == "review":
             sub.add_argument("--reviews-json", required=True)
     args = parser.parse_args()
@@ -532,6 +687,8 @@ def main() -> int:
             result = import_records(args.database, json.loads(Path(args.records_json).read_text(encoding="utf-8")))
         elif args.command == "import-riss":
             result = import_riss(args.database, json.loads(Path(args.candidates_json).read_text(encoding="utf-8")), args.source_snapshot_sha256)
+        elif args.command == "import-library":
+            result = import_library(args.database, json.loads(Path(args.candidates_json).read_text(encoding="utf-8")))
         else:
             result = review_links(args.database, json.loads(Path(args.reviews_json).read_text(encoding="utf-8")))
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
