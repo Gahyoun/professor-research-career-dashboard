@@ -1,8 +1,9 @@
 import type { Professor } from '../types';
+import { canonicalSchool } from '../schoolIdentity';
 import type { InstitutionUnit, ResearcherRecord } from './hypergraph';
 
 const unitFields = (unit: InstitutionUnit) => ({
-  institution: unit.institution, institution_canonical: unit.institution_canonical,
+  institution: unit.institution, institution_canonical: canonicalSchool(unit.institution_canonical || unit.institution),
   country: unit.country, department: unit.department,
   department_inferred: unit.department_inferred,
 });
@@ -11,8 +12,8 @@ const unitFields = (unit: InstitutionUnit) => ({
 export function toResearcherRecords(professors: readonly Professor[]): ResearcherRecord[] {
   return professors.map(p => ({
     id: p.id, subject: p.subject,
-    phd_institution: p.phd_institution_canonical || p.phd_institution,
-    bachelor_institution: p.bachelor_institution_canonical || p.bachelor_institution,
+    phd_institution: canonicalSchool(p.phd_institution_canonical || p.phd_institution),
+    bachelor_institution: canonicalSchool(p.bachelor_institution_canonical || p.bachelor_institution),
     phd_year: p.phd_year, phd_country: p.phd_country, bachelor_country: p.bachelor_country,
     phd_department: p.phd_department, bachelor_department: p.bachelor_department,
     phd_department_inferred: p.phd_department_inferred,

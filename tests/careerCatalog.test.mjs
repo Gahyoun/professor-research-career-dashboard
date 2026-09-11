@@ -22,6 +22,27 @@ test('the worker projection excludes identity extras from nested records without
   assert.equal(JSON.stringify(rows), before);
 });
 
+test('worker records share reviewed school aliases even without supplemental canonical fields', () => {
+  const rows = ['Illinois-Urbana/Champaign', 'University of Illinois Urbana-Champaign', 'University of Illinois Chicago'].map((school, i) => ({
+    id: String(i), subject: 'physics', phd_institution: school, phd_country: 'US', phd_department: 'Physics', phd_year: 2005,
+    career: [], current_position: { institution: school, country: 'US', department: 'Physics', observation_year: 2026,
+      evidence_kind: 'semester_roster', evidence_status: 'observed' },
+  }));
+  const before = JSON.stringify(rows);
+  const records = toResearcherRecords(rows);
+  const lifetime = createLifetimeIndex(records, { releaseYear: 2026, includeEstimated: true }).get('0');
+  for (const stage of ['doctoral', 'current']) {
+    const groups = lifetime.stages.find(row => row.stage === stage).groups;
+    assert.equal(groups.length, 1);
+    assert.deepEqual(new Set(groups[0].members), new Set(['0', '1']));
+  }
+  assert.equal(records[0].current_position.institution, rows[0].current_position.institution);
+  assert.equal(JSON.stringify(rows), before);
+  const missing = toResearcherRecords([{ id: 'missing', phd_institution: rows[0].phd_institution, career: [] }])[0];
+  assert.equal(missing.phd_country, undefined);
+  assert.equal(missing.phd_department, undefined);
+});
+
 test('catalogue summaries distinguish missing evidence, unmatched intervals and shared peers across stages', () => {
   const current = { institution: 'School', country: 'KR', department: 'Physics', observation_year: 2026, evidence_kind: 'semester_roster', evidence_status: 'observed' };
   const student = id => ({ id, subject: 'physics', phd_institution: 'School', phd_country: 'KR', phd_department: 'Physics', phd_year: 2005, current_position: current });
