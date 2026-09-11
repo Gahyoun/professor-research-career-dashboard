@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Professor } from './types';
-import { institutionDisplayName, institutionSearchText } from './schoolIdentity';
+import { canonicalSchool, institutionDisplayName, institutionSearchText } from './schoolIdentity';
 import { type Hypergraph, type HypergraphLayout, type Hyperedge } from './constellation/hypergraph';
 import { createLifetimeIndex, type LifetimeStage } from './constellation/lifetime';
 import { toResearcherRecords } from './constellation/records';
@@ -34,7 +34,7 @@ export default function Constellation({ professors, names, releaseYear, onSelect
 }) {
   const [subject, setSubject] = useState('');
   const [scope, setScope] = useState<'institution' | 'researcher'>('researcher');
-  const [institution, setInstitution] = useState(() => { const counts = new Map<string, number>(); professors.forEach(p => { const value = p.phd_institution_canonical || p.phd_institution; if (value && !/^\d+$/.test(value)) counts.set(value, (counts.get(value) || 0) + 1); }); return [...counts].sort((a,b) => b[1]-a[1])[0]?.[0] || ''; });
+  const [institution, setInstitution] = useState(() => { const counts = new Map<string, number>(); professors.forEach(p => { const value = canonicalSchool(p.phd_institution_canonical || p.phd_institution); if (value) counts.set(value, (counts.get(value) || 0) + 1); }); return [...counts].sort((a,b) => b[1]-a[1])[0]?.[0] || ''; });
   const [level, setLevel] = useState<'phd' | 'bachelor'>('phd');
   const [spatial, setSpatial] = useState(true), [temporal, setTemporal] = useState(true);
   const [years, setYears] = useState(5), [includeEstimated, setIncludeEstimated] = useState(true);
@@ -90,10 +90,10 @@ export default function Constellation({ professors, names, releaseYear, onSelect
   // Preserve whole-comparison context (including conflicting current-school countries)
   // when the worker receives only the selected person's visible graph nodes.
   const preparedLifetime = scopeSelectedId ? lifetime : undefined;
-  const filtered = useMemo(() => professors.filter(p => (!subject || p.subject === subject || (scope === 'researcher' && p.id === scopeSelectedId)) && (scope === 'researcher' ? !!scopeSelectedId && !!scopePeers?.has(p.id) : !!institution && (level === 'phd' ? p.phd_institution_canonical || p.phd_institution : p.bachelor_institution_canonical || p.bachelor_institution) === institution)), [professors, subject, scope, scopeSelectedId, scopePeers, institution, level]);
+  const filtered = useMemo(() => professors.filter(p => (!subject || p.subject === subject || (scope === 'researcher' && p.id === scopeSelectedId)) && (scope === 'researcher' ? !!scopeSelectedId && !!scopePeers?.has(p.id) : !!institution && canonicalSchool(level === 'phd' ? p.phd_institution_canonical || p.phd_institution : p.bachelor_institution_canonical || p.bachelor_institution) === institution)), [professors, subject, scope, scopeSelectedId, scopePeers, institution, level]);
   const byId = useMemo(() => new Map(professors.map(p => [p.id, p])), [professors]);
   const graphRecords = useMemo(() => { const ids = new Set(filtered.map(p => p.id)); return allRecords.filter(p => ids.has(p.id)); }, [filtered, allRecords]);
-  const institutions = useMemo(() => [...new Set(professors.filter(p => !subject || p.subject === subject).map(p => level === 'phd' ? p.phd_institution_canonical || p.phd_institution : p.bachelor_institution_canonical || p.bachelor_institution).filter((s): s is string => !!s && !/^\d+$/.test(s)))].sort(), [professors, subject, level]);
+  const institutions = useMemo(() => [...new Set(professors.filter(p => !subject || p.subject === subject).map(p => canonicalSchool(level === 'phd' ? p.phd_institution_canonical || p.phd_institution : p.bachelor_institution_canonical || p.bachelor_institution)).filter((s): s is string => !!s))].sort(), [professors, subject, level]);
 
   const requestKey = useMemo(() => JSON.stringify({ records: graphRecords, scopeSelectedId, preparedLifetime, lifetimeStage, enabledStages, releaseYear, spatial, temporal, level, includeEstimated, includeInferredDepartments, years, balance, spacing, cohortEnabled, bachelorTime }), [graphRecords, scopeSelectedId, preparedLifetime, lifetimeStage, enabledStages, releaseYear, spatial, temporal, level, includeEstimated, includeInferredDepartments, years, balance, spacing, cohortEnabled, bachelorTime]);
   const result = storedResult?.requestKey === requestKey ? storedResult : null;

@@ -3,7 +3,7 @@ import type { CareerSummary } from './constellation/careerCatalog';
 import type { LifetimeStage } from './constellation/lifetime';
 import type { Professor } from './types';
 import { lifetimeStageColors, lifetimeStageLabels } from './lifetimePresentation';
-import { institutionDisplayName, institutionSearchText } from './schoolIdentity';
+import { canonicalSchool, institutionDisplayName, institutionSearchText } from './schoolIdentity';
 import './career-directory.css';
 
 type Props = {
@@ -23,8 +23,8 @@ const subjectLabels: Record<string, string> = { mathematics: '수학', physics: 
 const pageSize = 50;
 const count = (value: number) => value.toLocaleString('ko-KR');
 const searchable = (value: string) => value.normalize('NFKC').toLocaleLowerCase('ko-KR').trim();
-// Presentation names never replace the source institution value used by this filter.
-const institutionValue = (value: string | null) => JSON.stringify(value?.trim() || null);
+// Reviewed identity aliases unify the filter; display-only labels do not.
+const institutionValue = (value: string | null) => JSON.stringify(canonicalSchool(value));
 const institutionLabel = (value: string | null) => value?.trim() ? institutionDisplayName(value) : '재직기관 미확인';
 
 export default function CareerDirectory({ professors, names, summaries, progress, error, selectedId, includeFirstFaculty = false, onSelect }: Props) {

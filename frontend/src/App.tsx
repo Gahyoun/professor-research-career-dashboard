@@ -1,7 +1,7 @@
 import SankeyPage from './SankeyPage';
 import TemporalInstitutionsPage from './TemporalInstitutionsPage';
 import { loadDashboard } from './metadata';
-import { institutionDisplayName } from './schoolIdentity';
+import { canonicalSchool, institutionDisplayName } from './schoolIdentity';
 import { decryptNameMap, type EncryptedNames } from './privacy';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -161,17 +161,17 @@ export default function App() {
 
   const filtered = useMemo(() => dashboard?.professors.filter(p =>
     (!filters.subject || p.subject === filters.subject) &&
-    (!filters.institution || p.current_institution === filters.institution)
+    (!filters.institution || canonicalSchool(p.current_institution) === filters.institution)
   ) || [], [dashboard, filters]);
   const availableInstitutions = useMemo(() => [...new Set((dashboard?.professors || [])
     .filter(p => !filters.subject || p.subject === filters.subject)
-    .map(p => p.current_institution).filter((value): value is string => Boolean(value)))].sort(), [dashboard, filters.subject]);
+    .map(p => canonicalSchool(p.current_institution)).filter((value): value is string => Boolean(value)))].sort(), [dashboard, filters.subject]);
   const selected = filtered.find(p => p.id === selectedId) || filtered[0] || null;
   const labelFor = (p: Professor) => names?.[p.id] || p.id;
-  const availablePhdInstitutions = useMemo(() => [...new Set(filtered.map(p => p.phd_institution).filter((value): value is string => Boolean(value)))].sort(), [filtered]);
+  const availablePhdInstitutions = useMemo(() => [...new Set(filtered.map(p => canonicalSchool(p.phd_institution)).filter((value): value is string => Boolean(value)))].sort(), [filtered]);
   const availablePhdCountries = useMemo(() => [...new Set(filtered.map(p => p.phd_country).filter((value): value is string => Boolean(value)))].sort(), [filtered]);
   const groupFiltered = useMemo(() => filtered.filter(p =>
-    (!groupPhd || p.phd_institution === groupPhd) && (!groupCountry || p.phd_country === groupCountry) && (() => {
+    (!groupPhd || canonicalSchool(p.phd_institution) === groupPhd) && (!groupCountry || p.phd_country === groupCountry) && (() => {
       if (minimumImpact <= 0 && minimumPapers <= 0 && minimumJournals <= 0) return true;
       const journals = p.journals.filter(journal => journal.openalex_2yr_mean_citedness !== null && journal.openalex_2yr_mean_citedness >= minimumImpact);
       const papers = journals.reduce((sum, journal) => sum + journal.lead_work_count, 0);
@@ -249,8 +249,8 @@ export default function App() {
             <article className="summary-card"><span>주저자 논문</span><strong>{selected.lead_work_count.toLocaleString()}편</strong><small>1저자 또는 교신저자 · 후보 제외</small></article>
           </> : <>
             <article className="summary-card"><span>그룹 인원</span><strong>{groupFiltered.length.toLocaleString()}명</strong><small>익명 교수 ID 기준</small></article>
-            <article className="summary-card"><span>현재기관</span><strong>{new Set(groupFiltered.map(p => p.current_institution).filter(Boolean)).size}개</strong><small>본·분교를 구분한 기관 풀네임</small></article>
-            <article className="summary-card"><span>박사 출신기관</span><strong>{new Set(groupFiltered.map(p => p.phd_institution).filter(Boolean)).size}개</strong><small>{groupPhd ? institutionDisplayName(groupPhd) : '전체 출신기관'}</small></article>
+            <article className="summary-card"><span>현재기관</span><strong>{new Set(groupFiltered.map(p => canonicalSchool(p.current_institution)).filter(Boolean)).size}개</strong><small>본·분교를 구분한 기관 풀네임</small></article>
+            <article className="summary-card"><span>박사 출신기관</span><strong>{new Set(groupFiltered.map(p => canonicalSchool(p.phd_institution)).filter(Boolean)).size}개</strong><small>{groupPhd ? institutionDisplayName(groupPhd) : '전체 출신기관'}</small></article>
             <article className="summary-card"><span>박사학위 국가</span><strong>{new Set(groupFiltered.map(p => p.phd_country).filter(Boolean)).size}개</strong><small>{groupCountry || '전체 국가'}</small></article>
             <article className="summary-card"><span>주저자 논문</span><strong>{totalLead.toLocaleString()}편</strong><small>현재 필터 그룹 합계</small></article>
           </>}
