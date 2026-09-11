@@ -155,9 +155,10 @@ test('the full release has no cross-field lifetime membership and preserves the 
     }
   }
   // Release sentinel after applying the strict KOAD namesake decision set to
-  // every bibliographic and affiliation-derived career input.
+  // every bibliographic input while recovering postdoc intervals only when a
+  // strictly retained work supplies institution-and-time continuity evidence.
   assert.deepEqual({ total: index.ids.length, connected, noEvidence, unmatched, counts }, {
-    total: 3937, connected: 3293, noEvidence: 623, unmatched: 21,
-    counts: { doctoral: [801, 427], postdoc: [1698, 1441], first_faculty: [1, 0], current: [3241, 3240] },
+    total: 3937, connected: 3299, noEvidence: 610, unmatched: 28,
+    counts: { doctoral: [801, 427], postdoc: [2130, 1782], first_faculty: [1, 0], current: [3241, 3240] },
   });
 });

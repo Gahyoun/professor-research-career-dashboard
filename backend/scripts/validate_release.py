@@ -132,6 +132,24 @@ for pid in ('P-BQLHUMLPFO',):
         and any(row[1] == '2021-H1' and row[2] == '2021-H1' for row in rows)
     )
 
+hawoong_notre_dame_ok = con.execute("""
+  SELECT COUNT(*) FROM career_segments
+  WHERE professor_id='P-KDHTNXDPLF' AND stage='postdoc'
+    AND institution='University of Notre Dame'
+    AND start_period<='1999-H1' AND end_period>='2000-H2'
+""").fetchone()[0] == 1
+
+same_institution_merge_ok = all(
+    con.execute("""
+      SELECT COUNT(*) FROM career_segments
+      WHERE professor_id=? AND stage='postdoc' AND institution=?
+    """, (pid, institution)).fetchone()[0] == 1
+    for pid, institution in (
+        ('P-Y2GNXM4PJU', 'Duke University'),
+        ('P-FHVPXSB6IR', 'Korea University'),
+    )
+)
+
 gyeongguk_count = con.execute("SELECT COUNT(*) FROM professors WHERE current_institution='Gyeongguk National University (Andong Campus)'").fetchone()[0]
 legacy_andong_current = con.execute("SELECT COUNT(*) FROM professors WHERE current_institution IN ('Andong','Andong National University')").fetchone()[0]
 anachronistic_gyeongguk = con.execute("""
@@ -164,6 +182,8 @@ if not sanghoon_ok: errors.append('Lee Sang Hoon faculty/postdoc sentinel failed
 if not strict_namesake_ok: errors.append('strict KOAD namesake exclusion metadata failed')
 if not merged_author_career_ok: errors.append('merged-author inferred faculty suppression failed')
 if not research_professor_ok: errors.append('research professor to postdoc sentinel failed')
+if not hawoong_notre_dame_ok: errors.append('Hawoong Jeong Notre Dame postdoc recovery failed')
+if not same_institution_merge_ok: errors.append('nearby same-institution career merge failed')
 if not gyeongguk_count or legacy_andong_current: errors.append('Gyeongguk National University succession sentinel failed')
 if anachronistic_gyeongguk: errors.append('Gyeongguk name appears before 2025')
 if integrity != 'ok' or fk_errors: errors.append('SQLite integrity failure')
@@ -186,6 +206,8 @@ result = {
     'strict_namesake_filter': strict_namesake_ok,
     'merged_author_career_sentinel': merged_author_career_ok,
     'research_professor_sentinel': research_professor_ok,
+    'hawoong_notre_dame_postdoc_sentinel': hawoong_notre_dame_ok,
+    'same_institution_career_merge_sentinel': same_institution_merge_ok,
     'gyeongguk_current_professors': gyeongguk_count, 'legacy_andong_current_professors': legacy_andong_current,
     'anachronistic_gyeongguk_segments': anachronistic_gyeongguk,
     'private_identifiers_in_dashboard': 'prof:' in dashboard_text or bool(re.search(r'\bA\d{8,}\b', dashboard_text)),

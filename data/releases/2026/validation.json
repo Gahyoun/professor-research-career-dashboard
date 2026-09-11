@@ -8,7 +8,7 @@
   "lead_work_count": 109705,
   "db_counts": {
     "professors": 3937,
-    "career_segments": 10734,
+    "career_segments": 11077,
     "yearly_lead_output": 83360,
     "professor_journal_output": 56049
   },
@@ -25,6 +25,8 @@
   "strict_namesake_filter": true,
   "merged_author_career_sentinel": true,
   "research_professor_sentinel": true,
+  "hawoong_notre_dame_postdoc_sentinel": true,
+  "same_institution_career_merge_sentinel": true,
   "gyeongguk_current_professors": 8,
   "legacy_andong_current_professors": 0,
   "anachronistic_gyeongguk_segments": 0,

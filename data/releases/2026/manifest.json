@@ -16,8 +16,11 @@
   "doctoral_period_rule": "phd_degree_year-5 through phd_degree_year, estimated",
   "pre_doctoral_hard_gate": "works and affiliations earlier than phd_degree_year-5 are duplicate_drop_candidate",
   "same_institution_postdoc_rule": "post-PhD same-institution affiliation period with work_count>0 before first faculty appointment",
+  "postdoc_recovery_rule": "medium-confidence postdoc rows require strictly retained same-institution work evidence inside the recorded interval",
+  "same_institution_segment_merge_rule": "same researcher, stage, and institution with at most two missing half-years is coalesced",
+  "merged_career_segment_count": 1013,
   "names_encrypted": true,
-  "public_db_bytes": 17866752,
+  "public_db_bytes": 17965056,
   "sqlite_integrity": "ok",
   "foreign_key_errors": 0,
   "plaintext_names_in_public_assets": false

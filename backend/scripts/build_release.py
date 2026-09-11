@@ -242,9 +242,20 @@ for row in con.execute(f'''
 '''):
     current_departments.setdefault(row['professor_uid'], clean_department(row['unit_label']))
 
+strict_affiliation_periods = defaultdict(set)
+for row in con.execute(f'''
+  SELECT r.professor_uid,r.institution_unit_id,r.period
+  FROM raw_affiliation_units r
+  WHERE r.identity_decision='keep'
+    AND {strict_identity_predicate.format(alias='r')}
+    AND r.institution_unit_id IS NOT NULL AND r.period IS NOT NULL
+  GROUP BY r.professor_uid,r.institution_unit_id,r.period
+'''):
+    strict_affiliation_periods[(row['professor_uid'], row['institution_unit_id'])].add(row['period'])
+
 career_by_uid = defaultdict(list)
 for row in con.execute('''
-  SELECT c.professor_uid,c.position_type,c.position_no,
+  SELECT c.professor_uid,c.position_type,c.position_no,c.institution_unit_id,
          COALESCE(iu.display_name,c.institution_name) AS institution_name,
          c.start_period,c.end_period,c.start_year,c.end_year,c.confidence,c.reasoning,
          c.is_institution_successor,c.evidence_status
@@ -257,11 +268,20 @@ for row in con.execute('''
     # Inferred faculty rows built before work-level disambiguation can turn a
     # namesake affiliation into an apparent appointment. Keep roster/current
     # anchors here; prior faculty moves are reconstructed below from filtered
-    # department evidence. Postdoc rows need at least high confidence.
+    # department evidence. Medium-confidence postdocs survive only when their
+    # own institution and interval still contain strictly retained work evidence.
     if stage == 'faculty' and row['confidence'] != 'confirmed':
         continue
     if stage == 'postdoc' and row['confidence'] not in {'confirmed', 'high'}:
-        continue
+        supporting_periods = [
+            period for period in strict_affiliation_periods.get(
+                (row['professor_uid'], row['institution_unit_id']), set()
+            )
+            if (not row['start_period'] or period >= row['start_period'])
+            and (not row['end_period'] or period <= row['end_period'])
+        ]
+        if row['confidence'] != 'medium' or not supporting_periods:
+            continue
     career_by_uid[row['professor_uid']].append({
         'stage': stage, 'position_no': row['position_no'], 'institution': row['institution_name'],
         'start_period': row['start_period'], 'end_period': row['end_period'],
@@ -324,6 +344,45 @@ def period_index(period):
     match = re.fullmatch(r'(\d{4})-H([12])', period or '')
     return int(match.group(1)) * 2 + int(match.group(2)) - 1 if match else None
 
+def merge_nearby_career_segments(careers, max_missing_periods=2):
+    """Coalesce split rows without erasing genuinely separate return visits.
+
+    Publication affiliations are sparse. Two rows at the same institution and
+    stage separated by no more than two unobserved half-years are displayed as
+    one continuous spell. Different stages and longer absences remain separate.
+    """
+    confidence_order = {'low': 0, 'medium': 1, 'high': 2, 'confirmed': 3, 'estimated': 0}
+    merged = []
+    latest_by_key = {}
+    merge_count = 0
+    ordered = sorted(careers, key=lambda item: (
+        item.get('start_year') or 9999, item.get('start_period') or '',
+        item['stage'], item['institution'],
+    ))
+    for original in ordered:
+        item = dict(original)
+        key = (item['stage'], item['institution'])
+        previous = latest_by_key.get(key)
+        previous_end = period_index(previous.get('end_period')) if previous else None
+        current_start = period_index(item.get('start_period'))
+        if (previous is not None and previous_end is not None and current_start is not None
+                and current_start <= previous_end + max_missing_periods + 1):
+            current_end = period_index(item.get('end_period'))
+            if current_end is not None and current_end > previous_end:
+                previous['end_period'] = item['end_period']
+                previous['end_year'] = item['end_year']
+            if confidence_order.get(item.get('confidence'), -1) > confidence_order.get(previous.get('confidence'), -1):
+                previous['confidence'] = item['confidence']
+            bases = [value for value in (previous.get('evidence_basis'), item.get('evidence_basis')) if value]
+            previous['evidence_basis'] = '; '.join(dict.fromkeys(bases)) or None
+            previous['is_estimated'] = bool(previous.get('is_estimated')) and bool(item.get('is_estimated'))
+            previous['is_institution_successor'] = bool(previous.get('is_institution_successor')) or bool(item.get('is_institution_successor'))
+            merge_count += 1
+            continue
+        merged.append(item)
+        latest_by_key[key] = item
+    return merged, merge_count
+
 def consecutive_period_groups(rows):
     groups = []
     for row in rows:
@@ -374,6 +433,7 @@ private_names = {}
 uid_to_public = {}
 source_to_uid = {}
 primary_author_by_uid = {}
+merged_career_segment_count = 0
 for row in con.execute('''
   SELECT p.*,iu.display_name AS current_full_name
   FROM professors p LEFT JOIN institution_units iu ON iu.unit_id=p.latest_institution_unit_id
@@ -509,15 +569,17 @@ for row in con.execute('''
                 'is_institution_successor': True, 'is_estimated': False,
                 'evidence_basis': '2025-03 국립안동대학교·경북도립대학교 통합 출범 및 최신 명부 증거',
             })
-    careers.sort(key=lambda item: (item.get('start_year') or 9999, item.get('start_period') or '', item['stage'], item['institution']))
-    for faculty_number, faculty in enumerate((item for item in careers if item['stage'] == 'faculty'), start=1):
-        faculty['position_no'] = faculty_number
-    faculties = [x for x in careers if x['stage'] == 'faculty']
     current_full = canonical_institution(row['current_full_name'], row['latest_institution_raw'], current_profile=True)
     generic_current = row['current_full_name'] or row['latest_institution_raw']
     for career in careers:
         if career['stage'] == 'faculty' and career['institution'] == generic_current:
             career['institution'] = current_full
+    careers, merged_count = merge_nearby_career_segments(careers)
+    merged_career_segment_count += merged_count
+    careers.sort(key=lambda item: (item.get('start_year') or 9999, item.get('start_period') or '', item['stage'], item['institution']))
+    for faculty_number, faculty in enumerate((item for item in careers if item['stage'] == 'faculty'), start=1):
+        faculty['position_no'] = faculty_number
+    faculties = [x for x in careers if x['stage'] == 'faculty']
     professors.append({
         'id': pid, 'subject': row['subject'], 'current_institution': current_full,
         'department': current_departments.get(uid),
@@ -704,6 +766,9 @@ meta = {
     'doctoral_period_rule': 'phd_degree_year-5 through phd_degree_year, estimated',
     'pre_doctoral_hard_gate': 'works and affiliations earlier than phd_degree_year-5 are duplicate_drop_candidate',
     'same_institution_postdoc_rule': 'post-PhD same-institution affiliation period with work_count>0 before first faculty appointment',
+    'postdoc_recovery_rule': 'medium-confidence postdoc rows require strictly retained same-institution work evidence inside the recorded interval',
+    'same_institution_segment_merge_rule': 'same researcher, stage, and institution with at most two missing half-years is coalesced',
+    'merged_career_segment_count': merged_career_segment_count,
     'names_encrypted': True,
 }
 dashboard = {'meta': meta, 'filters': filters, 'professors': professors}
