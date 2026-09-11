@@ -9,6 +9,15 @@ const aliases: [string, string[]][] = [
   ['Harvard University', ['Harvard']], ['Stanford University', ['Stanford']],
   ['Brown University', ['Brown']], ['Cornell University', ['Cornell']],
   ['Princeton University', ['Princeton']], ['Yale University', ['Yale']],
+  // Reviewed source spellings; see docs/INSTITUTION_LABELS.md for evidence.
+  ['University of Illinois Urbana-Champaign', [
+    'University of Illinois at Urbana-Champaign', 'University of Illinois at Urbana - Champaign',
+    'Illinois at Urbana - Champaign', 'Illinois-Urbana/Champaign',
+  ]],
+  ['University of Illinois Chicago', ['University of Illinois at Chicago', 'Illinois at Chicago']],
+  ['University of Wisconsin–Madison', ['University of Wisconsin-Madison', 'Wisconsin-Madison', 'Wisconsin–Madison']],
+  ['Colorado School of Mines', ['Colorado School of Mines.']],
+  ['Sri Venkateswara University', ['Sri Venkateswara Physics']],
   ['Kyoto University', ['Kyoto']], ['The University of Tokyo', ['Tokyo']],
   ['Gwangju Institute of Science and Technology', ['GIST']],
   ['Ulsan National Institute of Science and Technology', ['UNIST']],

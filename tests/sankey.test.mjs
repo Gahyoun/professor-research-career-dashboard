@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { mergeMetadata } from '../work/test-dist/metadata.js';
+import { institutionSearchText } from '../work/test-dist/schoolIdentity.js';
 import { applyInstitutionSuccessions } from '../work/test-dist/institutionSuccession.js';
 import { buildSankey, buildInstitutionOptions, colorOfOrigin, layoutSankey, countryRegion, institutionKey, STAGES } from '../work/test-dist/sankey.js';
 
@@ -152,6 +153,37 @@ test('institution options include all schools from incomplete people and count e
   assert.deepEqual(campus.records.map(item => item.id), ['campus']);
   assert.equal(JSON.stringify(rows), original);
   audit(campus);
+});
+
+test('reviewed university spellings share options, filters and flows while neighboring institutions stay separate', () => {
+  const groups = [
+    ['University of Illinois Urbana-Champaign', ['University of Illinois Urbana-Champaign', 'University of Illinois at Urbana - Champaign', 'Illinois at Urbana - Champaign', 'Illinois-Urbana/Champaign']],
+    ['University of Illinois Chicago', ['University of Illinois Chicago', 'Illinois at Chicago']],
+    ['University of Wisconsin–Madison', ['University of Wisconsin–Madison', 'University of Wisconsin-Madison', 'Wisconsin-Madison']],
+    ['Colorado School of Mines', ['Colorado School of Mines', 'Colorado School of Mines.']],
+    ['Sri Venkateswara University', ['Sri Venkateswara University', 'Sri Venkateswara Physics']],
+  ];
+  const separate = ['Illinois', 'Illinois Institute of Technology', 'University of Wisconsin-Eau Claire', 'Medical College of Wisconsin'];
+  const rows = [...groups.flatMap(([canonical, variants]) => variants.map((name, i) => person(`${canonical}-${i}`, name, name, canonical))),
+    ...separate.map(name => person(name, name, name, name))];
+  const original = JSON.stringify(rows);
+  const options = buildInstitutionOptions(rows);
+  for (const stage of STAGES) {
+    assert.equal(options[stage].length, groups.length + separate.length);
+    for (const [canonical, variants] of groups) {
+      const option = options[stage].find(item => item.label === canonical);
+      assert.equal(option.count, variants.length);
+      const selected = buildSankey(rows, { institutions: { [stage]: option.key } });
+      assert.equal(selected.count, variants.length);
+      assert.equal(selected.selfHireCount, variants.length);
+      assert.equal(selected.routes.length, 1);
+      assert.deepEqual(selected.routes[0].labels, [canonical, canonical, canonical]);
+      assert.deepEqual(new Set(selected.records.map(item => item.original.phd)), new Set(variants));
+      for (const variant of variants) assert.ok(institutionSearchText(canonical).includes(variant));
+      audit(selected);
+    }
+  }
+  assert.equal(JSON.stringify(rows), original);
 });
 
 test('continuing universities match current Korean labels without absorbing historical predecessor schools', () => {

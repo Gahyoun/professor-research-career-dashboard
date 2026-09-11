@@ -57,3 +57,22 @@ its public degree records currently carry KR country values, conflicting with th
 Saudi institution's identity. Resolve those source records in the data workflow.
 Unresolved spellings such as `Konju`, `Myongi`, `Deagu` and `Sila` also retain the
 source text until the underlying institution is confirmed.
+
+## Reviewed identity aliases (2026-09-11)
+
+These reviewed aliases are in the shared `canonicalSchool` registry, so they also
+unify filter options, Sankey totals and routes, hypergraph institution keys, and
+institution-bound metadata joins. They retain the original release fields and do
+not infer departments or merge distinct campuses. Search accepts the old spellings.
+
+| Canonical institution | Observed release variants | Basis |
+| --- | --- | --- |
+| University of Illinois Urbana-Champaign | University of Illinois at Urbana - Champaign; Illinois at Urbana - Champaign; Illinois-Urbana/Champaign | The [Illinois System writing guide](https://www.uillinois.edu/erc/brand_and_marketing/brand/style/writing_style_guide) records the removal of `at` from the name. All variants explicitly identify Urbana-Champaign. |
+| University of Illinois Chicago | Illinois at Chicago | The same official guide identifies Chicago separately and records its name without `at`. |
+| University of Wisconsin–Madison | University of Wisconsin-Madison; Wisconsin-Madison | The [official editorial guide](https://editorial-styleguide.strategiccommunication.wisc.edu/term/university-of-wisconsin-madison-the/) specifies an en dash for Madison. |
+| Colorado School of Mines | Colorado School of Mines. | A trailing period on the [official school name](https://www.mines.edu/about/). |
+| Sri Venkateswara University | Sri Venkateswara Physics | The source degree's author and year match a [research-lab biography](https://sites.google.com/site/nanogachon/members) that explicitly names the university and a physics PhD. The university also lists its [Physics department](https://svuniversity.edu.in/departments_cs/physics/). This corrects a department token in the school field; it neither verifies all department fields nor deduplicates researcher records. |
+
+`Illinois` alone is unresolved. Illinois Chicago, Illinois Institute of Technology,
+Wisconsin–Eau Claire and Medical College of Wisconsin remain separate from the
+Urbana-Champaign and Madison groups.

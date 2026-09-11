@@ -74,6 +74,9 @@ test('matching canonical aliases preserve institution-bound inferred and verifie
     ['Korea', 'Korea University'], ['ＫＡＩＳＴ．', 'Korea Advanced Institute of Science and Technology'],
     ['Hanyang_ERICA', 'Hanyang University (ERICA Campus)'],
     ['Gangneung–Wonju National University', 'Gangneung-Wonju National University'],
+    ['University of Illinois at Urbana-Champaign', 'Illinois-Urbana/Champaign'],
+    ['University of Wisconsin–Madison', 'Wisconsin-Madison'],
+    ['Sri Venkateswara University', 'Sri Venkateswara Physics'],
   ]) for (const inferred of [true, false]) {
     const person = { id: 'P-AAAAAAAAAA', phd_institution: school, bachelor_institution: school,
       career: [{ institution: school, start_year: 2000, end_year: 2005 }] };
