@@ -8,7 +8,7 @@
 2. `enrich_openalex_works.mjs`: 기본 저자 ID의 1저자·교신저자 여부, 저널 ID, 논문 인용수를 수집한다.
 3. `enrich_openalex_alias_works.mjs`: 한 교수에게 연결된 추가 OpenAlex 저자 ID를 같은 방식으로 수집한다.
 4. `fetch_openalex_sources.mjs`: 저널의 공개 2년 평균 인용도를 수집한다.
-5. `build_release.py`: work ID 중복을 제거한 뒤 익명 ID, 경력구간, 연도별·저널별 집계, 공개 SQLite, 암호화 실명 번들을 생성한다.
+5. `build_release.py`: KOAD `identity_decisions.sqlite`를 직접 결합해 `namesake_paper`를 서지·소속·경력 추론 전에 제외하고, work ID 중복 제거 후 익명 ID, 경력구간, 연도별·저널별 집계, 공개 SQLite, 암호화 실명 번들을 생성한다.
 6. `validate_release.py`: 무결성·개인정보·기관 풀네임·연속 연도축·JSON/SQLite 정합성과 표본 경력 회귀 검사를 수행한다.
 
 비공개 DB에 판정 마이그레이션을 적용한 뒤에는 `export_private_jsonl.py`로 경력·반기 소속·동명이인 후보 JSONL 세 파일을 다시 만든다. JSONL을 DB와 별도로 손으로 수정하지 않으므로 2027 릴리스에서도 같은 판정 결과가 일관되게 유지된다.

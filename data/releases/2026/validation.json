@@ -5,12 +5,12 @@
   "professors": 3937,
   "decrypted_names": null,
   "encrypted_names_validation": "reused_bundle_structure",
-  "lead_work_count": 117095,
+  "lead_work_count": 109705,
   "db_counts": {
     "professors": 3937,
-    "career_segments": 14478,
-    "yearly_lead_output": 83932,
-    "professor_journal_output": 60342
+    "career_segments": 10734,
+    "yearly_lead_output": 83360,
+    "professor_journal_output": 56049
   },
   "sqlite_integrity": "ok",
   "foreign_key_errors": 0,
@@ -22,6 +22,8 @@
   "misspelled_korea_phd_country_rows": 0,
   "lee_mijin_move_sentinel": true,
   "lee_sanghoon_sentinel": true,
+  "strict_namesake_filter": true,
+  "merged_author_career_sentinel": true,
   "research_professor_sentinel": true,
   "gyeongguk_current_professors": 8,
   "legacy_andong_current_professors": 0,

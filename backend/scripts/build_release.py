@@ -147,6 +147,44 @@ koad_changed_work_count = con.execute(
     'SELECT COUNT(*) FROM koad_application_audit'
 ).fetchone()[0] if koad_applied else 0
 
+# The web-copy DB preserves review rows by design. The public bibliographic
+# release is stricter: every work that KOAD labelled namesake_paper is excluded,
+# including review-confidence rows, before publication and career aggregation.
+decision_db_path = db_path.parent / 'identity_decisions.sqlite'
+koad_decisions_available = decision_db_path.exists()
+if koad_decisions_available:
+    decision_uri = f'file:{decision_db_path.resolve()}?mode=ro&immutable=1'
+    con.execute('ATTACH DATABASE ? AS koad', (decision_uri,))
+    koad_decisions_available = bool(con.execute(
+        "SELECT 1 FROM koad.sqlite_master WHERE type='table' AND name='work_decision'"
+    ).fetchone())
+if not koad_decisions_available:
+    raise SystemExit(
+        f'KOAD decision database is required for public release: {decision_db_path}'
+    )
+
+strict_identity_predicate = """
+NOT EXISTS (
+  SELECT 1 FROM koad.work_decision kd
+  WHERE kd.professor_uid={alias}.professor_uid
+    AND kd.work_id={alias}.work_id
+    AND kd.decision='namesake_paper'
+)
+"""
+koad_namesake_work_count = con.execute(
+    "SELECT COUNT(*) FROM koad.work_decision WHERE decision='namesake_paper'"
+).fetchone()[0]
+koad_namesake_removed_from_source_keep = con.execute('''
+  SELECT COUNT(*)
+  FROM work_authorship_evidence w JOIN koad.work_decision kd USING(professor_uid,work_id)
+  WHERE w.identity_decision='keep' AND kd.decision='namesake_paper'
+''').fetchone()[0]
+blocked_work_ids_by_uid = defaultdict(set)
+for row in con.execute(
+    "SELECT professor_uid,work_id FROM koad.work_decision WHERE decision='namesake_paper'"
+):
+    blocked_work_ids_by_uid[row['professor_uid']].add(row['work_id'])
+
 for row in con.execute('''
   SELECT ia.raw_label,iu.display_name,ia.confidence
   FROM institution_aliases ia JOIN institution_units iu ON iu.unit_id=ia.unit_id
@@ -191,13 +229,16 @@ for row in con.execute('''
     education[row['professor_uid']][row['degree_level']] = dict(row)
 
 current_departments = {}
-for row in con.execute('''
-  SELECT a.professor_uid,a.unit_label,a.period,a.work_count,a.confidence
-  FROM affiliation_periods a JOIN professors p USING(professor_uid)
-  WHERE a.institution_unit_id=p.latest_institution_unit_id AND a.unit_label IS NOT NULL
-  ORDER BY a.professor_uid,a.period DESC,
-           CASE a.confidence WHEN 'confirmed' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC,
-           a.work_count DESC
+for row in con.execute(f'''
+  SELECT r.professor_uid,r.unit_label,r.period,
+         COUNT(DISTINCT r.work_id) AS work_count,'high' AS confidence
+  FROM raw_affiliation_units r JOIN professors p USING(professor_uid)
+  WHERE r.identity_decision='keep'
+    AND {strict_identity_predicate.format(alias='r')}
+    AND r.institution_unit_id=p.latest_institution_unit_id
+    AND r.unit_label IS NOT NULL
+  GROUP BY r.professor_uid,r.unit_label,r.period
+  ORDER BY r.professor_uid,r.period DESC,work_count DESC
 '''):
     current_departments.setdefault(row['professor_uid'], clean_department(row['unit_label']))
 
@@ -206,12 +247,20 @@ for row in con.execute('''
   SELECT c.professor_uid,c.position_type,c.position_no,
          COALESCE(iu.display_name,c.institution_name) AS institution_name,
          c.start_period,c.end_period,c.start_year,c.end_year,c.confidence,c.reasoning,
-         c.is_institution_successor
+         c.is_institution_successor,c.evidence_status
   FROM career_positions_v2 c LEFT JOIN institution_units iu ON iu.unit_id=c.institution_unit_id
   ORDER BY c.professor_uid,c.start_year,c.start_period,c.institution_name
 '''):
     stage = {'doctoral_training': 'doctoral', 'postdoctoral_or_research': 'postdoc', 'faculty': 'faculty'}.get(row['position_type'])
     if not stage:
+        continue
+    # Inferred faculty rows built before work-level disambiguation can turn a
+    # namesake affiliation into an apparent appointment. Keep roster/current
+    # anchors here; prior faculty moves are reconstructed below from filtered
+    # department evidence. Postdoc rows need at least high confidence.
+    if stage == 'faculty' and row['confidence'] != 'confirmed':
+        continue
+    if stage == 'postdoc' and row['confidence'] not in {'confirmed', 'high'}:
         continue
     career_by_uid[row['professor_uid']].append({
         'stage': stage, 'position_no': row['position_no'], 'institution': row['institution_name'],
@@ -222,24 +271,30 @@ for row in con.execute('''
     })
 
 same_phd_affiliations = defaultdict(list)
-for row in con.execute('''
-  SELECT a.professor_uid,a.period,a.work_count,a.institution_unit_id
-  FROM affiliation_periods a JOIN education e
-    ON e.professor_uid=a.professor_uid AND e.degree_level='phd'
-   AND e.institution_unit_id=a.institution_unit_id
-  WHERE a.work_count>0
-  ORDER BY a.professor_uid,a.period
+for row in con.execute(f'''
+  SELECT r.professor_uid,r.period,COUNT(DISTINCT r.work_id) AS work_count,
+         r.institution_unit_id
+  FROM raw_affiliation_units r JOIN education e
+    ON e.professor_uid=r.professor_uid AND e.degree_level='phd'
+   AND e.institution_unit_id=r.institution_unit_id
+  WHERE r.identity_decision='keep'
+    AND {strict_identity_predicate.format(alias='r')}
+  GROUP BY r.professor_uid,r.period,r.institution_unit_id
+  ORDER BY r.professor_uid,r.period
 '''):
     same_phd_affiliations[row['professor_uid']].append(dict(row))
 
 domestic_department_affiliations = defaultdict(list)
-for row in con.execute('''
-  SELECT a.professor_uid,a.period,a.work_count,a.unit_label,a.institution_unit_id,
-         iu.display_name AS institution_name
-  FROM affiliation_periods a JOIN institution_units iu ON iu.unit_id=a.institution_unit_id
-  WHERE a.work_count>0 AND iu.country_code='KR' AND iu.institution_type='education'
-    AND a.unit_label IS NOT NULL
-  ORDER BY a.professor_uid,a.period
+for row in con.execute(f'''
+  SELECT r.professor_uid,r.period,COUNT(DISTINCT r.work_id) AS work_count,
+         r.unit_label,r.institution_unit_id,iu.display_name AS institution_name
+  FROM raw_affiliation_units r JOIN institution_units iu ON iu.unit_id=r.institution_unit_id
+  WHERE r.identity_decision='keep'
+    AND {strict_identity_predicate.format(alias='r')}
+    AND iu.country_code='KR' AND iu.institution_type='education'
+    AND r.unit_label IS NOT NULL
+  GROUP BY r.professor_uid,r.period,r.unit_label,r.institution_unit_id,iu.display_name
+  ORDER BY r.professor_uid,r.period
 '''):
     if re.search(r'(?i)research\s+(assistant\s+)?professor|research\s+prof\b|연구교수', row['unit_label'] or ''):
         continue
@@ -247,11 +302,13 @@ for row in con.execute('''
         domestic_department_affiliations[row['professor_uid']].append(dict(row))
 
 research_professor_affiliations = defaultdict(list)
-for row in con.execute('''
+for row in con.execute(f'''
   SELECT r.professor_uid,r.period,COALESCE(iu.display_name,r.institution_name) AS institution_name,
          r.unit_label
   FROM raw_affiliation_units r LEFT JOIN institution_units iu ON iu.unit_id=r.institution_unit_id
-  WHERE r.identity_decision='keep' AND (
+  WHERE r.identity_decision='keep'
+    AND {strict_identity_predicate.format(alias='r')}
+    AND (
     lower(COALESCE(r.unit_label,'')) LIKE '%research professor%'
     OR lower(COALESCE(r.unit_label,'')) LIKE '%research prof%'
     OR r.unit_label LIKE '%연구교수%'
@@ -524,11 +581,29 @@ def add_role(pid, publication_year, role):
     return True
 
 allowed_types = {'article', 'review', 'letter', 'editorial'}
+blocked_lead_works = set()
 for row in con.execute('''
+  SELECT w.professor_uid,w.openalex_id,w.work_id,w.publication_year,w.work_type
+  FROM work_authorship_evidence w
+  JOIN professors p USING(professor_uid)
+  JOIN koad.work_decision kd USING(professor_uid,work_id)
+  WHERE w.identity_decision='keep' AND kd.decision='namesake_paper'
+    AND w.publication_year<=?
+    AND (p.phd_year IS NULL OR w.publication_year>=p.phd_year-5)
+''', (int(year),)):
+    role = roles.get((row['openalex_id'], row['work_id']))
+    if not role or not (role.get('author_position') == 'first' or role.get('is_corresponding')):
+        continue
+    if row['work_type'] not in allowed_types or (role.get('source') or {}).get('type') != 'journal':
+        continue
+    blocked_lead_works.add((row['professor_uid'], row['work_id']))
+
+for row in con.execute(f'''
   SELECT w.professor_uid,w.openalex_id,w.work_id,w.publication_year,w.work_type
   FROM work_authorship_evidence w JOIN professors p USING(professor_uid)
   WHERE w.identity_decision='keep' AND w.publication_year<=?
     AND (p.phd_year IS NULL OR w.publication_year>=p.phd_year-5)
+    AND {strict_identity_predicate.format(alias='w')}
 ''', (int(year),)):
     role = roles.get((row['openalex_id'], row['work_id']))
     if not role or not (role.get('author_position') == 'first' or role.get('is_corresponding')):
@@ -552,6 +627,9 @@ for role in alias_roles:
         continue
     alias_professor = by_pid.get(uid_to_public.get(uid))
     if alias_professor and alias_professor.get('phd_year') and int(publication_year) < int(alias_professor['phd_year']) - 5:
+        continue
+    if role.get('work_id') in blocked_work_ids_by_uid.get(uid, set()):
+        blocked_lead_works.add((uid, role['work_id']))
         continue
     alias_work_count += int(add_role(uid_to_public.get(uid), publication_year, role))
 
@@ -611,13 +689,15 @@ meta = {
     'impact_metric': 'OpenAlex source summary_stats.2yr_mean_citedness',
     'lead_definition': 'OpenAlex author_position=first OR is_corresponding=true',
     'identity_filter': (
-        'KOAD career-aware same-person keep; review preserves prior decision; '
+        'KOAD career-aware same-person filter; every namesake_paper decision is excluded '
+        'before bibliography, affiliation, career, yearly, and journal aggregation; '
         'publication_year>=phd_year-5 when PhD year is known'
-        if koad_applied else
-        'identity_decision=keep (or annotated secondary ID) AND publication_year>=phd_year-5 when PhD year is known'
     ),
-    'identity_filter_version': 'KOAD 1.0' if koad_applied else 'legacy',
+    'identity_filter_version': 'KOAD 1.1-strict-namesake-drop',
     'identity_decisions_changed': koad_changed_work_count,
+    'koad_namesake_work_count': koad_namesake_work_count,
+    'koad_namesake_removed_from_source_keep': koad_namesake_removed_from_source_keep,
+    'koad_namesake_lead_works_blocked': len(blocked_lead_works),
     'secondary_openalex_author_count': len(alias_author_to_uid),
     'secondary_openalex_lead_work_count': alias_work_count,
     'bachelor_display_rule': 'institution only; no timeline estimate because leave/military and other gaps are unobserved',

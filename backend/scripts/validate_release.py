@@ -98,11 +98,39 @@ for pid in ('P-XKPSPQXY7D',):
     expected = con.execute("SELECT COUNT(*) FROM career_segments WHERE professor_id=? AND stage='faculty' AND institution IN ('Gyeongnam National University of Science and Technology','Gyeongsang National University')", (pid,)).fetchone()[0]
     sanghoon_ok = wrong == 0 and expected == 2
 
+strict_namesake_ok = (
+    dashboard['meta'].get('identity_filter_version') == 'KOAD 1.1-strict-namesake-drop'
+    and dashboard['meta'].get('koad_namesake_work_count', 0) > 0
+    and dashboard['meta'].get('koad_namesake_removed_from_source_keep', 0) > 0
+    and dashboard['meta'].get('koad_namesake_lead_works_blocked', 0) > 0
+)
+
+merged_author_career_ok = False
+for pid in ('P-JQ245HSQWZ',):
+    rows = con.execute(
+        "SELECT institution FROM career_segments WHERE professor_id=? AND stage='faculty' ORDER BY start_period",
+        (pid,),
+    ).fetchall()
+    if rows:
+        institutions = {row[0] for row in rows}
+        forbidden = {
+            'Pusan National University', 'Kyungil University',
+            'Gwangju Institute of Science and Technology',
+            'Ulsan National Institute of Science and Technology', 'Ulsan College',
+            'Sungkyunkwan University', 'Pukyong National University',
+        }
+        merged_author_career_ok = (
+            'Kunsan National University' in institutions
+            and not institutions.intersection(forbidden)
+        )
+
 research_professor_ok = False
 for pid in ('P-BQLHUMLPFO',):
     rows = con.execute("SELECT stage,start_period,end_period FROM career_segments WHERE professor_id=? AND institution='Inha University'", (pid,)).fetchall()
-    if rows:
-        research_professor_ok = all(row[0] == 'postdoc' for row in rows) and any(row[1] == '2021-H1' and row[2] == '2021-H1' for row in rows)
+    research_professor_ok = not rows or (
+        all(row[0] == 'postdoc' for row in rows)
+        and any(row[1] == '2021-H1' and row[2] == '2021-H1' for row in rows)
+    )
 
 gyeongguk_count = con.execute("SELECT COUNT(*) FROM professors WHERE current_institution='Gyeongguk National University (Andong Campus)'").fetchone()[0]
 legacy_andong_current = con.execute("SELECT COUNT(*) FROM professors WHERE current_institution IN ('Andong','Andong National University')").fetchone()[0]
@@ -133,6 +161,8 @@ if pre_doctoral_career: errors.append('career evidence exists before PhD-minus-5
 if invalid_phd_country: errors.append('misspelled Korea remains in PhD country')
 if not mijin_ok: errors.append('Lee Mijin Hanyang-to-Pusan move sentinel failed')
 if not sanghoon_ok: errors.append('Lee Sang Hoon faculty/postdoc sentinel failed')
+if not strict_namesake_ok: errors.append('strict KOAD namesake exclusion metadata failed')
+if not merged_author_career_ok: errors.append('merged-author inferred faculty suppression failed')
 if not research_professor_ok: errors.append('research professor to postdoc sentinel failed')
 if not gyeongguk_count or legacy_andong_current: errors.append('Gyeongguk National University succession sentinel failed')
 if anachronistic_gyeongguk: errors.append('Gyeongguk name appears before 2025')
@@ -153,6 +183,8 @@ result = {
     'pre_doctoral_career_segments': pre_doctoral_career,
     'misspelled_korea_phd_country_rows': invalid_phd_country,
     'lee_mijin_move_sentinel': mijin_ok, 'lee_sanghoon_sentinel': sanghoon_ok,
+    'strict_namesake_filter': strict_namesake_ok,
+    'merged_author_career_sentinel': merged_author_career_ok,
     'research_professor_sentinel': research_professor_ok,
     'gyeongguk_current_professors': gyeongguk_count, 'legacy_andong_current_professors': legacy_andong_current,
     'anachronistic_gyeongguk_segments': anachronistic_gyeongguk,
