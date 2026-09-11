@@ -18,6 +18,19 @@ builder = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(builder)
 
 
+def create_koad_decisions(source_db, rows=()):
+    decision_db = source_db.parent / 'identity_decisions.sqlite'
+    with sqlite3.connect(decision_db) as connection:
+        connection.execute('''
+            CREATE TABLE work_decision(
+                professor_uid TEXT NOT NULL,
+                work_id TEXT NOT NULL,
+                decision TEXT NOT NULL
+            )
+        ''')
+        connection.executemany('INSERT INTO work_decision VALUES(?,?,?)', rows)
+
+
 class MetadataTests(unittest.TestCase):
     def test_formal_units_preserve_department_distinctions(self):
         self.assertEqual(builder.department_label('Department of Physics and Astronomy'), ('Department of Physics and Astronomy', False))
@@ -149,6 +162,7 @@ class MetadataTests(unittest.TestCase):
         self.assertEqual(manifest['public_data_sha256'], hashlib.sha256(public_bytes).hexdigest())
         self.assertEqual(manifest['metadata_sha256'], hashlib.sha256(metadata_bytes).hexdigest())
         self.assertEqual(manifest['release_year'], json.loads(public_bytes)['meta']['release_year'])
+        self.assertEqual(manifest['identity_filter_version'], 'KOAD 1.1-strict-namesake-drop')
         changed = json.loads(public_bytes)
         changed['meta']['release_year'] += 1
         self.assertNotEqual(manifest['public_data_sha256'], hashlib.sha256(json.dumps(changed).encode()).hexdigest())
@@ -181,11 +195,13 @@ class MetadataTests(unittest.TestCase):
                     ('synthetic-one','unit-domestic','2011-H1','Department of Chemistry','work-2','keep'),
                     ('synthetic-one','unit-domestic','2008-H1','Department of Biology','work-3','duplicate_drop_candidate'),
                     ('synthetic-one','unit-foreign','2008-H1','Department of Mathematics','work-4','keep'),
+                    ('synthetic-one','unit-domestic','2008-H1','Department of Biology','work-7','keep'),
                     ('synthetic-three','unit-domestic','2008-H1','Department of Physics','work-5','keep'),
                     ('synthetic-three','unit-domestic','2009-H1','Department of Mathematics','work-6','keep');
             ''')
             connection.commit()
             connection.close()
+            create_koad_decisions(db, [('synthetic-one', 'work-7', 'namesake_paper')])
             salt = bytes(range(32))
             salt_path = root / 'test-salt.bin'
             salt_path.write_bytes(salt)
@@ -255,6 +271,7 @@ class MetadataTests(unittest.TestCase):
                     ('synthetic-person','current-unit','2023-H1','Department of Physics and Astronomy','secret-work','keep');
             """)
             connection.commit(); connection.close()
+            create_koad_decisions(db)
             salt = bytes(range(32))
             salt_path = root / 'salt.bin'; salt_path.write_bytes(salt)
             public_id = 'P-' + base64.b32encode(hmac.new(salt, b'synthetic-person', hashlib.sha256).digest()).decode()[:10]

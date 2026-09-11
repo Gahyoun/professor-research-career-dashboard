@@ -154,8 +154,10 @@ test('the full release has no cross-field lifetime membership and preserves the 
       assert.ok(edge.memberEvidence.every(item => item.subject === subject));
     }
   }
+  // Release sentinel after applying the strict KOAD namesake decision set to
+  // every bibliographic and affiliation-derived career input.
   assert.deepEqual({ total: index.ids.length, connected, noEvidence, unmatched, counts }, {
-    total: 3937, connected: 3305, noEvidence: 604, unmatched: 28,
-    counts: { doctoral: [800, 427], postdoc: [2392, 2016], first_faculty: [1, 0], current: [3241, 3240] },
+    total: 3937, connected: 3293, noEvidence: 623, unmatched: 21,
+    counts: { doctoral: [801, 427], postdoc: [1698, 1441], first_faculty: [1, 0], current: [3241, 3240] },
   });
 });

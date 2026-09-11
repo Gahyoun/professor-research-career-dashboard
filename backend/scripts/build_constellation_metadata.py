@@ -183,6 +183,17 @@ def run(args):
     public = {person['id']: person for person in dashboard['professors']}
     connection = sqlite3.connect(f'file:{source_db.resolve()}?mode=ro&immutable=1', uri=True)
     connection.row_factory = sqlite3.Row
+    decision_db = source_db.resolve().parent / 'identity_decisions.sqlite'
+    if not decision_db.exists():
+        raise ValueError(f'KOAD decision database is required for public metadata: {decision_db}')
+    connection.execute(
+        'ATTACH DATABASE ? AS koad',
+        (f'file:{decision_db.resolve()}?mode=ro&immutable=1',),
+    )
+    if not connection.execute(
+        "SELECT 1 FROM koad.sqlite_master WHERE type='table' AND name='work_decision'"
+    ).fetchone():
+        raise ValueError('KOAD work decisions are unavailable; no output written.')
 
     def anonymous_id(uid):
         digest = hmac.new(salt, uid.encode(), hashlib.sha256).digest()
@@ -237,11 +248,18 @@ def run(args):
     # OpenAlex identifiers, source work identifiers or plaintext name map is read.
     evidence = defaultdict(list)
     for row in connection.execute('''
-        SELECT professor_uid,institution_unit_id,period,unit_label,COUNT(DISTINCT work_id) AS works
-        FROM raw_affiliation_units
-        WHERE identity_decision='keep' AND unit_label IS NOT NULL
-          AND institution_unit_id IS NOT NULL AND period IS NOT NULL
-        GROUP BY professor_uid,institution_unit_id,period,unit_label
+        SELECT r.professor_uid,r.institution_unit_id,r.period,r.unit_label,
+               COUNT(DISTINCT r.work_id) AS works
+        FROM raw_affiliation_units r
+        WHERE r.identity_decision='keep' AND r.unit_label IS NOT NULL
+          AND r.institution_unit_id IS NOT NULL AND r.period IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM koad.work_decision kd
+            WHERE kd.professor_uid=r.professor_uid
+              AND kd.work_id=r.work_id
+              AND kd.decision='namesake_paper'
+          )
+        GROUP BY r.professor_uid,r.institution_unit_id,r.period,r.unit_label
     '''):
         if row['professor_uid'] not in uid_to_public or not re.fullmatch(r'\d{4}-H[12]', row['period']):
             continue
@@ -488,6 +506,8 @@ def run(args):
         'release_year': dashboard['meta']['release_year'],
         'public_data_sha256': hashlib.sha256(public_bytes).hexdigest(),
         'source': 'existing KOAD-filtered 2026 private build source mapped to existing anonymous IDs',
+        'identity_filter_version': 'KOAD 1.1-strict-namesake-drop',
+        'identity_filter_rule': 'all KOAD namesake_paper decisions are excluded before publication-affiliation department inference',
         'country_rule': 'explicit degree country and unique exact institution alias; conflicts remain unknown',
         'department_rule': 'unique formal department from kept author affiliations at the same institutional unit and public career interval; any conflicting or unresolved formal labels excluded',
         'degree_department_verified': bool(counts['phd_department_verified']),
