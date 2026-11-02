@@ -30,7 +30,7 @@ const institutionLabel = (value: string | null) => value?.trim() ? institutionDi
 export default function CareerDirectory({ professors, names, summaries, progress, error, selectedId, includeFirstFaculty = false, onSelect }: Props) {
   const stages = includeFirstFaculty ? allStages : defaultStages;
   const stageDescription = stages.map(stage => lifetimeStageLabels[stage]).join('·');
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const [queryState, setQueryState] = useState({ names, text: '' });
   const query = queryState.names === names ? queryState.text : '';
   // Keep selection and filters while discarding searches from the previous auth state.

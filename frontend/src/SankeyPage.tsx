@@ -97,7 +97,7 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
 
   return <section className="sankey-page" aria-labelledby="sankey-title">
     <header className="sk-intro">
-      <div><p className="sk-eyebrow">학력과 재직의 흐름</p><h1 id="sankey-title">Education and employment flows</h1><p className="sk-lead">학사 → 박사 → 현재 재직기관. 흐름의 폭은 연구자 수를 나타냅니다.</p></div>
+      <div><p className="sk-eyebrow">EDUCATION & EMPLOYMENT</p><h1 id="sankey-title">배움에서 연구로 이어지는 흐름</h1><p className="sk-lead">학부에서 박사, 현재 재직기관까지. 연구자들의 이동을 흐름의 폭으로 살펴봅니다.</p></div>
       <div className="sk-release"><span className="sk-release-dot" /><span>{releaseYear} 공개 데이터</span></div>
     </header>
 

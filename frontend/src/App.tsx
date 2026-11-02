@@ -213,19 +213,19 @@ export default function App() {
     <div className={`app ${contrast ? 'high-contrast' : ''}`} style={{ fontSize: `${zoom}%` }}>
       <a className="skip-link" href="#main" onClick={e => { e.preventDefault(); const main = document.getElementById('main'); main?.focus(); main?.scrollIntoView(); }}>본문 바로가기</a>
       <header className="site-header"><div className="header-inner">
-        <div className="brand"><span className="brand-mark" aria-hidden="true">N</span><div><strong>기초자연과학 연구경력</strong><span>교수 주저자 논문 대시보드</span></div></div>
+        <div className="brand"><span className="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M8 9 24 8 22 24 8 9Zm0 0 1 15 15-16" stroke="currentColor" strokeWidth="1.25" opacity=".55"/><circle cx="8" cy="9" r="3" fill="currentColor"/><circle cx="24" cy="8" r="2.5" fill="currentColor"/><circle cx="22" cy="24" r="3" fill="currentColor"/><circle cx="9" cy="24" r="2" fill="currentColor"/></svg></span><div><strong>연구경력 아틀라스</strong><span>K–STEM RESEARCH ATLAS</span></div></div>
         <form className="unlock" onSubmit={unlock}>{names ? <button type="button" className="lock" onClick={() => { authGeneration.current += 1; setNames(null); setPassword(''); setUnlocking(false); if (viewMode === 'group') setViewMode('individual'); setMessage('실명과 그룹 쿼리를 다시 잠갔습니다.'); }}>실명·쿼리 잠그기</button> : <><label htmlFor="name-password">실명·쿼리 보기</label><input id="name-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="비밀번호" autoComplete="current-password" required/><button type="submit" disabled={unlocking}>{unlocking ? '확인 중' : '해제'}</button></>}</form>
       </div></header>
 
       <main id="main" tabIndex={-1} className={`container ${viewMode === 'constellation' || viewMode === 'sankey' || viewMode === 'institutions' ? 'atlas-container' : ''}`}>
         <nav className="atlas-nav" aria-label="탐색 화면">
-          <button className={viewMode === 'constellation' ? 'active' : ''} onClick={() => setViewMode('constellation')}>경력 하이퍼그래프</button>
-          <button className={viewMode === 'individual' || viewMode === 'group' ? 'active' : ''} onClick={() => setViewMode('individual')}>경력과 논문</button>
-          <button className={viewMode === 'sankey' ? 'active' : ''} onClick={() => setViewMode('sankey')}>학력·임용 흐름</button>
-          <button className={viewMode === 'institutions' ? 'active' : ''} onClick={() => setViewMode('institutions')}>기관 인력 통계</button>
+          <button className={viewMode === 'constellation' ? 'active' : ''} aria-current={viewMode === 'constellation' ? 'page' : undefined} onClick={() => setViewMode('constellation')}><span aria-hidden="true">01</span>경력 별자리</button>
+          <button className={viewMode === 'individual' || viewMode === 'group' ? 'active' : ''} aria-current={viewMode === 'individual' || viewMode === 'group' ? 'page' : undefined} onClick={() => setViewMode('individual')}><span aria-hidden="true">02</span>경력과 논문</button>
+          <button className={viewMode === 'sankey' ? 'active' : ''} aria-current={viewMode === 'sankey' ? 'page' : undefined} onClick={() => setViewMode('sankey')}><span aria-hidden="true">03</span>학력·임용 흐름</button>
+          <button className={viewMode === 'institutions' ? 'active' : ''} aria-current={viewMode === 'institutions' ? 'page' : undefined} onClick={() => setViewMode('institutions')}><span aria-hidden="true">04</span>기관 인력 통계</button>
           <span className="atlas-access" role="status" title={message}>{names ? '실명 보기 활성화' : '익명으로 탐색 중'}</span>
         </nav>
-        <p className="atlas-auth-message" role="status">{message}</p>
+        {message !== '실명은 암호화되어 있습니다.' && <p className="atlas-auth-message" role="status">{message}</p>}
         {viewMode === 'constellation' ? <Constellation initialSelectedId={graphSelectionId} professors={dashboard.professors} names={names} releaseYear={dashboard.meta.release_year} onSelect={chooseProfessor}/> : viewMode === 'institutions' ? <TemporalInstitutionsPage professors={dashboard.professors} releaseYear={dashboard.meta.release_year}/> : viewMode === 'sankey' ? <SankeyPage key={names ? 'unlocked' : 'locked'} professors={dashboard.professors} names={names} releaseYear={dashboard.meta.release_year} onSelect={chooseProfessor}/> : <>
 
         <section className="title-row"><div><span className="eyebrow">{dashboard.meta.release_year} DATA RELEASE</span><h1>교수 연구경력과 주저자 생산성</h1><p>박사과정부터 기관별 포닥·교수 임용까지의 경력과 필터링된 1저자·교신저자 논문을 확인합니다.</p></div><div className="display-settings"><label htmlFor="zoom">글자 크기</label><select id="zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))}><option value="90">90%</option><option value="100">100%</option><option value="110">110%</option><option value="130">130%</option><option value="150">150%</option></select><label className="contrast"><input type="checkbox" checked={contrast} onChange={e => setContrast(e.target.checked)}/> 선명한 화면</label></div></section>
@@ -265,7 +265,7 @@ export default function App() {
         <section className="download-panel"><div><h2>공개 DB와 SQL</h2><p>실명과 원본 식별자를 제거한 SQLite 및 재사용 가능한 조회문입니다.</p></div><div><a href={`${import.meta.env.BASE_URL}downloads/professor_dashboard_${dashboard.meta.release_year}.sqlite`} download>익명 SQLite</a><a href={`${import.meta.env.BASE_URL}downloads/schema_public.sql`} download>스키마 SQL</a><a href={`${import.meta.env.BASE_URL}downloads/queries_public.sql`} download>예제 쿼리</a></div></section>
         </>}
       </main>
-      <footer><div className="container">{dashboard.meta.release_year} 공개 릴리스 · 공개 화면에는 익명화·집계된 정보만 포함됩니다.</div></footer>
+      <footer><div className="container"><span className="footer-brand">K–STEM RESEARCH ATLAS</span><span>{dashboard.meta.release_year} 공개 릴리스 · 공개 화면에는 익명화·집계된 정보만 포함됩니다.</span></div></footer>
     </div>
   );
 }
