@@ -19,6 +19,7 @@
     "frontend/src/metadata.ts",
     "frontend/src/sankey.ts",
     "frontend/src/flowCamera.ts",
+    "frontend/src/flowSql.ts",
     "frontend/src/schoolIdentity.ts",
     "frontend/src/institutionStatistics.ts"
   ],

@@ -88,6 +88,30 @@ test('country classification uses explicit country data, never institutional-nam
   assert.ok(data.nodes.some(n => n.label === 'Harvard University' && n.region === 'unknown'));
   assert.ok(!data.nodes.some(n => n.key.startsWith('region:')));
 });
+test('self-hiring stays specific to each full path across both transitions, even on a shared edge', () => {
+  const data = buildSankey([
+    person('returned', 'SNU', 'KAIST', 'Seoul National University'),
+    person('moved', 'SNU', 'KAIST', 'Korea University'),
+    person('cross-campus', 'Yonsei', 'KAIST', 'Yonsei_Mirae'),
+    person('unresolved', '101', 'KAIST', '101'),
+  ]);
+  assert.equal(data.selfHireCount, 1);
+  for (const record of data.records) {
+    const ownLinks = data.links.filter(link => link.personIds.includes(record.id));
+    assert.equal(ownLinks.length, 2);
+    assert.ok(ownLinks.every(link => link.selfHire === (record.id === 'returned')));
+    assert.deepEqual(new Set(ownLinks.map(link => data.nodes.find(node => node.id === link.source).stage)), new Set(['bachelor', 'phd']));
+  }
+  const sharedEdge = data.links.filter(link =>
+    data.nodes.find(node => node.id === link.source).stage === 'bachelor'
+      && link.origin === institutionKey('SNU'));
+  assert.equal(sharedEdge.length, 2);
+  assert.equal(sharedEdge[0].source, sharedEdge[1].source);
+  assert.equal(sharedEdge[0].target, sharedEdge[1].target);
+  assert.deepEqual(sharedEdge.find(link => link.selfHire).personIds, ['returned']);
+  assert.deepEqual(sharedEdge.find(link => !link.selfHire).personIds, ['moved']);
+  audit(data);
+});
 test('every university remains visible without top-N or other buckets and optional regions conserve original paths', () => {
   const rows = Array.from({ length: 90 }, (_, i) => person(`r${i}`, `Bachelor ${i % 30}`, `PhD ${i % 25}`, `Current ${i % 24}`, { phd_country: i % 3 ? 'Korea' : 'United States' }));
   for (const groupForeign of [true, false]) {

@@ -5,6 +5,7 @@ import { buildInstitutionOptions, buildSankey, colorOfOrigin, colorOfNode, insti
 import type { FlowNode, FlowLink, FlowRoute, FlowStage } from './sankey';
 import { institutionSearchText } from './schoolIdentity';
 import ZoomableFlowViewport from './ZoomableFlowViewport';
+import FlowSqlQuery from './FlowSqlQuery';
 import './sankey.css';
 
 type Props = { professors: Professor[]; names: Record<string, string> | null; onSelect: (id: string) => void; releaseYear: number };
@@ -30,6 +31,7 @@ function nodeTextLines(label: string) {
 const pageSize = 10;
 
 export default function SankeyPage({ professors, names, onSelect, releaseYear }: Props) {
+  const [sqlIds, setSqlIds] = useState<Set<string> | null>(null);
   const [subject, setSubject] = useState('');
   const [institutions, setInstitutions] = useState<Partial<Record<FlowStage, string>>>({});
   const [institutionQueries, setInstitutionQueries] = useState<Partial<Record<FlowStage, string>>>({});
@@ -44,8 +46,14 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
   // Searches from the unlocked state must never survive relocking.
   if (searchState.names !== names) setSearchState({ names, text: '' });
   function setSearch(text: string) { setSearchState({ names, text }); }
-  const institutionOptions = useMemo(() => buildInstitutionOptions(professors), [professors]);
-  const data = useMemo(() => buildSankey(professors, { subject, institutions, groupForeign, selfHireOnly }), [professors, subject, institutions, groupForeign, selfHireOnly]);
+  const cohort = useMemo(() => sqlIds === null ? professors : professors.filter(p => sqlIds.has(p.id)), [professors, sqlIds]);
+  const publicIds = useMemo(() => professors.map(p => p.id), [professors]);
+  const institutionOptions = useMemo(() => buildInstitutionOptions(cohort), [cohort]);
+  const data = useMemo(() => buildSankey(cohort, { subject, institutions, groupForeign, selfHireOnly }), [cohort, subject, institutions, groupForeign, selfHireOnly]);
+  const applySql = useCallback((ids: string[] | null) => {
+    setSqlIds(ids === null ? null : new Set(ids));
+    setSubject(''); setInstitutions({}); setInstitutionQueries({}); setSelfHireOnly(false); setGroupForeign(false);
+  }, []);
   const [previousData, setPreviousData] = useState(data);
   // A changed cohort or grouping invalidates all interactions, including stale prop updates.
   if (previousData !== data) { setPreviousData(data); setSelection(null); setHover(null); setPage(0); setPeoplePage(0); setSearchState({ names, text: '' }); }
@@ -68,7 +76,7 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
   }) : data.routes, [data, selectedIds]);
   const currentPage = Math.min(page, Math.max(0, Math.ceil(routes.length / pageSize) - 1));
   const currentPeoplePage = Math.min(peoplePage, Math.max(0, Math.ceil(selectedPeople.length / pageSize) - 1));
-  const subjects = [...new Set(professors.map(p => p.subject))].sort((a, b) => (['mathematics', 'physics', 'chemistry', 'biology'].indexOf(a) - ['mathematics', 'physics', 'chemistry', 'biology'].indexOf(b)));
+  const subjects = [...new Set(cohort.map(p => p.subject))].sort((a, b) => (['mathematics', 'physics', 'chemistry', 'biology'].indexOf(a) - ['mathematics', 'physics', 'chemistry', 'biology'].indexOf(b)));
   function resetSelection() { setSelection(null); setHover(null); setPage(0); setPeoplePage(0); setSearch(''); }
   function resetFilters() { setSubject(''); setInstitutions({}); setInstitutionQueries({}); setSelfHireOnly(false); setGroupForeign(false); resetSelection(); }
   const hasFilters = Boolean(subject || selfHireOnly || groupForeign || Object.values(institutions).some(Boolean) || Object.values(institutionQueries).some(Boolean));
@@ -101,6 +109,8 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
       <div className="sk-release"><span className="sk-release-dot" /><span>{releaseYear} 공개 데이터</span></div>
     </header>
 
+    <FlowSqlQuery unlocked={Boolean(names)} professorIds={publicIds} releaseYear={releaseYear} appliedCount={sqlIds?.size ?? null} onApply={applySql} />
+
     <section className="sk-controls" aria-labelledby="sk-filter-title">
       <div className="sk-filter-heading"><div><h2 id="sk-filter-title">기관으로 흐름 좁히기</h2><p>재직기관과 학부·박사 출신기관을 자유롭게 선택하세요. 여러 기관 조건을 선택하면 모두 충족하는 연구자를 표시합니다.</p></div><button className="sk-button" onClick={resetFilters} disabled={!hasFilters}>모든 필터 초기화</button></div>
       <div className="sk-institution-filters">{(['current', 'bachelor', 'phd'] as FlowStage[]).map(stage => <InstitutionSelector key={stage} title={stage === 'current' ? '현재 재직기관' : stage === 'bachelor' ? '학부 출신기관' : '박사 출신기관'} options={institutionOptions[stage]} value={institutions[stage] || ''} query={institutionQueries[stage] || ''} onQuery={query => setInstitutionQueries(previous => ({ ...previous, [stage]: query }))} onChange={value => { setInstitutions(previous => ({ ...previous, [stage]: value })); resetSelection(); }} />)}</div>
@@ -114,29 +124,32 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
       <div><span>필터 대상의 경로 완비율</span><strong>{data.filterCount ? (100 * data.completeCount / data.filterCount).toFixed(1) : '—'}{data.filterCount > 0 && <small>%</small>}</strong><p>기관 정보가 하나 이상 빠진 {count(data.missingCount)}명 제외</p></div>
     </div>
 
-    <p className="sk-cohort-note">선택 분야 전체 {count(data.subjectCount)}명 → 기관·모교 재직 조건에 맞는 {count(data.filterCount)}명 → 세 단계 경로가 있는 {count(data.count)}명. 흐름도와 경로 표에는 마지막 {count(data.count)}명이 포함됩니다.</p>
+    <p className="sk-cohort-note">{sqlIds !== null && <>SQL 조회 {count(cohort.length)}명 → </>}선택 분야 {count(data.subjectCount)}명 → 기관·모교 재직 조건에 맞는 {count(data.filterCount)}명 → 세 단계 경로가 있는 {count(data.count)}명. 흐름도와 경로 표에는 마지막 {count(data.count)}명이 포함됩니다.</p>
 
     <section className="sk-chart-card" aria-labelledby="sk-chart-title">
       <div className="sk-chart-heading"><div><h2 id="sk-chart-title">학사 → 박사 → 현재 재직</h2><p>흐름의 두께는 연구자 수에 비례합니다. 기관이나 연결을 선택하면 해당 연구자의 경로가 드러납니다.</p></div><div className="sk-chart-actions"><button className="sk-button sk-button-subtle" onClick={() => { const heading = document.getElementById('sk-routes-title'); heading?.focus({ preventScroll: true }); heading?.scrollIntoView({ block: 'start' }); }}>경로 표로 이동</button><button className="sk-button sk-button-subtle" onClick={resetSelection} disabled={!selection}>선택 초기화</button></div></div>
-      <div className="sk-legend" aria-label="흐름 색상 설명"><p><strong>흐름 색상은 학부 출신기관 기준</strong> · 아래 다섯 학교의 기관 막대는 학사·박사·현재 재직 단계에서 각각 같은 대표색을 사용합니다.</p><p className="sk-legend-self"><i aria-hidden="true"/><span>진한 흐름: 학부 모교 재직</span></p></div>
+      <div className="sk-legend" aria-label="흐름 색상 설명"><p><strong>흐름 색상은 학부 출신기관 기준</strong> · 아래 다섯 학교의 기관 막대는 학사·박사·현재 재직 단계에서 각각 같은 대표색을 사용합니다.</p><p className="sk-legend-self"><i aria-hidden="true"/><span>진한 흐름: 학부 = 현재기관 · 두 구간 모두</span></p></div>
       <ul className="sk-institution-colors" aria-label="학교별 대표색">{[['서울대', 'snu'], ['고려대', 'korea'], ['연세대', 'yonsei'], ['KAIST', 'kaist'], ['POSTECH', 'postech']].map(([label, key]) => <li key={key}><i style={{ background: colorOfOrigin(key) }} aria-hidden="true"/>{label}</li>)}</ul>
-      {data.count === 0 ? <div className="sk-empty"><strong>선택한 조건에 맞는 완비 경로가 없습니다.</strong><p>기관·연구 분야 필터를 조정하거나 모든 필터를 초기화해 주세요.</p></div> : <>
+      {data.count === 0 ? <div className="sk-empty"><strong>선택한 조건에 맞는 완비 경로가 없습니다.</strong><p>{sqlIds !== null ? 'SQL 조건 또는 기관·연구 분야 필터를 조정하거나, 전체 자료로 돌아가 주세요.' : '기관·연구 분야 필터를 조정하거나 모든 필터를 초기화해 주세요.'}</p></div> : <>
         <ZoomableFlowViewport width={layout.width} height={layout.height + 72} resetToken={data} onGestureStart={clearGraphHover}>
           <div className="sk-column-labels">{STAGES.map((s, i) => <div key={s}><span>0{i + 1}</span><strong>{STAGE_LABELS[s]}</strong><small>{count(data.count)}명 · {count(data.nodes.filter(node => node.stage === s).length)}개 표시 단위</small></div>)}</div>
           <svg className="sk-svg" viewBox={`0 0 ${layout.width} ${layout.height}`} width={layout.width} height={layout.height} aria-labelledby="sk-svg-title sk-svg-description">
             <title id="sk-svg-title">{SUBJECT_LABELS[subject] ?? '전체 분야'} 연구자 {count(data.count)}명의 학력과 재직기관 흐름</title>
             <desc id="sk-svg-description">기관은 세 단계에 따로 표시됩니다. 모든 연결의 폭은 인원에 선형 비례합니다. 기관을 선택하려면 탭과 엔터를 사용하세요. 연결 경로는 아래 표에서도 선택할 수 있습니다.</desc>
             {[...new Set(layout.nodes.map(node => node.x + 6))].map(x => <line key={x} x1={x} x2={x} y1={14} y2={layout.height - 14} stroke="#eef1f4" strokeDasharray="2 5" />)}
-            <g className="sk-ribbons">{layout.links.map(link => {
-              const info = linkSelection(link);
-              return <path key={link.id} d={link.path} fill={colorOfOrigin(link.origin)} fillOpacity={focused ? 0.055 : link.selfHire ? 0.6 : 0.23} role="button" tabIndex={-1} aria-label={`${info.label}, ${count(link.count)}명`} onClick={() => choose(info)} onKeyDown={event => keyChoose(event, info)} onMouseEnter={() => setHover(info)} onMouseLeave={() => setHover(null)}><title>{info.label} · {count(link.count)}명</title></path>;
-            })}</g>
-            {focused && <g className="sk-highlight-ribbons" pointerEvents="none">{layout.links.map(link => {
-              const selected = link.personIds.filter(id => focusIds.has(id)).length;
-              if (!selected) return null;
-              const h = selected * layout.scale, offset = (link.height - h) / 2;
-              return <path key={link.id} d={ribbonPath(link.sourceX, link.targetX, link.sourceY + offset, link.targetY + offset, h)} fill={colorOfOrigin(link.origin)} fillOpacity={0.72} />;
-            })}</g>}
+            {/* Draw self-hiring paths last so faint or highlighted ordinary paths cannot cover them. */}
+            {[false, true].map(selfHire => <g key={String(selfHire)}>
+              <g className="sk-ribbons">{layout.links.filter(link => link.selfHire === selfHire).map(link => {
+                const info = linkSelection(link);
+                return <path key={link.id} d={link.path} fill={colorOfOrigin(link.origin)} fillOpacity={link.selfHire ? 0.85 : focused ? 0.055 : 0.16} role="button" tabIndex={-1} aria-label={`${info.label}, ${count(link.count)}명`} onClick={() => choose(info)} onKeyDown={event => keyChoose(event, info)} onMouseEnter={() => setHover(info)} onMouseLeave={() => setHover(null)}><title>{info.label} · {count(link.count)}명</title></path>;
+              })}</g>
+              {focused && <g className="sk-highlight-ribbons" pointerEvents="none">{layout.links.filter(link => link.selfHire === selfHire).map(link => {
+                const selected = link.personIds.filter(id => focusIds.has(id)).length;
+                if (!selected) return null;
+                const h = selected * layout.scale, offset = (link.height - h) / 2;
+                return <path key={link.id} d={ribbonPath(link.sourceX, link.targetX, link.sourceY + offset, link.targetY + offset, h)} fill={colorOfOrigin(link.origin)} fillOpacity={link.selfHire ? 0.95 : 0.45} />;
+              })}</g>}
+            </g>)}
             <g>{layout.nodes.map(node => {
               const info = nodeSelection(node), selected = node.personIds.filter(id => focusIds.has(id)).length;
               const first = node.stage === 'bachelor';
