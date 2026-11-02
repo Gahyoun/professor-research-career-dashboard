@@ -5,6 +5,11 @@
 @media(max-width:800px){.sankey-page{padding:24px 16px 40px}.sankey-page h1{font-size:28px}.sankey-page h2{font-size:21px}.sk-intro{gap:16px;margin-bottom:24px}.sk-lead{font-size:17px}.sk-controls{padding:20px 16px;gap:16px}.sk-controls>label{min-width:calc(50% - 8px)}.sk-checks{flex-basis:100%;min-width:0;padding-top:4px}.sk-metrics{grid-template-columns:1fr;padding:0}.sk-metrics>div{padding:20px 24px;border-right:0;border-bottom:1px solid var(--sk-soft);display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px 12px}.sk-metrics strong{font-size:28px;grid-column:2;grid-row:1 / span 2;margin:0}.sk-metrics p{grid-column:1}.sk-metrics small{font-size:15px}.sk-chart-heading{padding:24px 20px 8px;flex-direction:column;gap:12px}.sk-legend{padding:12px 20px 20px;gap:10px 16px}.sk-chart-status{padding:16px 20px;flex-direction:column;align-items:flex-start;gap:4px}.sk-chart-status strong{max-width:100%;overflow-wrap:anywhere}.sk-section-heading{flex-direction:column;align-items:flex-start;gap:16px}.sk-people{padding:24px 16px}.sk-person-grid{grid-template-columns:1fr}.sk-people-tools{flex-direction:column;align-items:flex-start;gap:12px}.sk-people-tools label{width:100%}.sk-people-tools p{padding:0}.sk-pagination{flex-wrap:wrap}.sk-pagination>div{gap:10px}.sk-pagination .sk-button{padding:6px 12px}.sk-method{padding:0 16px}.sk-controls select{min-width:0}.sk-person{padding:12px}.sk-metrics small{white-space:nowrap}}
 @media(prefers-reduced-motion:reduce){.sankey-page *{transition:none!important;animation:none!important}}
 
+/* The university color key remains readable without relying on color alone. */
+.sk-institution-colors{display:flex;flex-wrap:wrap;gap:8px 24px;list-style:none;margin:0;padding:0 24px 24px;color:var(--sk-body);font-size:calc(14px * var(--text-scale,1))}
+.sk-institution-colors li{display:inline-flex;align-items:center;gap:8px}
+.sk-institution-colors i{width:12px;height:12px;border-radius:2px;flex-shrink:0}
+
 /* Full institutional names remain visible in the diagram, controls, and route table. */
 .sankey-page{min-width:0;overflow-wrap:anywhere}
 .sk-intro>div,.sk-section-heading>div,.sk-chart-heading>div{min-width:0}
