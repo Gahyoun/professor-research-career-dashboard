@@ -11,13 +11,41 @@ export type Region = 'domestic' | 'us' | 'europe' | 'japan-china' | 'foreign' | 
 export type Origin = string;
 export const STAGES: FlowStage[] = ['bachelor', 'phd', 'current'];
 export const STAGE_LABELS: Record<FlowStage, string> = { bachelor: '학사', phd: '박사', current: '현재 재직' };
+// University identity colors and official sources: docs/INSTITUTION_COLORS.md.
+// Presentation only: sharing a color never merges campus identities or populations.
+const institutionThemeColors = new Map([
+  ['snu', '#0F0F70'], ['korea', '#872434'], ['yonsei', '#003876'],
+  ['kaist', '#004193'], ['postech', '#A61955'],
+]);
+const additionalThemeFamilies = new Map([
+  ['카이스트', 'kaist'], ['포스텍', 'postech'],
+  ['yonsei university (mirae campus)', 'yonsei'],
+  ['korea university (sejong campus)', 'korea'],
+]);
+export function officialInstitutionColor(value: string): string | null {
+  const normalized = normalize(value);
+  const raw = normalized.startsWith('institution:') ? normalized.slice('institution:'.length) : normalized;
+  const direct = raw;
+  const family = additionalThemeFamilies.get(direct)
+    ?? additionalThemeFamilies.get(normalize(institutionDisplayName(raw)));
+  return institutionThemeColors.get(direct)
+    ?? institutionThemeColors.get(institutionKey(raw))
+    ?? (family ? institutionThemeColors.get(family) : undefined)
+    ?? null;
+}
 /** Stable for each full bachelor identity, independent of filters and ordering. */
 export function colorOfOrigin(origin: Origin): string {
   if (origin === 'unresolved') return '#8796a6';
+  const official = officialInstitutionColor(origin);
+  if (official) return official;
   let hash = 2166136261;
   for (const character of origin) { hash ^= character.codePointAt(0)!; hash = Math.imul(hash, 16777619); }
   const value = hash >>> 0;
   return `hsl(${value % 360} ${48 + (value >>> 8) % 20}% ${37 + (value >>> 16) % 13}%)`;
+}
+export function colorOfNode(node: Pick<FlowNode, 'key' | 'stage'>): string {
+  return officialInstitutionColor(node.key)
+    ?? (node.stage === 'bachelor' ? colorOfOrigin(node.key) : node.stage === 'current' ? '#30475e' : '#6386b5');
 }
 export const SUBJECT_LABELS: Record<string, string> = { mathematics: '수학', physics: '물리학', chemistry: '화학', biology: '생물학' };
 const REGION_LABELS: Record<Region, string> = { domestic: '국내', us: '미국', europe: '유럽', 'japan-china': '일본·중국', foreign: '기타 해외', unknown: '국가 미확인' };

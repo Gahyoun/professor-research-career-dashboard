@@ -1,7 +1,7 @@
 import { useCallback, useId, useMemo, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { Professor } from './types';
-import { buildInstitutionOptions, buildSankey, colorOfOrigin, institutionLabel, layoutSankey, ribbonPath, STAGES, STAGE_LABELS, SUBJECT_LABELS } from './sankey';
+import { buildInstitutionOptions, buildSankey, colorOfOrigin, colorOfNode, institutionLabel, layoutSankey, ribbonPath, STAGES, STAGE_LABELS, SUBJECT_LABELS } from './sankey';
 import type { FlowNode, FlowLink, FlowRoute, FlowStage } from './sankey';
 import { institutionSearchText } from './schoolIdentity';
 import ZoomableFlowViewport from './ZoomableFlowViewport';
@@ -118,7 +118,8 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
 
     <section className="sk-chart-card" aria-labelledby="sk-chart-title">
       <div className="sk-chart-heading"><div><h2 id="sk-chart-title">학사 → 박사 → 현재 재직</h2><p>흐름의 두께는 연구자 수에 비례합니다. 기관이나 연결을 선택하면 해당 연구자의 경로가 드러납니다.</p></div><div className="sk-chart-actions"><button className="sk-button sk-button-subtle" onClick={() => { const heading = document.getElementById('sk-routes-title'); heading?.focus({ preventScroll: true }); heading?.scrollIntoView({ block: 'start' }); }}>경로 표로 이동</button><button className="sk-button sk-button-subtle" onClick={resetSelection} disabled={!selection}>선택 초기화</button></div></div>
-      <div className="sk-legend" aria-label="흐름 색상 설명"><p><strong>학부 출신기관별 색상</strong> · 흐름을 가리키거나 아래 경로를 선택하면 실제 학부 기관을 확인할 수 있습니다.</p><p className="sk-legend-self"><i aria-hidden="true"/><span>진한 흐름: 학부 모교 재직</span></p></div>
+      <div className="sk-legend" aria-label="흐름 색상 설명"><p><strong>흐름 색상은 학부 출신기관 기준</strong> · 아래 다섯 학교의 기관 막대는 학사·박사·현재 재직 단계에서 각각 같은 대표색을 사용합니다.</p><p className="sk-legend-self"><i aria-hidden="true"/><span>진한 흐름: 학부 모교 재직</span></p></div>
+      <ul className="sk-institution-colors" aria-label="학교별 대표색">{[['서울대', 'snu'], ['고려대', 'korea'], ['연세대', 'yonsei'], ['KAIST', 'kaist'], ['POSTECH', 'postech']].map(([label, key]) => <li key={key}><i style={{ background: colorOfOrigin(key) }} aria-hidden="true"/>{label}</li>)}</ul>
       {data.count === 0 ? <div className="sk-empty"><strong>선택한 조건에 맞는 완비 경로가 없습니다.</strong><p>기관·연구 분야 필터를 조정하거나 모든 필터를 초기화해 주세요.</p></div> : <>
         <ZoomableFlowViewport width={layout.width} height={layout.height + 72} resetToken={data} onGestureStart={clearGraphHover}>
           <div className="sk-column-labels">{STAGES.map((s, i) => <div key={s}><span>0{i + 1}</span><strong>{STAGE_LABELS[s]}</strong><small>{count(data.count)}명 · {count(data.nodes.filter(node => node.stage === s).length)}개 표시 단위</small></div>)}</div>
@@ -140,7 +141,7 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
               const info = nodeSelection(node), selected = node.personIds.filter(id => focusIds.has(id)).length;
               const first = node.stage === 'bachelor';
               const x = first ? node.x - 12 : node.x + 24;
-              const color = first ? colorOfOrigin(node.key) : node.stage === 'current' ? '#30475e' : '#6386b5';
+              const color = colorOfNode(node);
               const lines = labelLines.get(node.id)!;
               const textHeight = (lines.length + 1) * labelLineHeight;
               const textTop = node.labelY - textHeight / 2;
