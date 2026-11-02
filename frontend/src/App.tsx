@@ -213,7 +213,7 @@ export default function App() {
     <div className={`app ${contrast ? 'high-contrast' : ''}`} style={{ fontSize: `${zoom}%`, '--text-scale': zoom / 100 } as React.CSSProperties}>
       <a className="skip-link" href="#main" onClick={e => { e.preventDefault(); const main = document.getElementById('main'); main?.focus(); main?.scrollIntoView(); }}>본문 바로가기</a>
       <header className="site-header"><div className="header-inner">
-        <div className="brand"><span className="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M8 9 24 8 22 24 8 9Zm0 0 1 15 15-16" stroke="currentColor" strokeWidth="1.25" opacity=".55"/><circle cx="8" cy="9" r="3" fill="currentColor"/><circle cx="24" cy="8" r="2.5" fill="currentColor"/><circle cx="22" cy="24" r="3" fill="currentColor"/><circle cx="9" cy="24" r="2" fill="currentColor"/></svg></span><div><strong>연구경력 아틀라스</strong><span>K–STEM RESEARCH ATLAS</span></div></div>
+        <div className="brand"><span className="brand-mark" aria-hidden="true">N</span><div><strong>기초자연과학 연구경력</strong><span>교수 주저자 논문 대시보드</span></div></div>
         <form className="unlock" onSubmit={unlock}>{names ? <button type="button" className="lock" onClick={() => { authGeneration.current += 1; setNames(null); setPassword(''); setUnlocking(false); if (viewMode === 'group') setViewMode('individual'); setMessage('실명과 그룹 쿼리를 다시 잠갔습니다.'); }}>실명·쿼리 잠그기</button> : <><label htmlFor="name-password">실명·쿼리 보기</label><input id="name-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="비밀번호" autoComplete="current-password" required/><button type="submit" disabled={unlocking}>{unlocking ? '확인 중' : '해제'}</button></>}</form>
       </div></header>
 
