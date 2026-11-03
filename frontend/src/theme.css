@@ -26,8 +26,7 @@ body, .app { background: var(--v2-canvas); }
   -webkit-backdrop-filter: saturate(180%) blur(12px); backdrop-filter: saturate(180%) blur(12px); }
 .v2-header-inner { width: min(1440px, calc(100% - 80px)); margin: 0 auto; min-height: 72px; display: flex; align-items: center; gap: 24px; }
 .v2-brand { display: flex; align-items: center; gap: 12px; color: var(--v2-ink); text-decoration: none; flex-shrink: 0; }
-.v2-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; background: var(--v2-ink); color: #fff; font-weight: 800; font-size: 17px; }
-.v2-mark::before { content: "N"; }
+.v2-mark { display: block; width: 36px; height: 36px; flex-shrink: 0; }
 .v2-brand strong { display: block; font-size: 16px; font-weight: 800; letter-spacing: -.01em; line-height: 1.25; }
 .v2-brand small { display: block; font-size: 12px; color: var(--v2-body); font-weight: 500; line-height: 1.35; }
 .v2-nav { flex: 1; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }

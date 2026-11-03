@@ -1,7 +1,7 @@
 import { useCallback, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { Professor } from './types';
-import { buildInstitutionOptions, buildSankey, colorOfOrigin, colorOfNode, institutionLabel, layoutSankey, ribbonPath, STAGES, STAGE_LABELS, SUBJECT_LABELS } from './sankey';
+import { buildInstitutionOptions, buildSankey, colorOfOrigin, colorOfNode, deepen, institutionLabel, layoutSankey, ribbonPath, STAGES, STAGE_LABELS, SUBJECT_LABELS } from './sankey';
 import type { FlowNode, FlowLink, FlowRoute, FlowStage } from './sankey';
 import { indexResearchers, matchContext, RESEARCHER_QUERY_HINT, searchResearchers } from './researcherQuery';
 import { useResearchAreas } from './useResearchAreas';
@@ -111,7 +111,7 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
     return {
       title: '학사 → 박사 → 현재 재직',
       subtitle: `${scope} · 세 단계 경로가 있는 연구자 ${count(data.count)}명 · 흐름 색 = 학부 출신기관${selection ? ` · 선택: ${selection.label}` : ''}`,
-      legend: [...[['서울대', 'snu'], ['고려대', 'korea'], ['연세대', 'yonsei'], ['KAIST', 'kaist'], ['POSTECH', 'postech']].map(([label, key]) => ({ label, color: colorOfOrigin(key) })), { label: '짙은 흐름: 학부 = 현재 재직기관', color: '#464c53', strong: true }],
+      legend: [...[['서울대', 'snu'], ['고려대', 'korea'], ['연세대', 'yonsei'], ['KAIST', 'kaist'], ['POSTECH', 'postech']].map(([label, key]) => ({ label, color: colorOfOrigin(key) })), { label: '짙은 흐름: 학부 = 현재 재직기관', color: deepen(colorOfOrigin('snu')), strong: true }],
       note: `K–STEM Research Atlas · ${releaseYear} 공개 자료 · 흐름 폭은 인원에 비례 · ${figureDate()} 내보냄`,
       columns: STAGES.flatMap(stage => { const node = layout.nodes.find(n => n.stage === stage); return node ? [{ x: node.x + 6, label: STAGE_LABELS[stage] }] : []; }),
       filename: `kstem-education-flow-${releaseYear}${subject ? `-${subject}` : ''}-${figureDate()}`,
@@ -156,13 +156,13 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
             {[false, true].map(selfHire => <g key={String(selfHire)}>
               <g className="sk-ribbons">{layout.links.filter(link => link.selfHire === selfHire).map(link => {
                 const info = linkSelection(link);
-                return <path key={link.id} d={link.path} fill={colorOfOrigin(link.origin)} fillOpacity={link.selfHire ? 0.9 : focused ? 0.08 : 0.4} role="button" tabIndex={-1} aria-label={`${info.label}, ${count(link.count)}명`} onClick={() => choose(info)} onKeyDown={event => keyChoose(event, info)} onMouseEnter={() => setHover(info)} onMouseLeave={() => setHover(null)}><title>{info.label} · {count(link.count)}명</title></path>;
+                return <path key={link.id} d={link.path} fill={link.selfHire ? deepen(colorOfOrigin(link.origin)) : colorOfOrigin(link.origin)} fillOpacity={link.selfHire ? (focused ? 0.3 : 0.92) : focused ? 0.16 : 0.72} role="button" tabIndex={-1} aria-label={`${info.label}, ${count(link.count)}명`} onClick={() => choose(info)} onKeyDown={event => keyChoose(event, info)} onMouseEnter={() => setHover(info)} onMouseLeave={() => setHover(null)}><title>{info.label} · {count(link.count)}명</title></path>;
               })}</g>
               {focused && <g className="sk-highlight-ribbons" pointerEvents="none">{layout.links.filter(link => link.selfHire === selfHire).map(link => {
                 const selected = link.personIds.filter(id => focusIds.has(id)).length;
                 if (!selected) return null;
                 const h = selected * layout.scale, offset = (link.height - h) / 2;
-                return <path key={link.id} d={ribbonPath(link.sourceX, link.targetX, link.sourceY + offset, link.targetY + offset, h)} fill={colorOfOrigin(link.origin)} fillOpacity={link.selfHire ? 0.95 : 0.62} />;
+                return <path key={link.id} d={ribbonPath(link.sourceX, link.targetX, link.sourceY + offset, link.targetY + offset, h)} fill={link.selfHire ? deepen(colorOfOrigin(link.origin)) : colorOfOrigin(link.origin)} fillOpacity={link.selfHire ? 0.95 : 0.9} />;
               })}</g>}
             </g>)}
             <g>{layout.nodes.map(node => {

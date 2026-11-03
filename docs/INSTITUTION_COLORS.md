@@ -2,6 +2,8 @@
 
 흰색·회색조 화면 안에서 다음 다섯 대학의 기관 막대는 학사·박사·현재 재직 단계에 걸쳐 같은 대표색을 사용한다. 연결 흐름과 경로 표의 색상은 기존처럼 학부 출신기관을 기준으로 유지한다.
 
+2026-11-03부터 화면은 공식색 대신 팬톤 TCX 파스텔 계열의 근사 sRGB 값을 쓴다(서울대 Serenity `#92A8D1`, 고려대 Peach Pink 계열 `#F4A09A`, 연세대 Aqua Sky `#7BC4C4`, KAIST Little Boy Blue `#76A7DA`, POSTECH Fuchsia Pink 계열 `#DE98C1`). 그 밖의 학부 학교는 14개 파스텔(`PASTEL_PALETTE`, `frontend/src/sankey.ts`) 중 기관 키 해시로 고정 배정하며, 다섯 학교 색과 겹치지 않는다. 학부 모교 재직 흐름은 같은 색상(hue)을 유지한 채 명도를 60%로 낮춰 짙게 표시한다. 팬톤 값은 라이선스 색표가 아닌 근사치다. 아래 표는 각 학교 공식색의 출처 기록이다.
+
 | 대학 | 화면 색상 | 확인 근거 |
 | --- | --- | --- |
 | 서울대학교 | `#0F0F70` · RGB 15, 15, 112 | [공식 SNU Blue 색상표](https://identity.snu.ac.kr/webdata/uploads/identity/image/2021/06/3-1-2-all.png) |

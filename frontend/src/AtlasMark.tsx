@@ -1,0 +1,19 @@
+/** Logo mark: a three-stage alluvial (bachelor → PhD → current) with braided pastel ribbons.
+ *  Same drawing as public/favicon.svg. */
+export default function AtlasMark() {
+  return <svg className="v2-mark" viewBox="0 0 36 36" width="36" height="36" aria-hidden="true" focusable="false">
+    <rect width="36" height="36" rx="8" fill="#1e2124" />
+    <path fill="#92A8D1" d="M8.5 6.5C12.625 6.5 12.625 17.5 16.75 17.5L16.75 23.5C12.625 23.5 12.625 12.5 8.5 12.5ZM19.25 17.5C23.375 17.5 23.375 6.5 27.5 6.5L27.5 12.5C23.375 12.5 23.375 23.5 19.25 23.5Z" />
+    <path fill="#F4A09A" d="M8.5 14.5C12.625 14.5 12.625 6.5 16.75 6.5L16.75 12.5C12.625 12.5 12.625 20.5 8.5 20.5ZM19.25 6.5C23.375 6.5 23.375 15.5 27.5 15.5L27.5 21.5C23.375 21.5 23.375 12.5 19.25 12.5Z" />
+    <path fill="#7BC4C4" d="M8.5 22.5C12.625 22.5 12.625 25.5 16.75 25.5L16.75 29.5C12.625 29.5 12.625 26.5 8.5 26.5ZM19.25 25.5C23.375 25.5 23.375 23.5 27.5 23.5L27.5 27.5C23.375 27.5 23.375 29.5 19.25 29.5Z" />
+    <rect x={6} y={6.5} width={2.5} height={6.0} rx={0.6} fill="#fff" />
+    <rect x={6} y={14.5} width={2.5} height={6.0} rx={0.6} fill="#fff" />
+    <rect x={6} y={22.5} width={2.5} height={4.0} rx={0.6} fill="#fff" />
+    <rect x={16.75} y={17.5} width={2.5} height={6.0} rx={0.6} fill="#fff" />
+    <rect x={16.75} y={6.5} width={2.5} height={6.0} rx={0.6} fill="#fff" />
+    <rect x={16.75} y={25.5} width={2.5} height={4.0} rx={0.6} fill="#fff" />
+    <rect x={27.5} y={6.5} width={2.5} height={6.0} rx={0.6} fill="#fff" />
+    <rect x={27.5} y={15.5} width={2.5} height={6.0} rx={0.6} fill="#fff" />
+    <rect x={27.5} y={23.5} width={2.5} height={4.0} rx={0.6} fill="#fff" />
+  </svg>;
+}
