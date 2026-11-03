@@ -106,20 +106,23 @@ test('korean query expands through the glossary and ranks the matching topic fir
   assert.deepEqual(tokenizeQuery('동기화, 전력망!'), ['동기화', '전력망']);
   assert.ok(expandTerms(['동기화'], index.semantic).includes('synchronization'));
   const ko = searchTopics(index, '동기화');
-  const en = searchTopics(index, 'synchronization oscillator');
+  const en = searchTopics(index, 'synchronization oscillators');
   assert.equal(ko.method, 'semantic');
-  assert.equal(ko.hits[0].topic.label, '동기화·안정성');
-  assert.equal(en.hits[0].topic.label, '동기화·안정성');
+  assert.match(en.hits[0].topic.label, /kuramoto|synchronization/i);
+  assert.equal(ko.hits[0].topic, en.hits[0].topic);
   assert.equal(searchTopics(index, '').hits.length, 0);
 });
 
-test('topic tags are bilingual and the tag cloud counts korean tags', () => {
+test('topic names and features are English only — no translated labels or tags', () => {
   const index = shipped();
-  for (const r of index.researchers) for (const t of r.topics) if (!/기타/.test(t.label)) {
-    assert.ok(t.tags.ko.length > 0 && t.tags.en.length > 0, `${t.label} has both languages`);
-    assert.ok(t.keywords.length > 0);
+  for (const r of index.researchers) for (const t of r.topics) {
+    assert.doesNotMatch(t.label, /[가-힣]/, t.label);
+    assert.equal(t.tags.ko.length, 0, t.label);
+    assert.ok(t.tags.en.length > 0 && t.keywords.length > 0, t.label);
+    for (const tag of [...t.tags.en, ...t.keywords]) assert.doesNotMatch(tag, /[가-힣]/);
   }
-  assert.ok(tagCloud(index).every(c => c.count >= 1));
+  const cloud = tagCloud(index);
+  assert.ok(cloud.length > 0 && cloud.every(c => c.count >= 1 && !/[가-힣]/.test(c.tag)));
 });
 
 test('multi layout keeps every selected paper in stack and overlay modes', () => {
@@ -178,4 +181,25 @@ test('shipped demo index carries info-flow measures for every researcher', () =>
       if (t.measures.diverge_norm) assert.ok(t.measures.diverge_norm.value <= 1);
     }
   }
+});
+
+test('a Korean query reaches English phrase tags through the glossary', () => {
+  const hits = searchTopics(shipped(), '단일세포').hits.slice(0, 2);
+  assert.equal(hits.length, 2);
+  for (const h of hits) assert.ok(h.topic.tags.en.some(t => t.split(' ').includes('single-cell')), h.topic.label);
+});
+
+test('glossary expansion uses the exact Korean entry before substrings', () => {
+  assert.ok(!expandTerms(['유전자'], shipped().semantic).includes('electron'));   // 전자 ⊂ 유전자
+});
+
+import { singular } from '../work/test-dist/topics.js';
+
+test('plural and singular English forms meet in topic search', () => {
+  assert.equal(singular('lithium-ion batteries'), 'lithium-ion battery');
+  assert.equal(singular('random matrices'), 'random matrice');            // both sides fold the same way
+  assert.equal(singular('analysis'), 'analysis');
+  assert.equal(singular('gas'), 'gas');
+  const index = shipped();
+  for (const q of ['battery', 'batteries', '배터리']) assert.match(searchTopics(index, q).hits[0]?.topic.label || '', /batter/i, q);
 });

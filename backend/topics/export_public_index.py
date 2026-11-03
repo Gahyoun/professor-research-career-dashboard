@@ -10,8 +10,8 @@ optionally topics.json with human labels). The public index follows the dashboar
 privacy rules (docs/SECURITY.md): anonymous ID only, no names, no paper titles or DOIs.
 Titles, venues and DOIs go to ``encrypted_titles.json`` (PBKDF2-SHA256 600k → AES-256-GCM,
 same scheme as encrypted_names.json) when ``NAMES_PASSWORD`` is set, so the page can show
-them after unlock. Keywords, bilingual tags and one shared LSA space are added through
-topic_semantics.py. Topic merge/diverge measures (info_flow.py) are computed here from
+them after unlock. Topic names, keywords and tags are English (c-TF-IDF; a curated label is
+kept only when it is English), with one shared LSA space, via topic_semantics.py. Topic merge/diverge measures (info_flow.py) are computed here from
 reference lists and only the aggregated topic×topic masses are published.
 """
 import argparse, base64, hashlib, json, os, secrets, sys
@@ -19,7 +19,7 @@ from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from info_flow import analyse, stable_seed  # noqa: E402
-from topic_semantics import bilingual_tags, build_lsa, ctfidf_terms, load_glossary, semantic_block, topic_vectors  # noqa: E402
+from topic_semantics import build_lsa, ctfidf_terms, english_label, english_tags, load_glossary, semantic_block, topic_vectors  # noqa: E402
 
 SCHEMA = "kstem-topic-alluvial/1"
 ITERATIONS = 600_000
@@ -66,7 +66,7 @@ def main():
 
     dashboard = json.load(open(a.dashboard, encoding="utf-8"))
     public = {x["id"]: x for x in dashboard["professors"]}
-    en2ko, ko2en = load_glossary()
+    _, ko2en = load_glossary()  # query-side Korean → English map only
     researchers, titles, texts, owners = [], {}, [], []
     for spec in a.researcher:
         folder, anon = spec.rsplit("=", 1)
@@ -106,16 +106,17 @@ def main():
             if owner == ri:
                 docs.setdefault(tid, []).append(texts[row])
                 members.setdefault(tid, []).append(row)
-        keywords, vectors = ctfidf_terms(docs), topic_vectors(doc_vecs, members)
+        keywords, vectors = ctfidf_terms(docs, n_terms=8), topic_vectors(doc_vecs, members)
         for t in r["topics"]:
             t["keywords"] = keywords.get(t["id"], [])
-            t["tags"] = bilingual_tags(t["label"], t["keywords"], en2ko, ko2en)
+            t["label"] = english_label(t["keywords"], curated=t["label"])
+            t["tags"] = english_tags(t["label"], t["keywords"])
             t["vector"] = vectors.get(t["id"])
 
     os.makedirs(a.out_dir, exist_ok=True)
     out = {"schema": SCHEMA, "source": "release", "generated_at": str(date.today()),
            "method": {"disambiguation": dashboard["meta"].get("identity_filter_version", "KOAD"),
-                      "clustering": "공유 참고문헌 코사인 가중 Louvain", "labels": "c-TF-IDF 자동 라벨 후 사람 검수",
+                      "clustering": "공유 참고문헌 코사인 가중 Louvain", "labels": "c-TF-IDF top terms (English); curated English labels kept",
                       "branching": "탄생기 논문 × 이전 시기 논문의 bibliographic coupling 최댓값"},
            "semantic": semantic_block(vocab, term_vecs, ko2en), "researchers": researchers}
     with open(os.path.join(a.out_dir, "index.json"), "w", encoding="utf-8") as fh:

@@ -15,39 +15,38 @@ import argparse, json, os, random, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from info_flow import analyse, stable_seed  # noqa: E402
-from topic_semantics import bilingual_tags, build_lsa, ctfidf_terms, load_glossary, semantic_block, topic_vectors  # noqa: E402
+from topic_semantics import build_lsa, ctfidf_terms, english_label, english_tags, load_glossary, semantic_block, topic_vectors  # noqa: E402
 
 SCHEMA = "kstem-topic-alluvial/1"
-NOISE = ["dynamics", "measurement", "theory", "experiment", "framework", "structure", "behavior", "evidence"]
 PEOPLE = [
     ("physics", "예시 물리학자 A", "예시대학교 (Demo University)",
      [("예시공과대 박사 (2004-09)", 2004, 2009), ("해외 연구소 포닥 (2010-13)", 2010, 2013),
       ("예시고등과학원 (2013-17)", 2013, 2017), ("예시대학교 물리학과 (2017-)", 2017, None)],
-     [("네트워크 구조·임계현상", 2005, None, "network percolation critical phase transition ising scaling degree"), ("메조스케일 구조", 2010, 0, "community core-periphery mesoscale structure modularity detection"),
-      ("동기화·안정성", 2012, 0, "synchronization oscillator kuramoto power grid stability basin"),
-      ("시간 네트워크·확산", 2015, 1, "temporal network epidemic spreading outbreak diffusion contact"), ("도시 모빌리티", 2019, None, "urban mobility human travel spatial flows"), ("기타 소군집", 2016, None, "citation collaboration hiring inequality")]),
+     [("네트워크 구조·임계현상", 2005, None, "phase transition|critical phenomena|percolation threshold|ising model|finite-size scaling|scale-free degree distribution"), ("메조스케일 구조", 2010, 0, "community detection|core-periphery structure|mesoscale structure|modularity maximization|stochastic block model"),
+      ("동기화·안정성", 2012, 0, "kuramoto oscillators|synchronization transition|power grid|basin stability|coupled oscillators"),
+      ("시간 네트워크·확산", 2015, 1, "temporal networks|epidemic spreading|outbreak size|contact patterns|diffusion process"), ("도시 모빌리티", 2019, None, "human mobility|urban mobility|travel flows|spatial interaction|commuting patterns"), ("기타 소군집", 2016, None, "citation dynamics|scientific collaboration|faculty hiring|career inequality")]),
     ("chemistry", "예시 화학자 B", "예시대학교 (Demo University)",
      [("예시대 화학과 박사 (2008-13)", 2008, 2013), ("해외대학 포닥 (2013-16)", 2013, 2016),
       ("예시대학교 화학과 (2016-)", 2016, None)],
-     [("유기 광촉매", 2009, None, "photocatalysis photocatalytic organic visible light catalysis radical"), ("C–H 활성화", 2013, 0, "activation catalysis organic synthesis bond functionalization"), ("전기화학 합성", 2018, 1, "electrochemical electrochemistry synthesis electrode reaction"), ("기계학습 반응 예측", 2021, None, "machine learning prediction reaction yield deep learning")]),
+     [("유기 광촉매", 2009, None, "photoredox catalysis|visible light|radical reactions|photocatalytic oxidation|organic photocatalyst"), ("C–H 활성화", 2013, 0, "c-h activation|bond functionalization|transition metal catalysis|cross-coupling|site selectivity"), ("전기화학 합성", 2018, 1, "electrochemical synthesis|electrode potential|redox mediator|electroorganic reaction|paired electrolysis"), ("기계학습 반응 예측", 2021, None, "machine learning|yield prediction|graph neural network|reaction outcome|deep learning")]),
     ("biology", "예시 생물학자 C", "샘플과학기술원 (Sample Institute)",
      [("샘플대 생명과학 박사 (2002-08)", 2002, 2008), ("해외 의대 포닥 (2008-12)", 2008, 2012),
       ("샘플과학기술원 (2012-)", 2012, None)],
-     [("단백질 접힘", 2003, None, "protein folding molecular simulation chaperone"), ("세포 신호전달", 2009, 0, "cell signaling pathway kinase immune"), ("단일세포 전사체", 2015, 1, "single-cell transcriptome rna sequencing gene expression"),
-      ("공간 전사체", 2020, 2, "spatial transcriptome tissue single-cell imaging"), ("기타 소군집", 2011, None, "microbiome ecology population")]),
+     [("단백질 접힘", 2003, None, "protein folding|molecular dynamics simulation|chaperone|folding kinetics|misfolding"), ("세포 신호전달", 2009, 0, "cell signaling|kinase pathway|immune response|signal transduction|receptor activation"), ("단일세포 전사체", 2015, 1, "single-cell rna sequencing|gene expression|cell type atlas|transcriptome|cell states"),
+      ("공간 전사체", 2020, 2, "spatial transcriptomics|tissue architecture|in situ imaging|spatial gene expression|single-cell resolution"), ("기타 소군집", 2011, None, "gut microbiome|microbial ecology|population dynamics")]),
     ("mathematics", "예시 수학자 D", "샘플과학기술원 (Sample Institute)",
      [("샘플대 수학과 박사 (2010-15)", 2010, 2015), ("해외 수학연구소 (2015-18)", 2015, 2018),
       ("샘플과학기술원 (2018-)", 2018, None)],
-     [("확률 그래프 이론", 2011, None, "random graph probability combinatorics percolation threshold"), ("랜덤 행렬", 2016, 0, "random matrix eigenvalue probability spectrum universality"), ("최적 수송", 2019, None, "optimal transport geometry pde wasserstein")]),
+     [("확률 그래프 이론", 2011, None, "random graphs|percolation threshold|probabilistic combinatorics|giant component|graph limits"), ("랜덤 행렬", 2016, 0, "random matrices|eigenvalue statistics|spectral universality|free probability|local law"), ("최적 수송", 2019, None, "optimal transport|wasserstein distance|monge-ampere equation|gradient flows|geometric analysis")]),
     ("physics", "예시 물리학자 E", "샘플과학기술원 (Sample Institute)",
      [("예시공과대 박사 (2000-06)", 2000, 2006), ("해외 국립연구소 (2006-11)", 2006, 2011),
       ("샘플과학기술원 (2011-)", 2011, None)],
-     [("강상관 전자계", 2001, None, "correlated electron superconductivity hubbard lattice"), ("위상 물질", 2008, 0, "topological insulator quantum spin edge"), ("양자 스핀 액체", 2013, 1, "quantum spin liquid magnetic frustration lattice"),
-      ("모아레 초격자", 2019, 1, "moire graphene twisted superconductivity electron"), ("양자 시뮬레이션", 2022, None, "quantum simulation entanglement information")]),
+     [("강상관 전자계", 2001, None, "strongly correlated electrons|hubbard model|unconventional superconductivity|mott insulator|dynamical mean-field theory"), ("위상 물질", 2008, 0, "topological insulators|quantum spin hall|edge states|berry phase|topological invariants"), ("양자 스핀 액체", 2013, 1, "quantum spin liquid|geometric frustration|kitaev model|fractionalized excitations|magnetic order"),
+      ("모아레 초격자", 2019, 1, "twisted bilayer graphene|moire superlattice|flat bands|correlated insulator|moire superconductivity"), ("양자 시뮬레이션", 2022, None, "quantum simulation|entanglement entropy|quantum information|cold atoms|tensor networks")]),
     ("chemistry", "예시 화학자 F", "예시대학교 (Demo University)",
      [("예시대 화학과 박사 (2012-17)", 2012, 2017), ("해외대학 포닥 (2017-20)", 2017, 2020),
       ("예시대학교 화학과 (2020-)", 2020, None)],
-     [("금속-유기 골격체", 2013, None, "metal-organic framework porous crystal adsorption"), ("탄소 포집", 2018, 0, "carbon capture adsorption co2 framework"), ("고체 전해질", 2021, None, "solid-state electrolyte battery ion conduction")]),
+     [("금속-유기 골격체", 2013, None, "metal-organic frameworks|porous crystals|gas adsorption|linker design|surface area"), ("탄소 포집", 2018, 0, "carbon capture|co2 adsorption|direct air capture|amine functionalization|sorbent stability"), ("고체 전해질", 2021, None, "solid-state electrolytes|lithium-ion batteries|ionic conduction|interface stability|sulfide electrolytes")]),
 ]
 
 
@@ -93,8 +92,10 @@ def main():
                 for _ in range(k):
                     papers.append({"year": year, "topic": tid, "cited": int(rnd.paretovariate(1.3) * 6),
                                    "_refs": synthetic_refs(rnd, n, tid, year, birth, parent, [t[0] for t in topics])})
-                    # Pseudo-abstract: the topic vocabulary plus a little shared noise.
-                    texts.append((n - 1, tid, " ".join(rnd.sample(_words.split(), k=min(4, len(_words.split()))) + rnd.sample(NOISE, 2))))
+                    # Pseudo-abstract: a few whole phrases of the topic vocabulary in random order,
+                    # so real bigrams recur across papers and accidental ones do not.
+                    phrases = _words.split("|")
+                    texts.append((n - 1, tid, " ".join(rnd.sample(phrases, k=min(3, len(phrases))))))
             topic_rows.append((tid, label, birth, parent))
         for p_ in papers:
             p_["era"] = max((i for i, (_, s, e) in enumerate(eras) if s <= p_["year"] <= (e or end_year)), default=None)
@@ -124,7 +125,7 @@ def main():
             "fetched_at": "2026-11-03", "info": info,
         })
     # Keywords, bilingual tags and topic vectors via the same code path as real exports.
-    en2ko, ko2en = load_glossary()
+    _, ko2en = load_glossary()  # query-side Korean → English map only
     vocab, term_vecs, doc_vecs = build_lsa([t for _, _, t in texts], dims=24)
     for ri, r in enumerate(researchers):
         docs = {}
@@ -133,16 +134,17 @@ def main():
             if owner == ri:
                 docs.setdefault(tid, []).append(text)
                 members.setdefault(tid, []).append(row)
-        keywords = ctfidf_terms(docs, n_terms=5)
+        keywords = ctfidf_terms(docs, n_terms=6)
         vectors = topic_vectors(doc_vecs, members)
         for topic in r["topics"]:
             topic["keywords"] = keywords.get(topic["id"], [])
-            topic["tags"] = bilingual_tags(topic["label"], topic["keywords"], en2ko, ko2en)
+            topic["label"] = english_label(topic["keywords"], curated=topic["label"])
+            topic["tags"] = english_tags(topic["label"], topic["keywords"])
             topic["vector"] = vectors.get(topic["id"])
     out = {"schema": SCHEMA, "source": "demo", "generated_at": "2026-11-03",
            "method": {"disambiguation": "KOAD 1.1-strict-namesake-drop (예시 데이터에는 적용 대상 없음)",
                       "clustering": "공유 참고문헌 코사인 가중 Louvain",
-                      "labels": "c-TF-IDF 자동 라벨 후 사람 검수",
+                      "labels": "c-TF-IDF top terms (English); curated English labels kept",
                       "branching": "탄생기 논문 × 이전 시기 논문의 bibliographic coupling 최댓값"},
            "semantic": semantic_block(vocab, term_vecs, ko2en),
            "researchers": researchers}

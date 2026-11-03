@@ -409,21 +409,34 @@ export function tokenizeQuery(query: string): string[] {
   return query.normalize('NFKC').toLowerCase().split(/[\s,·/;|]+/).map(t => t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}-]+$/gu, '')).filter(t => t.length >= 2);
 }
 
-/** Korean words reach the English LSA vocabulary through the glossary (exact, then contained). */
+/** Korean words reach the English LSA vocabulary through the glossary: the exact entry when there is
+ *  one, otherwise entries containing or contained in the token. Containment alone collides on
+ *  Korean compounds ("전자" ⊂ "유전자"), so it is only the fallback. */
 export function expandTerms(tokens: string[], semantic: TopicSemantic | null): string[] {
   const out: string[] = [];
   for (const token of tokens) {
     if (!/[가-힣]/.test(token)) { out.push(token); continue; }
-    for (const [ko, ens] of semantic?.glossary || []) if (ko === token || ko.includes(token) || token.includes(ko)) out.push(...ens);
+    const exact = semantic?.glossary.get(token);
+    if (exact) { out.push(...exact); continue; }
+    for (const [ko, ens] of semantic?.glossary || []) if (ko.includes(token) || token.includes(ko)) out.push(...ens);
   }
   return [...new Set(out.flatMap(term => [term, ...term.split(/\s+/)]))];
+}
+
+/** English plural → singular, word by word ("lithium-ion batteries" → "lithium-ion battery"). */
+export function singular(phrase: string): string {
+  return phrase.split(/\s+/).map(w => /[^aeiou]ies$/.test(w) && w.length > 4 ? `${w.slice(0, -3)}y`
+    : /(ss|us|is)$/.test(w) || w.length <= 3 ? w
+    : /(ches|shes|xes|sses)$/.test(w) ? w.slice(0, -2)
+    : w.endsWith('s') ? w.slice(0, -1) : w).join(' ');
 }
 
 function queryVector(terms: string[], semantic: TopicSemantic): Float32Array | null {
   const sum = new Float32Array(semantic.dims);
   let found = 0;
   for (const term of terms) {
-    const exact = semantic.terms.get(term);
+    const one = singular(term);
+    const exact = semantic.terms.get(term) ?? semantic.terms.get(one) ?? semantic.terms.get(`${one}s`) ?? semantic.terms.get(one.replace(/y$/, 'ies'));
     const vectors = exact ? [exact] : term.length >= 4 ? [...semantic.terms].filter(([key]) => key.startsWith(term)).slice(0, 3).map(([, v]) => v) : [];
     for (const v of vectors) { for (let i = 0; i < v.length; i++) sum[i] += v[i]; found++; }
   }
@@ -432,15 +445,22 @@ function queryVector(terms: string[], semantic: TopicSemantic): Float32Array | n
 
 /** Ranks every researcher's topics. Score = 0.55·cosine(LSA) + 0.45·tag overlap; either part alone still ranks. */
 export function searchTopics(index: TopicIndex, query: string, minimum = 0.22): TopicSearch {
-  const terms = tokenizeQuery(query);
+  const terms = tokenizeQuery(query).map(singular);
   if (!terms.length) return { hits: [], terms, expanded: [], method: 'none' };
-  const expanded = expandTerms(terms, index.semantic);
+  const expanded = expandTerms(terms, index.semantic).map(singular);
   const q = index.semantic ? queryVector(expanded, index.semantic) : null;
   const hits: TopicHit[] = [];
   for (const researcher of index.researchers) for (const topic of researcher.topics) {
-    const haystack = [topic.label.toLowerCase(), ...topic.tags.ko, ...topic.tags.en, ...topic.keywords].map(t => t.toLowerCase());
-    const matched = haystack.filter(tag => terms.some(t => tag.includes(t) || (t.length >= 3 && t.includes(tag) && tag.length >= 2)) || expanded.some(t => tag === t));
-    const tagScore = terms.filter(t => haystack.some(tag => tag.includes(t) || t.includes(tag)) || expandTerms([t], index.semantic).some(e => haystack.includes(e))).length / terms.length;
+    // Singular forms on both sides, so "battery" meets "lithium-ion batteries".
+    const haystack = [topic.label.toLowerCase(), ...topic.tags.ko, ...topic.tags.en, ...topic.keywords].map(t => singular(t.toLowerCase()));
+    // Glossary terms match whole words of English phrases ("single-cell" in "single-cell rna").
+    const hasWord = (tag: string, word: string) => tag === word || tag.split(/\s+/).includes(word) || (word.includes(' ') && tag.includes(word));
+    const matched = haystack.filter(tag => terms.some(t => tag.includes(t) || (t.length >= 3 && t.includes(tag) && tag.length >= 2)) || expanded.some(t => hasWord(tag, t)));
+    // Graded per query term: exact tag 1, query inside a tag 0.8 (or via glossary), tag inside the query 0.5
+    // — so "단일세포" prefers a 단일세포 topic over one tagged only "세포".
+    const tagScore = terms.reduce((sum, t) => sum + (haystack.includes(t) ? 1
+      : haystack.some(tag => tag.includes(t)) || expandTerms([t], index.semantic).some(e => haystack.some(tag => hasWord(tag, singular(e)))) ? 0.8
+      : haystack.some(tag => t.includes(tag)) ? 0.5 : 0), 0) / terms.length;
     let semanticScore = 0;
     if (q && topic.vector && topic.vector.length === q.length) {
       const v = unit(topic.vector);
@@ -456,8 +476,8 @@ export function searchTopics(index: TopicIndex, query: string, minimum = 0.22): 
 
 export function tagCloud(index: TopicIndex, limit = 24): { tag: string; count: number }[] {
   const counts = new Map<string, number>();
-  for (const r of index.researchers) for (const t of r.topics) for (const tag of t.tags.ko) counts.set(tag, (counts.get(tag) || 0) + 1);
-  return [...counts].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, 'ko')).slice(0, limit);
+  for (const r of index.researchers) for (const t of r.topics) for (const tag of t.tags.en) counts.set(tag, (counts.get(tag) || 0) + 1);
+  return [...counts].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, 'en')).slice(0, limit);
 }
 
 // ── Multi-researcher view: stack (lane per person) or overlay (streams per person) ──
