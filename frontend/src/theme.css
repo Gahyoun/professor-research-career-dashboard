@@ -1,0 +1,98 @@
+/* Atlas unified style — merges the KRDS white/gray redesign (Figma "Faculty Research
+   Atlas — Dashboard Redesign") with the Remaster components. Grayscale chrome, flat
+   1px-bordered surfaces, filled gray pills for selection; colour is reserved for data
+   encodings and focus. Loaded last so every page shares these tokens. */
+:root {
+  --v2-ink: #1e2124; --v2-body: #464c53; --v2-muted: #6d7882; --v2-faint: #8a949e;
+  --v2-line: #dedfe2; --v2-line-input: #cdd1d5; --v2-line-soft: #eef0f2;
+  --v2-canvas: #fff; --v2-surface: #fff; --v2-fill: #f4f5f6; --v2-fill-strong: #e9ebed;
+  --v2-accent: #256ef4; --v2-accent-ink: #0b50d0; --v2-accent-soft: #ecf2fe;
+  --v2-radius: 12px; --v2-radius-sm: 10px; --v2-radius-xs: 6px;
+  --v2-shadow: none;
+  --v2-shadow-pop: 0 12px 32px -12px rgb(30 33 36 / 22%), 0 0 0 1px rgb(30 33 36 / 6%);
+  --primary: var(--v2-ink); --primary-deep: #000; --primary-bg: var(--v2-fill);
+  --body: var(--v2-body); --muted: var(--v2-muted); --line: var(--v2-line); --line-strong: #8a949e; --surface: var(--v2-fill);
+  --atlas-ink: var(--v2-ink); --atlas-shadow: none;
+  font-family: "Pretendard GOV", "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+body, .app { background: var(--v2-canvas); }
+:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 2px; }
+.atlas-kicker, .eyebrow, .sk-eyebrow, .iw-kicker, .v2-kicker { color: var(--v2-ink) !important; }
+.v2-kicker { display: block; font-size: calc(13px * var(--text-scale, 1)); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.v2-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Shell: one sticky row — brand · nav pills · release · access */
+.v2-header { position: sticky; top: 0; z-index: 40; background: rgb(255 255 255 / 92%); border-bottom: 1px solid var(--v2-line);
+  -webkit-backdrop-filter: saturate(180%) blur(12px); backdrop-filter: saturate(180%) blur(12px); }
+.v2-header-inner { width: min(1440px, calc(100% - 80px)); margin: 0 auto; min-height: 72px; display: flex; align-items: center; gap: 24px; }
+.v2-brand { display: flex; align-items: center; gap: 12px; color: var(--v2-ink); text-decoration: none; flex-shrink: 0; }
+.v2-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; background: var(--v2-ink); color: #fff; font-weight: 800; font-size: 17px; }
+.v2-mark::before { content: "N"; }
+.v2-brand strong { display: block; font-size: 16px; font-weight: 800; letter-spacing: -.01em; line-height: 1.25; }
+.v2-brand small { display: block; font-size: 12px; color: var(--v2-body); font-weight: 500; line-height: 1.35; }
+.v2-nav { flex: 1; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.v2-nav::-webkit-scrollbar { display: none; }
+.v2-nav button { display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 12px; border: 0; border-radius: var(--v2-radius-xs); background: transparent; color: var(--v2-body); font-size: calc(15px * var(--text-scale, 1)); font-weight: 500; white-space: nowrap; }
+.v2-nav button span { color: var(--v2-faint); font-size: calc(13px * var(--text-scale, 1)); font-variant-numeric: tabular-nums; }
+.v2-nav button:hover { background: var(--v2-fill); color: var(--v2-ink); }
+.v2-nav button.is-on { background: var(--v2-fill); color: var(--v2-ink); font-weight: 700; }
+.v2-nav button.is-on span { color: var(--v2-ink); }
+.v2-unlock { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.v2-unlock input { width: 132px; height: 40px; padding: 0 12px; border: 1px solid var(--v2-line-input); border-radius: var(--v2-radius-xs); background: #fff; font-size: 14px; color: var(--v2-ink); }
+.v2-unlock input:focus { border-color: var(--v2-ink); outline: 0; box-shadow: 0 0 0 3px rgb(30 33 36 / 10%); }
+.v2-status { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px; border-radius: var(--v2-radius-xs); color: var(--v2-body); font-size: 13px; font-weight: 500; white-space: nowrap; }
+.v2-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--v2-ink); }
+.v2-status.is-open { background: #eaf6ec; color: #1a6b2b; } .v2-status.is-open i { background: #228738; }
+.v2-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 40px; padding: 0 16px; border: 1px solid var(--v2-line-input); border-radius: var(--v2-radius-xs); background: #fff; color: var(--v2-ink); font-size: 14px; font-weight: 600; white-space: nowrap; text-decoration: none; }
+.v2-button:hover:not(:disabled) { background: var(--v2-fill); }
+.v2-button-dark { background: var(--v2-ink); border-color: var(--v2-ink); color: #fff; }
+.v2-button-dark:hover:not(:disabled) { background: #000; }
+.v2-button:disabled { opacity: .55; }
+.atlas-auth-message { margin: 14px 0 0; font-size: 13px; color: var(--v2-muted); text-align: right; }
+
+/* Controls and figures */
+.v2-seg { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.v2-seg button { height: 40px; padding: 0 12px; border: 0; border-radius: var(--v2-radius-xs); background: transparent; color: var(--v2-body); font-size: 14px; font-weight: 500; white-space: nowrap; }
+.v2-seg button:hover { background: var(--v2-fill); }
+.v2-seg button.is-on { background: var(--v2-fill); color: var(--v2-ink); font-weight: 700; }
+.v2-switch { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; color: var(--v2-body); cursor: pointer; }
+.v2-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.v2-switch span { position: relative; width: 34px; height: 20px; border-radius: 999px; background: var(--v2-line-input); transition: background-color .15s; }
+.v2-switch span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 20%); transition: transform .15s; }
+.v2-switch input:checked + span { background: var(--v2-ink); }
+.v2-switch input:checked + span::after { transform: translateX(14px); }
+.v2-switch input:focus-visible + span { outline: 2px solid var(--v2-accent); outline-offset: 2px; }
+.v2-stats { display: flex; gap: 32px; justify-content: flex-end; }
+.v2-stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.v2-stat span { order: 2; font-size: 14px; color: var(--v2-body); }
+.v2-stat strong { order: 1; font-size: calc(32px * var(--text-scale, 1)); font-weight: 500; letter-spacing: -.02em; line-height: 1.3; color: var(--v2-ink); font-variant-numeric: tabular-nums; }
+.v2-stat strong em { font-style: normal; font-size: 16px; margin-left: 3px; color: var(--v2-body); }
+.v2-stat small { order: 3; font-size: 13px; color: var(--v2-muted); }
+.v2-stats-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.v2-stats-4 .v2-stat { padding: 16px 20px; border: 1px solid var(--v2-line); border-radius: var(--v2-radius); }
+
+/* Legacy pages share the same flat surface language */
+.atlas-heading h1, h1, .sankey-page h1, .workforce-page h1 { letter-spacing: -.03em; font-weight: 700; color: var(--v2-ink); }
+.atlas-count, .career-directory, .filter-panel, .content-panel, .summary-card, .sk-chart-card, .sk-metrics, .sk-people, .sk-method { border-color: var(--v2-line) !important; border-radius: var(--v2-radius) !important; box-shadow: none !important; }
+.sk-controls { background: #fff !important; border-color: var(--v2-line) !important; border-radius: var(--v2-radius) !important; }
+.download-panel { border-radius: var(--v2-radius); background: var(--v2-ink) !important; }
+.download-panel a { border-color: rgb(255 255 255 / 28%) !important; border-radius: var(--v2-radius-xs) !important; }
+
+.v2-footer { margin-top: 64px; border-top: 1px solid var(--v2-line); background: #fff; }
+.v2-footer .container { display: flex; flex-wrap: wrap; gap: 6px 24px; padding: 24px 0 40px; color: var(--v2-body); font-size: 13px; }
+.v2-footer .footer-brand { color: var(--v2-ink); font-weight: 800; }
+
+@media (max-width: 1240px) {
+  .v2-header-inner { flex-wrap: wrap; row-gap: 0; padding-top: 12px; }
+  .v2-nav { order: 3; flex-basis: 100%; margin: 8px 0 10px; }
+  .v2-unlock { margin-left: auto; }
+}
+@media (max-width: 720px) {
+  .v2-header { position: static; }
+  .v2-header-inner { width: calc(100% - 40px); }
+  .v2-unlock { flex-basis: 100%; order: 2; margin: 12px 0 0; }
+  .v2-unlock input { flex: 1; width: auto; min-width: 0; }
+  .v2-nav button span { display: none; }
+  .v2-stats { justify-content: flex-start; }
+  .v2-stats-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

@@ -2,16 +2,26 @@ import SankeyPage from './SankeyPage';
 import TemporalInstitutionsPage from './TemporalInstitutionsPage';
 import { loadDashboard } from './metadata';
 import { canonicalSchool, institutionDisplayName } from './schoolIdentity';
-import { decryptNameMap, type EncryptedNames } from './privacy';
+import { decryptJson, decryptNameMap, type EncryptedNames } from './privacy';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Stage, Career, YearPoint, Professor, Dashboard } from './types';
 import Constellation from './Constellation';
+import TopicsPage from './TopicsPage';
+import { validatePaperTitles, type EncryptedPaperTitles } from './topics';
 
 type Filters = { subject: string; institution: string };
 
-type ViewMode = 'individual' | 'group' | 'constellation' | 'sankey' | 'institutions';
-function routeView(): ViewMode { const path = window.location.hash.split('?')[0]; return path === '#/institutions' ? 'institutions' : path === '#/flows' ? 'sankey' : path === '#/career' ? 'individual' : 'constellation'; }
+type ViewMode = 'individual' | 'group' | 'constellation' | 'sankey' | 'institutions' | 'topics';
+const routes: Record<string, ViewMode> = { '#/institutions': 'institutions', '#/flows': 'sankey', '#/career': 'individual', '#/topics': 'topics' };
+function routeView(): ViewMode { return routes[window.location.hash.split('?')[0]] || 'constellation'; }
+const navItems: { mode: ViewMode; hash: string; label: string }[] = [
+  { mode: 'constellation', hash: '#/constellations', label: '경력 하이퍼그래프' },
+  { mode: 'individual', hash: '#/career', label: '경력과 논문' },
+  { mode: 'sankey', hash: '#/flows', label: '학력·임용 흐름' },
+  { mode: 'institutions', hash: '#/institutions', label: '기관 인력 통계' },
+  { mode: 'topics', hash: '#/topics', label: '연구 토픽 흐름' },
+];
 
 const emptyFilters: Filters = { subject: '', institution: '' };
 const stageColors: Record<Stage, string> = { doctoral: '#d63d4a', postdoc: '#228738', faculty: '#256ef4' };
@@ -132,7 +142,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState('');
   const [viewMode, setViewState] = useState<ViewMode>(routeView);
   const [graphSelectionId, setGraphSelectionId] = useState('');
-  function setViewMode(mode: ViewMode) { setViewState(mode); const hash = mode === 'institutions' ? '#/institutions' : mode === 'sankey' ? '#/flows' : mode === 'constellation' ? '#/constellations' : '#/career'; if (window.location.hash !== hash) window.location.hash = hash; }
+  function setViewMode(mode: ViewMode) { setViewState(mode); const hash = navItems.find(item => item.mode === (mode === 'group' ? 'individual' : mode))!.hash; if (window.location.hash.split('?')[0] !== hash) window.location.hash = hash; }
   useEffect(() => { const changed = () => setViewState(routeView()); window.addEventListener('hashchange', changed); return () => window.removeEventListener('hashchange', changed); }, []);
   const [groupPhd, setGroupPhd] = useState('');
   const [groupCountry, setGroupCountry] = useState('');
@@ -144,6 +154,7 @@ export default function App() {
   const authGeneration = useRef(0);
   useEffect(() => () => { authGeneration.current += 1; }, []);
   const [names, setNames] = useState<Record<string, string> | null>(null);
+  const [topicTitles, setTopicTitles] = useState<EncryptedPaperTitles | null>(null);
   const [message, setMessage] = useState('실명은 암호화되어 있습니다.');
   const [zoom, setZoom] = useState(100);
   const [contrast, setContrast] = useState(false);
@@ -190,8 +201,12 @@ export default function App() {
       if (!response.ok) throw new Error('Name bundle unavailable');
       const payload = await response.json() as EncryptedNames;
       const decrypted = await decryptNameMap(submittedPassword, payload);
+      // The topic title bundle is optional: absent until a real topic release ships.
+      let titles: EncryptedPaperTitles | null = null;
+      const topicResponse = await fetch(`${import.meta.env.BASE_URL}data/topics/encrypted_titles.json`).catch(() => null);
+      if (topicResponse?.ok) try { titles = validatePaperTitles(await decryptJson(submittedPassword, await topicResponse.json() as EncryptedNames)); } catch { titles = null; }
       if (generation !== authGeneration.current) return;
-      setNames(decrypted); setMessage('실명과 그룹 쿼리가 이 기기의 메모리에서만 활성화되었습니다.');
+      setNames(decrypted); setTopicTitles(titles); setMessage('실명과 그룹 쿼리가 이 기기의 메모리에서만 활성화되었습니다.');
     } catch { if (generation === authGeneration.current) setMessage('비밀번호가 맞지 않거나 실명 파일을 불러오지 못했습니다.'); }
     finally { if (generation === authGeneration.current) setUnlocking(false); }
   }
@@ -212,21 +227,21 @@ export default function App() {
   return (
     <div className={`app ${contrast ? 'high-contrast' : ''}`} style={{ fontSize: `${zoom}%`, '--text-scale': zoom / 100 } as React.CSSProperties}>
       <a className="skip-link" href="#main" onClick={e => { e.preventDefault(); const main = document.getElementById('main'); main?.focus(); main?.scrollIntoView(); }}>본문 바로가기</a>
-      <header className="site-header"><div className="header-inner">
-        <div className="brand"><span className="brand-mark" aria-hidden="true">N</span><div><strong>기초자연과학 연구경력</strong><span>교수 주저자 논문 대시보드</span></div></div>
-        <form className="unlock" onSubmit={unlock}>{names ? <button type="button" className="lock" onClick={() => { authGeneration.current += 1; setNames(null); setPassword(''); setUnlocking(false); if (viewMode === 'group') setViewMode('individual'); setMessage('실명과 그룹 쿼리를 다시 잠갔습니다.'); }}>실명·쿼리 잠그기</button> : <><label htmlFor="name-password">실명·쿼리 보기</label><input id="name-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="비밀번호" autoComplete="current-password" required/><button type="submit" disabled={unlocking}>{unlocking ? '확인 중' : '해제'}</button></>}</form>
+      <header className="v2-header"><div className="v2-header-inner">
+        <a className="v2-brand" href="#/constellations" onClick={e => { e.preventDefault(); setViewMode('constellation'); }}><span className="v2-mark" aria-hidden="true"/><span><strong>K–STEM Research Atlas</strong><small>기초자연과학 교수 연구경력</small></span></a>
+        <nav className="v2-nav" aria-label="탐색 화면">
+          {navItems.map((item, i) => { const on = viewMode === item.mode || (item.mode === 'individual' && viewMode === 'group'); return <button key={item.mode} type="button" className={on ? 'is-on' : ''} aria-current={on ? 'page' : undefined} onClick={() => setViewMode(item.mode)}><span aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>{item.label}</button>; })}
+        </nav>
+        <form className="v2-unlock" onSubmit={unlock}>
+          <span className={`v2-status ${names ? 'is-open' : ''}`} role="status" title={message}><i aria-hidden="true"/>{names ? '실명 보기' : '익명 모드'}</span>
+          {names ? <button type="button" className="v2-button" onClick={() => { authGeneration.current += 1; setNames(null); setTopicTitles(null); setPassword(''); setUnlocking(false); if (viewMode === 'group') setViewMode('individual'); setMessage('실명과 그룹 쿼리를 다시 잠갔습니다.'); }}>잠그기</button>
+            : <><label htmlFor="name-password" className="v2-sr">실명·쿼리 보기 비밀번호</label><input id="name-password" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="비밀번호" autoComplete="current-password" required/><button type="submit" className="v2-button v2-button-dark" disabled={unlocking}>{unlocking ? '확인 중' : '잠금 해제'}</button></>}
+        </form>
       </div></header>
 
-      <main id="main" tabIndex={-1} className={`container ${viewMode === 'constellation' || viewMode === 'sankey' || viewMode === 'institutions' ? 'atlas-container' : ''}`}>
-        <nav className="atlas-nav" aria-label="탐색 화면">
-          <button className={viewMode === 'constellation' ? 'active' : ''} aria-current={viewMode === 'constellation' ? 'page' : undefined} onClick={() => setViewMode('constellation')}><span aria-hidden="true">01</span>경력 하이퍼그래프</button>
-          <button className={viewMode === 'individual' || viewMode === 'group' ? 'active' : ''} aria-current={viewMode === 'individual' || viewMode === 'group' ? 'page' : undefined} onClick={() => setViewMode('individual')}><span aria-hidden="true">02</span>경력과 논문</button>
-          <button className={viewMode === 'sankey' ? 'active' : ''} aria-current={viewMode === 'sankey' ? 'page' : undefined} onClick={() => setViewMode('sankey')}><span aria-hidden="true">03</span>학력·임용 흐름</button>
-          <button className={viewMode === 'institutions' ? 'active' : ''} aria-current={viewMode === 'institutions' ? 'page' : undefined} onClick={() => setViewMode('institutions')}><span aria-hidden="true">04</span>기관 인력 통계</button>
-          <span className="atlas-access" role="status" title={message}>{names ? '실명 보기 활성화' : '익명으로 탐색 중'}</span>
-        </nav>
+      <main id="main" tabIndex={-1} className={`container ${viewMode === 'constellation' || viewMode === 'sankey' || viewMode === 'institutions' || viewMode === 'topics' ? 'atlas-container' : ''}`}>
         {message !== '실명은 암호화되어 있습니다.' && <p className="atlas-auth-message" role="status">{message}</p>}
-        {viewMode === 'constellation' ? <Constellation initialSelectedId={graphSelectionId} professors={dashboard.professors} names={names} releaseYear={dashboard.meta.release_year} onSelect={chooseProfessor}/> : viewMode === 'institutions' ? <TemporalInstitutionsPage professors={dashboard.professors} releaseYear={dashboard.meta.release_year}/> : viewMode === 'sankey' ? <SankeyPage key={names ? 'unlocked' : 'locked'} professors={dashboard.professors} names={names} releaseYear={dashboard.meta.release_year} onSelect={chooseProfessor}/> : <>
+        {viewMode === 'topics' ? <TopicsPage professors={dashboard.professors} names={names} titles={topicTitles} releaseYear={dashboard.meta.release_year} onOpenCareer={chooseProfessor}/> : viewMode === 'constellation' ?<Constellation initialSelectedId={graphSelectionId} professors={dashboard.professors} names={names} releaseYear={dashboard.meta.release_year} onSelect={chooseProfessor}/> : viewMode === 'institutions' ? <TemporalInstitutionsPage professors={dashboard.professors} releaseYear={dashboard.meta.release_year}/> : viewMode === 'sankey' ? <SankeyPage key={names ? 'unlocked' : 'locked'} professors={dashboard.professors} names={names} releaseYear={dashboard.meta.release_year} onSelect={chooseProfessor}/> : <>
 
         <section className="title-row"><div><span className="eyebrow">{dashboard.meta.release_year} DATA RELEASE</span><h1>교수 연구경력과 주저자 생산성</h1><p>박사과정부터 기관별 포닥·교수 임용까지의 경력과 필터링된 1저자·교신저자 논문을 확인합니다.</p></div><div className="display-settings"><label htmlFor="zoom">글자 크기</label><select id="zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))}><option value="90">90%</option><option value="100">100%</option><option value="110">110%</option><option value="130">130%</option><option value="150">150%</option></select><label className="contrast"><input type="checkbox" checked={contrast} onChange={e => setContrast(e.target.checked)}/> 선명한 화면</label></div></section>
 
@@ -265,7 +280,7 @@ export default function App() {
         <section className="download-panel"><div><h2>공개 DB와 SQL</h2><p>실명과 원본 식별자를 제거한 SQLite 및 재사용 가능한 조회문입니다.</p></div><div><a href={`${import.meta.env.BASE_URL}downloads/professor_dashboard_${dashboard.meta.release_year}.sqlite`} download>익명 SQLite</a><a href={`${import.meta.env.BASE_URL}downloads/schema_public.sql`} download>스키마 SQL</a><a href={`${import.meta.env.BASE_URL}downloads/queries_public.sql`} download>예제 쿼리</a></div></section>
         </>}
       </main>
-      <footer><div className="container"><span className="footer-brand">K–STEM RESEARCH ATLAS</span><span>{dashboard.meta.release_year} 공개 릴리스 · 공개 화면에는 익명화·집계된 정보만 포함됩니다.</span></div></footer>
+      <footer className="v2-footer"><div className="container"><span className="footer-brand">K–STEM Research Atlas</span><span>{dashboard.meta.release_year} 공개 릴리스 · 공개 화면에는 익명화·집계된 정보만 포함됩니다.</span><span>논문 메타데이터 OpenAlex (CC0) · 동명이인 판별 {dashboard.meta.identity_filter_version || 'KOAD'}</span></div></footer>
     </div>
   );
 }
