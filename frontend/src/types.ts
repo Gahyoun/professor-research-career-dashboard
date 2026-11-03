@@ -39,7 +39,7 @@ export type Professor = {
   lead_work_count: number; career: Career[]; yearly: YearPoint[]; journals: JournalStat[];
 };
 export type Dashboard = {
-  meta: { release_year: number; professor_count: number; lead_work_count: number; impact_metric: string };
+  meta: { release_year: number; professor_count: number; lead_work_count: number; impact_metric: string; identity_filter_version?: string };
   filters: { subjects: string[]; current_institutions: string[]; departments: string[]; phd_institutions: string[]; phd_countries: string[] };
   professors: Professor[];
 };

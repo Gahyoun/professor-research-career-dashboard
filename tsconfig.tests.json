@@ -21,7 +21,8 @@
     "frontend/src/flowCamera.ts",
     "frontend/src/flowSql.ts",
     "frontend/src/schoolIdentity.ts",
-    "frontend/src/institutionStatistics.ts"
+    "frontend/src/institutionStatistics.ts",
+    "frontend/src/topics.ts"
   ],
   "exclude": [
     "frontend/src/constellation/layout.worker.ts"

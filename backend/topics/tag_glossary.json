@@ -1,0 +1,28 @@
+{
+  "note": "English term → Korean equivalents. Used both ways: Korean tags for English c-TF-IDF keywords, and Korean query words → English LSA terms. Extend freely; keys are lower-case.",
+  "terms": {
+    "network": ["네트워크", "연결망"], "graph": ["그래프"], "community": ["커뮤니티", "공동체 구조"], "core-periphery": ["코어-주변부", "핵심-주변부"],
+    "percolation": ["스며듦", "퍼콜레이션"], "robustness": ["강건성", "견고성"], "resilience": ["회복력"], "centrality": ["중심성"],
+    "temporal": ["시간", "시간 네트워크"], "epidemic": ["감염병", "역학", "전염병"], "spreading": ["확산", "전파"], "diffusion": ["확산"], "outbreak": ["유행", "발병"],
+    "synchronization": ["동기화"], "oscillator": ["진동자"], "kuramoto": ["쿠라모토"], "power grid": ["전력망"], "stability": ["안정성"],
+    "critical": ["임계"], "criticality": ["임계성"], "phase transition": ["상전이"], "scaling": ["스케일링"], "ising": ["이징"], "entropy": ["엔트로피"],
+    "information": ["정보"], "mutual information": ["상호정보량"], "stochastic": ["확률적", "확률과정"], "random walk": ["무작위 걷기", "랜덤 워크"],
+    "mobility": ["이동", "모빌리티"], "urban": ["도시"], "human": ["인간"], "social": ["사회"], "cooperation": ["협력"], "game": ["게임"], "evolutionary": ["진화"],
+    "opinion": ["여론", "의견"], "citation": ["인용"], "collaboration": ["협업", "공동연구"], "hiring": ["채용", "임용"], "inequality": ["불평등"],
+    "metabolic": ["대사"], "disease": ["질병"], "gene": ["유전자"], "genome": ["유전체"], "protein": ["단백질"], "folding": ["접힘"],
+    "signaling": ["신호전달"], "cell": ["세포"], "single-cell": ["단일세포"], "transcriptome": ["전사체"], "spatial": ["공간"], "neuron": ["뉴런", "신경세포"],
+    "brain": ["뇌"], "ecology": ["생태"], "ecological": ["생태"], "population": ["개체군", "인구"], "evolution": ["진화"], "microbiome": ["미생물군집"],
+    "immune": ["면역"], "cancer": ["암"], "rna": ["RNA"], "dna": ["DNA"], "enzyme": ["효소"],
+    "catalysis": ["촉매"], "photocatalysis": ["광촉매"], "photocatalytic": ["광촉매"], "organic": ["유기"], "synthesis": ["합성"], "activation": ["활성화"],
+    "electrochemical": ["전기화학"], "electrochemistry": ["전기화학"], "battery": ["배터리", "전지"], "electrolyte": ["전해질"], "solid-state": ["고체"],
+    "metal-organic": ["금속-유기"], "framework": ["골격체"], "carbon capture": ["탄소 포집"], "adsorption": ["흡착"], "polymer": ["고분자"],
+    "nanoparticle": ["나노입자"], "spectroscopy": ["분광학"], "crystal": ["결정"], "molecular": ["분자"], "reaction": ["반응"], "machine learning": ["기계학습", "머신러닝"],
+    "deep learning": ["딥러닝"], "prediction": ["예측"], "simulation": ["시뮬레이션"], "density functional": ["밀도범함수"],
+    "quantum": ["양자"], "spin": ["스핀"], "spin liquid": ["스핀 액체"], "topological": ["위상"], "superconductivity": ["초전도"], "superconducting": ["초전도"],
+    "correlated": ["강상관"], "electron": ["전자"], "moire": ["모아레"], "graphene": ["그래핀"], "lattice": ["격자"], "magnetic": ["자성"], "photonic": ["광자"],
+    "laser": ["레이저"], "plasma": ["플라즈마"], "astrophysics": ["천체물리"], "cosmology": ["우주론"], "galaxy": ["은하"], "gravitational": ["중력"], "particle": ["입자"],
+    "probability": ["확률"], "random matrix": ["랜덤 행렬"], "optimal transport": ["최적 수송"], "geometry": ["기하"], "algebra": ["대수"], "topology": ["위상수학"],
+    "number theory": ["정수론"], "combinatorics": ["조합론"], "pde": ["편미분방정식"], "differential equation": ["미분방정식"], "dynamical": ["동역학"],
+    "chaos": ["혼돈", "카오스"], "optimization": ["최적화"], "statistics": ["통계"], "inference": ["추론"], "bayesian": ["베이지안"]
+  }
+}
