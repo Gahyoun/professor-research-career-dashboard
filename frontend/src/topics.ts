@@ -364,7 +364,8 @@ export function layoutAlluvial(r: TopicResearcher, mode: AlluvialMode, options: 
   return { width, height: cursor + (compact ? 4 : 16), left, top, columnWidth, columns, lanes, ribbons, dots, branches, births, bands, bandRows, ticks, arcs, placed, unplaced };
 }
 
-export type QueryEntry = { id: string; name: string | null; alias: string | null; subject: string; institution: string | null; institutionText: string; hasTopics: boolean };
+/** ``otherText``: degree schools, 계열 words and OpenAlex areas — matched after name/ID/current institution. */
+export type QueryEntry = { id: string; name: string | null; alias: string | null; subject: string; institution: string | null; institutionText: string; otherText?: string; hasTopics: boolean };
 export type QueryResult = { institutions: { key: string; count: number; withTopics: number }[]; researchers: QueryEntry[] };
 
 const fold = (value: string) => value.normalize('NFKC').toLowerCase().replace(/[\s·.,()\-–]/g, '');
@@ -391,6 +392,7 @@ export function queryResearchers(entries: QueryEntry[], query: string, subjectLa
       }
     }
     if (subject === q) score = Math.max(score, 20);
+    if (!score && entry.otherText && fold(entry.otherText).includes(q)) score = 15;
     if (score) scored.push({ entry, score: score + (entry.hasTopics ? 5 : 0) });
   }
   scored.sort((a, b) => b.score - a.score || Number(b.entry.hasTopics) - Number(a.entry.hasTopics) || a.entry.id.localeCompare(b.entry.id));

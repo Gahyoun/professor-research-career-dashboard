@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Stage, Career, YearPoint, Professor, Dashboard } from './types';
 import Constellation from './Constellation';
+import AtlasMark from './AtlasMark';
 import TopicsPage from './TopicsPage';
 import { validatePaperTitles, type EncryptedPaperTitles } from './topics';
 
@@ -228,7 +229,7 @@ export default function App() {
     <div className={`app ${contrast ? 'high-contrast' : ''}`} style={{ fontSize: `${zoom}%`, '--text-scale': zoom / 100 } as React.CSSProperties}>
       <a className="skip-link" href="#main" onClick={e => { e.preventDefault(); const main = document.getElementById('main'); main?.focus(); main?.scrollIntoView(); }}>본문 바로가기</a>
       <header className="v2-header"><div className="v2-header-inner">
-        <a className="v2-brand" href="#/constellations" onClick={e => { e.preventDefault(); setViewMode('constellation'); }}><span className="v2-mark" aria-hidden="true"/><span><strong>K–STEM Research Atlas</strong><small>기초자연과학 교수 연구경력</small></span></a>
+        <a className="v2-brand" href="#/constellations" onClick={e => { e.preventDefault(); setViewMode('constellation'); }}><AtlasMark /><span><strong>K–STEM Research Atlas</strong><small>기초자연과학 교수 연구경력</small></span></a>
         <nav className="v2-nav" aria-label="탐색 화면">
           {navItems.map((item, i) => { const on = viewMode === item.mode || (item.mode === 'individual' && viewMode === 'group'); return <button key={item.mode} type="button" className={on ? 'is-on' : ''} aria-current={on ? 'page' : undefined} onClick={() => setViewMode(item.mode)}><span aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>{item.label}</button>; })}
         </nav>

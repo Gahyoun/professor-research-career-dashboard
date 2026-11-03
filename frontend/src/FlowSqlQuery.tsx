@@ -85,6 +85,7 @@ export default function FlowSqlQuery({ unlocked, releaseYear, professorIds, appl
       const request: FlowSqlRequest = {
         requestId, sql, releaseYear, professorIds,
         databaseUrl: new URL(`${import.meta.env.BASE_URL}downloads/professor_dashboard_${releaseYear}.sqlite`, window.location.href).href,
+        areasUrl: new URL(`${import.meta.env.BASE_URL}data/research_areas.json`, window.location.href).href,
       };
       worker.postMessage(request);
     } catch {
@@ -106,8 +107,9 @@ export default function FlowSqlQuery({ unlocked, releaseYear, professorIds, appl
       {error && <p id={`${id}-error`} className="sk-sql-error" role="alert">{error} 표시 중인 흐름은 유지됩니다.</p>}
       <details className="sk-sql-schema"><summary>테이블·열 안내와 작성 예시</summary><div>
         <p><code>professors</code> — 연구자 기본 정보. 분야는 <code>mathematics</code>, <code>physics</code>, <code>chemistry</code>, <code>biology</code>입니다.</p>
-        <dl><dt>결과에 필수</dt><dd><code>professor_id</code> — 연구자 ID. JOIN 결과의 중복 ID는 한 명으로 합칩니다.</dd><dt>소속·학력</dt><dd><code>subject</code>, <code>department</code>, <code>current_institution</code>, <code>bachelor_institution</code>, <code>phd_institution</code>, <code>phd_country</code></dd><dt>시기·실적</dt><dd><code>phd_year</code>, <code>appointment_year</code>, <code>lead_work_count</code>, <code>first_faculty_institution</code>, <code>latest_faculty_institution</code></dd><dt>함께 조회할 테이블</dt><dd><code>career_segments</code> (stage, institution, start_year, end_year), <code>yearly_lead_output</code> (year, total_count, first_author_count, corresponding_author_count), <code>professor_journal_output</code> (journal, lead_work_count). 모두 <code>professor_id</code>로 연결합니다.</dd></dl>
+        <dl><dt>결과에 필수</dt><dd><code>professor_id</code> — 연구자 ID. JOIN 결과의 중복 ID는 한 명으로 합칩니다.</dd><dt>소속·학력</dt><dd><code>subject</code>, <code>department</code>, <code>current_institution</code>, <code>bachelor_institution</code>, <code>phd_institution</code>, <code>phd_country</code></dd><dt>시기·실적</dt><dd><code>phd_year</code>, <code>appointment_year</code>, <code>lead_work_count</code>, <code>first_faculty_institution</code>, <code>latest_faculty_institution</code></dd><dt>함께 조회할 테이블</dt><dd><code>career_segments</code> (stage, institution, start_year, end_year), <code>yearly_lead_output</code> (year, total_count, first_author_count, corresponding_author_count), <code>professor_journal_output</code> (journal, lead_work_count). 모두 <code>professor_id</code>로 연결합니다.</dd><dt>OpenAlex 연구분야</dt><dd><code>professor_research_areas</code> (level, area, subfield, field, domain, work_count, share) — 각 논문의 OpenAlex primary topic을 연구자별로 집계한 값입니다. <code>level</code>은 <code>field</code>·<code>subfield</code>·<code>topic</code>, <code>share</code>는 동명이인 제외 후 전체 논문 대비 비율(0–1)이며 연구자별 상위 field 3·subfield 6·topic 8개만 담습니다.</dd></dl>
         <p>기관명과 국가는 영문 원문을 사용합니다. 예: <code>Seoul National University</code>, <code>Korea University (Seoul Campus)</code>, <code>United States</code>. 동일 학교의 다른 표기는 다를 수 있으며, 모교 재직 여부는 아래 ‘학부 모교 재직만 보기’ 필터로 확인할 수 있습니다.</p>
+        <pre><code>{"SELECT professor_id\nFROM professor_research_areas\nWHERE level = 'topic'\n  AND area LIKE '%network%'\n  AND share >= 0.1;"}</code></pre>
         <pre><code>{"SELECT DISTINCT p.professor_id\nFROM professors AS p\nJOIN yearly_lead_output AS y\n  ON y.professor_id = p.professor_id\nWHERE y.year >= 2020\n  AND y.corresponding_author_count >= 5;"}</code></pre>
         <p>실행하면 기관·분야 필터와 경로 선택을 초기화합니다. 조회 0명은 빈 흐름도로 표시하며, 세 기관 정보가 모두 있는 연구자만 경로에 포함합니다. SQL과 조회 결과는 이 화면에서만 유지되고, 잠그거나 다른 탭으로 이동하면 초기화됩니다.</p>
       </div></details>

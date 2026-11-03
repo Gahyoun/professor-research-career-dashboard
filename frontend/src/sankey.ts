@@ -11,12 +11,34 @@ export type Region = 'domestic' | 'us' | 'europe' | 'japan-china' | 'foreign' | 
 export type Origin = string;
 export const STAGES: FlowStage[] = ['bachelor', 'phd', 'current'];
 export const STAGE_LABELS: Record<FlowStage, string> = { bachelor: '학사', phd: '박사', current: '현재 재직' };
-// University identity colors and official sources: docs/INSTITUTION_COLORS.md.
+// Pastel palette after Pantone TCX shades (sRGB approximations, not licensed Pantone values).
+// The five schools keep a fixed hue each; their official colors are in docs/INSTITUTION_COLORS.md.
 // Presentation only: sharing a color never merges campus identities or populations.
 const institutionThemeColors = new Map([
-  ['snu', '#0F0F70'], ['korea', '#872434'], ['yonsei', '#003876'],
-  ['kaist', '#004193'], ['postech', '#A61955'],
+  ['snu', '#92A8D1'],     // Serenity 15-3919
+  ['korea', '#F4A09A'],   // Peach Pink 15-1530 (lightened)
+  ['yonsei', '#7BC4C4'],  // Aqua Sky 14-4811
+  ['kaist', '#76A7DA'],   // Little Boy Blue 16-4132
+  ['postech', '#DE98C1'], // Fuchsia Pink 15-2718 (lightened)
 ]);
+/** Other bachelor schools draw from these by a stable hash. */
+export const PASTEL_PALETTE = [
+  '#FFBE98', // Peach Fuzz 13-1023
+  '#F0DD9D', // Mellow Yellow 12-0720
+  '#A9D39E', // Pistachio Green 13-0221
+  '#AFA4CE', // Lavender 15-3817
+  '#B8CCBA', // Celadon 13-6108
+  '#FBAC82', // Apricot Wash 14-1230
+  '#98DDDE', // Limpet Shell 13-4810
+  '#F7CAC9', // Rose Quartz 13-1520
+  '#C8A2C8', // Lilac 14-3204
+  '#A0DAA9', // Green Ash 13-0117
+  '#E5B39B', // Almost Apricot 15-1319
+  '#A7AE9E', // Desert Sage 16-0210
+  '#9BB7D4', // Cerulean 15-4020
+  '#D8C7A9', // Pebble 14-1112
+] as const;
+const UNRESOLVED_COLOR = '#B9C1CA';
 const additionalThemeFamilies = new Map([
   ['카이스트', 'kaist'], ['포스텍', 'postech'],
   ['yonsei university (mirae campus)', 'yonsei'],
@@ -35,17 +57,28 @@ export function officialInstitutionColor(value: string): string | null {
 }
 /** Stable for each full bachelor identity, independent of filters and ordering. */
 export function colorOfOrigin(origin: Origin): string {
-  if (origin === 'unresolved') return '#8796a6';
+  if (origin === 'unresolved') return UNRESOLVED_COLOR;
   const official = officialInstitutionColor(origin);
   if (official) return official;
   let hash = 2166136261;
   for (const character of origin) { hash ^= character.codePointAt(0)!; hash = Math.imul(hash, 16777619); }
-  const value = hash >>> 0;
-  return `hsl(${value % 360} ${48 + (value >>> 8) % 20}% ${37 + (value >>> 16) % 13}%)`;
+  return PASTEL_PALETTE[(hash >>> 0) % PASTEL_PALETTE.length];
+}
+/** Self-hire paths: same hue, lower lightness, saturation capped — darker than every pastel
+ *  without the grey-brown cast of mixing toward black. */
+export function deepen(hex: string, lightness = 0.6): string {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  const h = d === 0 ? 0 : max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  const L = l * lightness, S = Math.min(0.58, s * 1.1);
+  const c = (1 - Math.abs(2 * L - 1)) * S, x = c * (1 - Math.abs((h % 2) - 1)), m = L - c / 2;
+  const [r1, g1, b1] = h < 1 ? [c, x, 0] : h < 2 ? [x, c, 0] : h < 3 ? [0, c, x] : h < 4 ? [0, x, c] : h < 5 ? [x, 0, c] : [c, 0, x];
+  return '#' + [r1, g1, b1].map(v => Math.round((v + m) * 255).toString(16).padStart(2, '0')).join('');
 }
 export function colorOfNode(node: Pick<FlowNode, 'key' | 'stage'>): string {
   return officialInstitutionColor(node.key)
-    ?? (node.stage === 'bachelor' ? colorOfOrigin(node.key) : node.stage === 'current' ? '#30475e' : '#6386b5');
+    ?? (node.stage === 'bachelor' ? colorOfOrigin(node.key) : node.stage === 'current' ? '#8E9BAA' : '#A9B9CF');
 }
 export const SUBJECT_LABELS: Record<string, string> = { mathematics: '수학', physics: '물리학', chemistry: '화학', biology: '생물학' };
 const REGION_LABELS: Record<Region, string> = { domestic: '국내', us: '미국', europe: '유럽', 'japan-china': '일본·중국', foreign: '기타 해외', unknown: '국가 미확인' };

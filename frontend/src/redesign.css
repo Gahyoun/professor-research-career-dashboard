@@ -425,7 +425,6 @@ footer .container { display: flex; justify-content: space-between; align-items: 
 .trajectory-peer-heading button, .trajectory-peers li > span,
 .workforce-page a { color: var(--primary-deep); }
 .atlas-search-results button:hover, .sk-routes tbody tr:hover { background: var(--primary-bg); }
-.sk-node.is-active .sk-label-bg { fill: var(--primary-bg); }
 .sk-self-badge, .cd-open { border-color: var(--line-strong); color: var(--body); background: var(--surface); }
 .atlas-memberships > div button, .atlas-search-results { border-color: var(--line); }
 .iw-comparison-note, .iw-comparison-unavailable { border-color: var(--line-strong); color: var(--body); background: var(--surface); }

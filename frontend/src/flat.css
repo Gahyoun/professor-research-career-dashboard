@@ -1,0 +1,61 @@
+/* Flat layer, loaded last: sections are separated by whitespace and hairline rules instead of
+   bordered cards. Inputs, buttons, the map canvas and tooltips keep their own borders. */
+
+#main :is(.tp-profile, .tp-chart-card, .tp-panel, .sk-chart-card, .sk-people, .sk-method, .sk-sql,
+  .career-directory, .iw-panel, .atlas-lower > div, .atlas-lower > section, .trajectory-panel,
+  .lifetime-explorer, .atlas-roster, .filter-panel, .content-panel) {
+  border: 0; border-top: 1px solid var(--v2-line); border-radius: 0; box-shadow: none; background: transparent;
+}
+#main :is(.tp-profile, .tp-panel, .sk-people, .sk-method, .sk-sql, .career-directory, .iw-panel, .atlas-lower > div,
+  .atlas-lower > section, .trajectory-panel, .lifetime-explorer, .atlas-roster, .filter-panel, .content-panel) {
+  padding-left: 0; padding-right: 0;
+}
+#main .sk-method > div { border-top: 0; }
+
+/* Items in lists: a rule between rows, no tiles. */
+#main :is(.tp-card, .sk-person, .trajectory-peers article, .iw-movement-columns article, .professor-row) {
+  border: 0; border-bottom: 1px solid var(--v2-line-soft); border-radius: 0; box-shadow: none; background: transparent;
+}
+#main .tp-card:hover { transform: none; background: var(--v2-fill); }
+#main .sk-person:hover { background: var(--v2-fill); }
+#main .sk-person-grid { gap: 0 32px; }
+
+/* Numbers read as type, not as boxed tiles. */
+#main .v2-stats-4 { gap: 8px 32px; }
+#main .v2-stats-4 .v2-stat { border: 0; border-radius: 0; padding: 4px 0; }
+#main .sk-metrics { border: 0; border-top: 1px solid var(--v2-line); border-bottom: 1px solid var(--v2-line); border-radius: 0; }
+#main .sk-metrics > div:first-child { padding-left: 0; }
+
+/* Filter bars sit on the page. */
+#main :is(.sk-controls, .iw-controls, .cd-filters) {
+  background: transparent; border: 0; border-bottom: 1px solid var(--v2-line); border-radius: 0; padding-left: 0; padding-right: 0;
+}
+#main .sk-chart-status { background: transparent; }
+#main .sk-chart-heading, #main .sk-legend, #main .sk-chart-status { padding-left: 0; padding-right: 0; }
+
+/* Tables: a single strong rule on top, row rules inside. */
+#main :is(.sk-table-scroll, .cd-table-scroll, .iw-table-scroll, .tp-table-wrap) {
+  border: 0; border-top: 1px solid var(--v2-ink); border-radius: 0;
+}
+
+/* Status labels as text. */
+#main :is(.sk-release, .cd-privacy, .sk-privacy-badge) { border: 0; background: transparent; padding: 0; color: var(--v2-muted); }
+
+/* Notes: a left rule instead of a filled box. */
+#main :is(.iw-coverage-banner, .iw-comparison-note, .iw-comparison-unavailable, .tp-demo, .tp-pending, .tp-waiting, .sk-sql-error) {
+  border: 0; border-left: 3px solid var(--v2-line); border-radius: 0; background: transparent; box-shadow: none; padding: 4px 0 4px 14px;
+}
+#main .sk-sql-error { border-left-color: #de3412; }
+
+/* Stage filters: the stage-coloured top rule stays; the tile around it goes. */
+#main .lifetime-stage-filters { gap: 0 24px; }
+#main .lifetime-stage-filters > button { border: 0; border-top: 3px solid var(--stage-color); border-radius: 0; background: transparent; box-shadow: none; padding: 12px 0 8px; }
+#main .lifetime-stage-filters > button:hover { background: transparent; }
+#main .lifetime-stage-filters > button:hover strong { text-decoration: underline; text-underline-offset: 4px; }
+#main .lifetime-stage-filters > button.active { border-top-width: 6px; padding-top: 9px; background: transparent; box-shadow: none; }
+
+/* Summary figures on the institution and career pages. */
+#main :is(.iw-summary-grid article, .summary-card) { border: 0; border-radius: 0; box-shadow: none; background: transparent; padding: 4px 0; }
+#main .iw-summary-grid, #main .summary-grid { gap: 8px 32px; }
+#main .iw-scope-note { background: transparent; border-left-width: 3px; border-radius: 0; padding: 4px 0 4px 14px; }
+#main .sk-institution-selector { border: 0; border-radius: 0; padding-left: 0; padding-right: 0; background: transparent; }

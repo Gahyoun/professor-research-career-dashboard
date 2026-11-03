@@ -5,7 +5,7 @@ import { performance } from 'node:perf_hooks';
 import { mergeMetadata } from '../work/test-dist/metadata.js';
 import { institutionSearchText } from '../work/test-dist/schoolIdentity.js';
 import { applyInstitutionSuccessions } from '../work/test-dist/institutionSuccession.js';
-import { buildSankey, buildInstitutionOptions, colorOfOrigin, colorOfNode, officialInstitutionColor, layoutSankey, countryRegion, institutionKey, STAGES } from '../work/test-dist/sankey.js';
+import { buildSankey, buildInstitutionOptions, colorOfOrigin, colorOfNode, officialInstitutionColor, deepen, PASTEL_PALETTE, layoutSankey, countryRegion, institutionKey, STAGES } from '../work/test-dist/sankey.js';
 
 const person = (id, bachelor = 'Seoul National University', phd = 'Harvard University', current = 'Korea University (Seoul Campus)', extra = {}) => ({ id, subject: 'physics', bachelor_institution: bachelor, phd_institution: phd, current_institution: current, bachelor_country: 'Korea', phd_country: 'United States', current_country: 'Korea', ...extra });
 function audit(data) {
@@ -265,13 +265,13 @@ test('every bachelor school has a distinct origin identity and stable filter-ind
   audit(all); audit(grouped);
 });
 
-test('the five requested universities use their identity colors in every stage and filtered origin flow', () => {
+test('the five requested universities keep one pastel color in every stage and filtered origin flow', () => {
   const schools = [
-    ['#0F0F70', ['snu', 'Seoul National University', '서울대학교', '서울대']],
-    ['#872434', ['korea', 'Korea University (Seoul Campus)', '고려대학교', '고려대']],
-    ['#003876', ['yonsei', 'Yonsei University (Seoul Campus)', '연세대학교', '연세대']],
-    ['#004193', ['kaist', 'Korea Advanced Institute of Science and Technology', '한국과학기술원', '카이스트']],
-    ['#A61955', ['postech', 'Pohang University of Science and Technology', '포항공과대학교', '포항공대', '포스텍']],
+    ['#92A8D1', ['snu', 'Seoul National University', '서울대학교', '서울대']],
+    ['#F4A09A', ['korea', 'Korea University (Seoul Campus)', '고려대학교', '고려대']],
+    ['#7BC4C4', ['yonsei', 'Yonsei University (Seoul Campus)', '연세대학교', '연세대']],
+    ['#76A7DA', ['kaist', 'Korea Advanced Institute of Science and Technology', '한국과학기술원', '카이스트']],
+    ['#DE98C1', ['postech', 'Pohang University of Science and Technology', '포항공과대학교', '포항공대', '포스텍']],
   ];
   const rows = schools.map(([, aliases], i) => person(String(i), aliases[1], 'KAIST', aliases[1]));
   const all = buildSankey(rows);
@@ -294,8 +294,8 @@ test('the five requested universities use their identity colors in every stage a
 
 test('campuses share university colors while their identities and cross-campus self-hiring stay separate', () => {
   for (const [color, aliases] of [
-    ['#003876', ['Yonsei_Mirae', 'Yonsei-Mirae', 'Yonsei University (Mirae Campus)', '연세대학교 미래캠퍼스', '연세대 미래']],
-    ['#872434', ['Korea_sejong', 'Korea-Sejong', 'Korea University (Sejong Campus)', '고려대학교 세종캠퍼스', '고려대 세종']],
+    ['#7BC4C4', ['Yonsei_Mirae', 'Yonsei-Mirae', 'Yonsei University (Mirae Campus)', '연세대학교 미래캠퍼스', '연세대 미래']],
+    ['#F4A09A', ['Korea_sejong', 'Korea-Sejong', 'Korea University (Sejong Campus)', '고려대학교 세종캠퍼스', '고려대 세종']],
   ]) for (const alias of aliases) {
     assert.equal(officialInstitutionColor(alias), color);
     assert.equal(officialInstitutionColor(institutionKey(alias)), color);
@@ -322,11 +322,12 @@ test('similar names and affiliated hospitals do not inherit university colors', 
     'Yonsei University Health System', 'Korea University Medical Center',
   ]) {
     assert.equal(officialInstitutionColor(name), null);
-    assert.match(colorOfOrigin(institutionKey(name)), /^hsl\(/);
+    assert.ok(PASTEL_PALETTE.includes(colorOfOrigin(institutionKey(name))));
   }
-  assert.equal(colorOfOrigin('unresolved'), '#8796a6');
-  assert.equal(colorOfNode({ key: institutionKey('Harvard University'), stage: 'phd' }), '#6386b5');
-  assert.equal(colorOfNode({ key: institutionKey('Harvard University'), stage: 'current' }), '#30475e');
+  assert.equal(colorOfOrigin('unresolved'), '#B9C1CA');
+  assert.ok(['#92A8D1', '#F4A09A', '#7BC4C4', '#76A7DA', '#DE98C1'].every(color => !PASTEL_PALETTE.includes(color)));
+  assert.equal(colorOfNode({ key: institutionKey('Harvard University'), stage: 'phd' }), '#A9B9CF');
+  assert.equal(colorOfNode({ key: institutionKey('Harvard University'), stage: 'current' }), '#8E9BAA');
 });
 
 test('institution filters may intentionally select zero complete people and empty strings mean all', () => {
@@ -389,4 +390,14 @@ test('public release and every available institution filter conserve the selecte
     unknownCountry: data.unknownCountryCount, stageNodes: STAGES.map(s => data.nodes.filter(n => n.stage === s).length),
     optionCounts: STAGES.map(s => choices[s].length), routes: data.routes.length, links: data.links.length,
     buildMs: Math.round(built - started), layoutMs: Math.round(laidOut - built), height: layout.height }));
+});
+
+test('other schools draw stable pastel colors; self-hire deepens the same hue', () => {
+  const key = institutionKey('Gyeongsang National University');
+  assert.ok(PASTEL_PALETTE.includes(colorOfOrigin(key)));
+  assert.equal(colorOfOrigin(key), colorOfOrigin(key));
+  const hue = hex => { const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)); return Math.atan2(Math.sqrt(3) * (g - b), 2 * r - g - b); };
+  for (const color of PASTEL_PALETTE) assert.ok(Math.abs(hue(deepen(color)) - hue(color)) < 0.12, color);
+  const lum = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).reduce((a, b) => a + b, 0);
+  for (const color of PASTEL_PALETTE) assert.ok(lum(deepen(color)) < lum(color) * 0.7);
 });

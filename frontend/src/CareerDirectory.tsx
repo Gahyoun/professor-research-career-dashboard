@@ -3,7 +3,9 @@ import type { CareerSummary } from './constellation/careerCatalog';
 import type { LifetimeStage } from './constellation/lifetime';
 import type { Professor } from './types';
 import { lifetimeStageColors, lifetimeStageLabels } from './lifetimePresentation';
-import { canonicalSchool, institutionDisplayName, institutionSearchText } from './schoolIdentity';
+import { canonicalSchool, institutionDisplayName } from './schoolIdentity';
+import { indexResearchers, matchContext, RESEARCHER_QUERY_HINT, searchResearchers } from './researcherQuery';
+import { useResearchAreas } from './useResearchAreas';
 import './career-directory.css';
 
 type Props = {
@@ -22,7 +24,6 @@ const allStages: LifetimeStage[] = ['doctoral', 'postdoc', 'first_faculty', 'cur
 const subjectLabels: Record<string, string> = { mathematics: '수학', physics: '물리학', chemistry: '화학', biology: '생물학' };
 const pageSize = 50;
 const count = (value: number) => value.toLocaleString('ko-KR');
-const searchable = (value: string) => value.normalize('NFKC').toLocaleLowerCase('ko-KR').trim();
 // Reviewed identity aliases unify the filter; display-only labels do not.
 const institutionValue = (value: string | null) => JSON.stringify(canonicalSchool(value));
 const institutionLabel = (value: string | null) => value?.trim() ? institutionDisplayName(value) : '재직기관 미확인';
@@ -49,17 +50,17 @@ export default function CareerDirectory({ professors, names, summaries, progress
   const completedCount = useMemo(() => professors.reduce((total, person) => total + (summaries?.[person.id] ? 1 : 0), 0), [professors, summaries]);
   const connectedCount = useMemo(() => professors.reduce((total, person) => total + ((summaries?.[person.id]?.groupCount ?? 0) > 0 ? 1 : 0), 0), [professors, summaries]);
   const incompleteCount = professors.length - completedCount;
+  const areas = useResearchAreas();
+  const searchIndex = useMemo(() => indexResearchers([...professors].sort((a, b) => a.id.localeCompare(b.id)), names, areas?.profiles), [professors, names, areas]);
   const rows = useMemo(() => {
-    const terms = searchable(query).split(/\s+/).filter(Boolean);
-    return professors.filter(person => {
+    return searchResearchers(searchIndex, query).filter(({ person }) => {
       if (subject && person.subject !== subject) return false;
       if (institution && institutionValue(person.current_institution) !== institution) return false;
       const summary = summaries?.[person.id];
       if (connection !== 'all' && (!summary || (connection === 'connected' ? summary.groupCount === 0 : summary.groupCount > 0))) return false;
-      const haystack = searchable(`${person.id} ${names?.[person.id] ?? ''} ${institutionSearchText(person.current_institution)}`);
-      return terms.every(term => haystack.includes(term));
-    }).sort((a, b) => a.id.localeCompare(b.id));
-  }, [professors, names, summaries, query, subject, institution, connection]);
+      return true;
+    });
+  }, [searchIndex, summaries, query, subject, institution, connection]);
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const currentPage = Math.min(page, pageCount - 1);
   const pageRows = rows.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
@@ -75,7 +76,7 @@ export default function CareerDirectory({ professors, names, summaries, progress
       <p className="cd-coverage">전체 {count(professors.length)}명 중 요약 완료 {count(completedCount)}명 · 하나 이상 연결된 교수 {count(connectedCount)}명{incompleteCount > 0 ? ' (계산 완료 기준)' : ''}</p>
 
       <div className="cd-filters" role="group" aria-label="교수 목록 필터">
-        <label className="cd-search"><span>연구자 · 현직 기관 검색</span><input type="search" value={query} onChange={event => { setQuery(event.target.value); goToPage(0); }} placeholder={names ? '이름, 익명 ID 또는 기관명' : '익명 ID 또는 기관명'} /></label>
+        <label className="cd-search"><span>연구자 · 재직 · 학부 · 박사 · 계열 검색</span><input type="search" value={query} onChange={event => { setQuery(event.target.value); goToPage(0); }} placeholder={names ? '이름, 기관 또는 계열' : '익명 ID, 기관 또는 계열'} title={RESEARCHER_QUERY_HINT} /></label>
         <label><span>연구 분야</span><select value={subject} onChange={event => { setSubject(event.target.value); goToPage(0); }}><option value="">전체 분야</option>{subjects.map(value => <option key={value} value={value}>{subjectLabels[value] ?? value}</option>)}</select></label>
         <label className="cd-institution"><span>현재 재직기관</span><select value={institution} onChange={event => { setInstitution(event.target.value); goToPage(0); }}><option value="">전체 기관</option>{institutions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>{institution && <small>{institutions.find(([value]) => value === institution)?.[1]}</small>}</label>
         <label><span>연결 상태</span><select value={connection} onChange={event => { setConnection(event.target.value as ConnectionFilter); goToPage(0); }}><option value="all">전체 교수</option><option value="connected">연결 있음</option><option value="unconnected">연결 없음</option></select></label>
@@ -91,13 +92,15 @@ export default function CareerDirectory({ professors, names, summaries, progress
       <div ref={tableScroll} className="cd-table-scroll" tabIndex={0} role="region" aria-label={`전체 교수 ${stageDescription} 경력 목록. 좌우와 위아래 스크롤 가능`}>
         <table className="cd-table"><caption className="cd-sr-only">전체 대상 {count(professors.length)}명 중 필터 결과 {count(rows.length)}명. {stageDescription}의 연결 집단과 전체 동료 수</caption><colgroup><col className="cd-col-person" /><col className="cd-col-subject" />{stages.map(stage => <col key={stage} className="cd-col-stage" />)}<col className="cd-col-peers" /><col className="cd-col-action" /></colgroup>
           <thead><tr><th scope="col">연구자 · 현재 재직기관</th><th scope="col">분야</th>{stages.map(stage => <th key={stage} scope="col"><span className="cd-stage-title"><i style={{ backgroundColor: lifetimeStageColors[stage] }} aria-hidden="true" />{lifetimeStageLabels[stage]}</span></th>)}<th scope="col" className="cd-number">전체 동료</th><th scope="col">개인 그래프</th></tr></thead>
-          <tbody>{pageRows.map(person => {
+          <tbody>{pageRows.map(hit => {
+            const person = hit.person;
+            const context = matchContext(hit);
             const summary = summaries?.[person.id];
             const label = names?.[person.id] || person.id;
             const current = institutionLabel(person.current_institution);
             const selected = person.id === selectedId;
             return <tr key={person.id} className={selected ? 'cd-selected' : undefined} aria-selected={selected}>
-              <th scope="row"><strong>{label}</strong><span className="cd-person-institution">{current}</span>{names?.[person.id] && <small className="cd-anon-id">{person.id}</small>}{selected && <span className="cd-selected-tag">선택한 연구자</span>}</th>
+              <th scope="row"><strong>{label}</strong><span className="cd-person-institution">{current}</span>{context && <small className="cd-match">{context}</small>}{names?.[person.id] && <small className="cd-anon-id">{person.id}</small>}{selected && <span className="cd-selected-tag">선택한 연구자</span>}</th>
               <td>{subjectLabels[person.subject] ?? person.subject}</td>
               {stages.map(stage => {
                 const result = summary?.stages[stage];
@@ -112,7 +115,7 @@ export default function CareerDirectory({ professors, names, summaries, progress
       </div>
 
       <nav className="cd-pagination" aria-label="전체 교수 목록 페이지"><span>{rows.length ? `${count(currentPage * pageSize + 1)}–${count(Math.min((currentPage + 1) * pageSize, rows.length))} / ${count(rows.length)}명` : '0명'}</span><div><button type="button" className="cd-button" disabled={currentPage === 0} onClick={() => goToPage(currentPage - 1)}>← 이전</button><label className="cd-page-select"><span className="cd-sr-only">이동할 페이지</span><select value={currentPage} onChange={event => goToPage(Number(event.target.value))}>{Array.from({ length: pageCount }, (_, index) => <option key={index} value={index}>{count(index + 1)}</option>)}</select><span> / {count(pageCount)}</span></label><button type="button" className="cd-button" disabled={currentPage + 1 >= pageCount} onClick={() => goToPage(currentPage + 1)}>다음 →</button></div></nav>
-      <p className="cd-note">전체 동료는 표시된 {stageDescription} 단계에서 연결된 서로 다른 연구자 수이며, 단계별 인원을 더한 값이 아닙니다. 계산된 연결이 없다는 표시는 실제 인적 관계가 없다는 뜻이 아닙니다. {names ? '이름과 익명 ID로 검색할 수 있습니다.' : '비밀번호로 이름을 공개하기 전에는 익명 ID와 현직 기관으로 탐색합니다.'}</p>
+      <p className="cd-note">전체 동료는 표시된 {stageDescription} 단계에서 연결된 서로 다른 연구자 수이며, 단계별 인원을 더한 값이 아닙니다. 계산된 연결이 없다는 표시는 실제 인적 관계가 없다는 뜻이 아닙니다. {RESEARCHER_QUERY_HINT} {names ? '이름과 익명 ID로도 검색할 수 있습니다.' : '비밀번호로 이름을 공개하기 전에는 이름 검색을 사용할 수 없습니다.'}</p>
     </div>
   </details>;
 }
