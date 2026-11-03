@@ -93,7 +93,14 @@ function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles }: 
       </g>)}
       {layout.lanes.map(lane => <g key={lane.topic.id} className={`tp-lane-label ${dim(lane.topic.id) ? 'is-dim' : ''}`} onMouseEnter={() => !pinned && setFocus(lane.topic.id)} onMouseLeave={clear}>
         <rect x={12} y={lane.mid - 5} width={10} height={10} rx="3" fill={lane.color} />
-        <text x={30} y={lane.mid + 4}>{lane.topic.label.length > 15 ? `${lane.topic.label.slice(0, 14)}…` : lane.topic.label}<title>{lane.topic.label}</title></text>
+        {(() => {
+          // English c-TF-IDF names: leading term on the first line, the rest below.
+          const [head, ...rest] = lane.topic.label.split(' · ');
+          const clip = (s: string, n: number) => s.length > n ? `${s.slice(0, n - 1)}…` : s;
+          return rest.length
+            ? <text x={30} y={lane.mid - 2}>{clip(head, 22)}<tspan x={30} dy="14" className="tp-lane-sub">{clip(rest.join(' · '), 28)}</tspan><title>{lane.topic.label}</title></text>
+            : <text x={30} y={lane.mid + 4}>{clip(head, 22)}<title>{lane.topic.label}</title></text>;
+        })()}
         <text x={layout.left - 14} y={lane.mid + 4} textAnchor="end" className="tp-lane-n">{lane.counts.reduce((a, b) => a + b, 0)}</text>
       </g>)}
       {layout.ribbons.map(r => <path key={r.topic} d={r.d} className={`tp-ribbon ${dim(r.topic) ? 'is-dim' : ''} ${focus === r.topic ? 'is-focus' : ''}`} fill={r.color} stroke={r.color} />)}
@@ -140,11 +147,11 @@ function TopicTable({ researcher, focus, setFocus }: { researcher: TopicResearch
   const colors = topicColors(researcher);
   const byId = new Map(researcher.topics.map(t => [t.id, t]));
   return <div className="tp-table-wrap"><table className="tp-table">
-    <thead><tr><th>토픽 · 태그</th><th className="num">논문</th><th>활동</th><th>기원</th></tr></thead>
+    <thead><tr><th>토픽 · 특징어 (c-TF-IDF)</th><th className="num">논문</th><th>활동</th><th>기원</th></tr></thead>
     <tbody>{orderedTopics(researcher).map(topic => {
       const years = researcher.papers.filter(p => p.topic === topic.id).map(p => p.year);
       return <tr key={topic.id} className={focus === topic.id ? 'is-focus' : ''} onMouseEnter={() => setFocus(topic.id)} onMouseLeave={() => setFocus(null)}>
-        <th scope="row"><i style={{ background: colors.get(topic.id) }} />{topic.label}{(topic.tags.ko.length > 0 || topic.tags.en.length > 0) && <span className="tp-tags">{[...topic.tags.ko.slice(0, 3), ...topic.tags.en.slice(0, 3)].map(tag => <em key={tag}>{tag}</em>)}</span>}</th>
+        <th scope="row"><i style={{ background: colors.get(topic.id) }} />{topic.label}{topic.tags.en.length > 0 && <span className="tp-tags">{topic.tags.en.filter(tag => !topic.label.toLowerCase().includes(tag)).slice(0, 5).map(tag => <em key={tag}>{tag}</em>)}</span>}</th>
         <td className="num">{years.length}</td>
         <td>{years.length ? `${Math.min(...years)}–${Math.max(...years)}` : '—'}</td>
         <td>{topic.parent ? <span className="tp-origin">← {byId.get(topic.parent.from)?.label || `T${topic.parent.from}`}<small>coupling {topic.parent.sim}</small></span> : <span className="tp-chip tp-chip-new">독립 신규</span>}</td>
@@ -236,7 +243,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
       <div>
         <span className="v2-kicker">Topic alluvial · {releaseYear}</span>
         <h1 id="tp-title">연구 토픽 흐름</h1>
-        <p>교수별 논문을 공유 참고문헌으로 클러스터링한 토픽을 연도·경력 시기 축에 배치합니다. 토픽의 생성 시점, 모토픽, 연도별 논문 수를 표시합니다. 검색: 소속 기관·익명 ID·토픽 태그(한/영), 이름은 잠금 해제 후.</p>
+        <p>교수별 논문을 공유 참고문헌으로 클러스터링한 토픽을 연도·경력 시기 축에 배치합니다. 토픽의 생성 시점, 모토픽, 연도별 논문 수를 표시합니다. 토픽 이름과 특징어는 c-TF-IDF 영문 용어입니다. 검색: 소속 기관·익명 ID·토픽 키워드(영문, 한국어 검색어는 용어집으로 영문 변환), 이름은 잠금 해제 후.</p>
       </div>
       <div className="v2-stats">
         <div className="v2-stat"><span>토픽 데이터 연구자</span><strong>{n(index.researchers.length)}</strong><small>전체 {n(professors.length)}명 중</small></div>
@@ -252,7 +259,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
     {searchMode === 'topic' ? <div className="tp-query">
       <form className="tp-search" onSubmit={e => { e.preventDefault(); runTopicSearch(topicQuery); }} role="search">
         <label className="tp-search-input"><span aria-hidden="true">⌕</span>
-          <input value={topicQuery} onChange={e => setTopicQuery(e.target.value)} aria-label="토픽 자연어 검색 (한국어·영어)" placeholder="토픽·키워드 검색 — 예: 동기화 전력망, epidemic spreading, 단일세포" />
+          <input value={topicQuery} onChange={e => setTopicQuery(e.target.value)} aria-label="토픽 키워드 검색 (영문, 한국어 검색어 지원)" placeholder="토픽·키워드 검색 — 예: epidemic spreading, optimal transport, 동기화" />
           <button type="submit" className="v2-button v2-button-dark tp-search-go">검색</button></label>
       </form>
       <div className="v2-seg" role="group" aria-label="분야">
@@ -280,7 +287,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
         {['', ...Object.keys(SUBJECTS)].map(key => <button type="button" key={key || 'all'} className={subject === key ? 'is-on' : ''} aria-pressed={subject === key} onClick={() => setSubject(key)}>{key ? SUBJECTS[key] : '전체'}</button>)}
       </div>
     </div>}
-    {searchMode === 'topic' && <div className="tp-cloud" aria-label="자주 쓰인 태그">{cloud.map(c => <button type="button" key={c.tag} onClick={() => runTopicSearch(c.tag)}>{c.tag}<small>{c.count}</small></button>)}</div>}
+    {searchMode === 'topic' && <div className="tp-cloud" aria-label="특징어">{cloud.map(c => <button type="button" key={c.tag} onClick={() => runTopicSearch(c.tag)}>{c.tag}<small>{c.count}</small></button>)}</div>}
 
     {selection.kind !== 'none' && selection.kind !== 'topic' && <nav className="tp-crumbs" aria-label="현재 위치"><button type="button" onClick={() => select({ kind: 'none' })}>전체</button><span>/</span>
       {selection.kind === 'institution' ? <strong>{institutionName(selection.key)}</strong> : <>

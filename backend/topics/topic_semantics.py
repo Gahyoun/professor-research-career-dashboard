@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Topic keywords, bilingual tags and a shared LSA space for the public topic index.
+"""Topic names, features and a shared LSA space for the public topic index — English only.
 
-Three things the page needs per topic (community):
-  keywords  c-TF-IDF terms — words unusually frequent in this community (English, from
-            titles/abstracts/OpenAlex keywords). Same estimator as pipeline/label_topics.py.
-  tags      {"ko": [...], "en": [...]} — the human label split on "·", the keywords, and
-            glossary translations in both directions. Searchable in either language.
+Per topic (community):
+  keywords  c-TF-IDF terms — words unusually frequent in this community (from titles,
+            abstracts, OpenAlex keywords). Same estimator as pipeline/label_topics.py.
+  label     the leading c-TF-IDF terms ("Temporal network · epidemic · spreading"), or a
+            curated English label when one is given. Residual clusters read "Other · …".
+  tags      {"en": [...], "ko": []} — keywords plus curated label pieces. No machine
+            translation is attached to a topic; ``ko`` stays empty for schema compatibility.
   vector    the topic centroid in one LSA space shared by *all* researchers, so a query
             ranks topics across people. Per-researcher LSA spaces are not comparable.
 
-The browser averages query-term vectors and takes cosines; no model runs at query time.
-Korean query words reach the English LSA space through ``tag_glossary.json``.
+Korean *queries* still work: the browser maps query words to English terms through the
+glossary shipped in ``semantic.glossary`` (from ``tag_glossary.json``) before matching
+tags and the LSA space. The glossary is a search aid only and is never shown as a name.
 """
 import json, math, os, re
 from collections import Counter
@@ -39,9 +42,11 @@ def load_glossary(path=None):
     return en2ko, ko2en
 
 
-def ctfidf_terms(docs, n_terms=6, max_share=0.6, ngram=(1, 2)):
+def ctfidf_terms(docs, n_terms=6, max_share=0.6, ngram=(1, 2), phrase_bonus=1.5):
     """{community: [texts]} → {community: [terms]}. Terms in ≥ max_share of communities
-    are dropped first; with few communities idf alone does not suppress shared words."""
+    are dropped first; with few communities idf alone does not suppress shared words.
+    A recurring phrase ties with its own words on frequency, so multi-word terms get
+    ``phrase_bonus``; the words of a chosen phrase are then skipped as substrings."""
     keys = list(docs)
     if not keys:
         return {}
@@ -56,7 +61,7 @@ def ctfidf_terms(docs, n_terms=6, max_share=0.6, ngram=(1, 2)):
         return {k: [] for k in keys}
     tf = X / np.maximum(X.sum(axis=1, keepdims=True), 1)
     idf = np.log(1 + X.sum(axis=1).mean() / np.maximum(X.sum(axis=0), 1))
-    S = tf * idf
+    S = tf * idf * np.array([phrase_bonus if " " in t else 1.0 for t in terms])
     out = {}
     for i, k in enumerate(keys):
         picked = []
@@ -66,6 +71,9 @@ def ctfidf_terms(docs, n_terms=6, max_share=0.6, ngram=(1, 2)):
                 break
             if len(t) < 4 or any(t in q or q in t for q in picked):
                 continue
+            covered = {w for q in picked for w in q.split()}
+            if " " in t and all(w in covered for w in t.split()):
+                continue  # "law spectral" after "local law", "spectral universality"
             picked.append(t)
             if len(picked) == n_terms:
                 break
@@ -73,24 +81,39 @@ def ctfidf_terms(docs, n_terms=6, max_share=0.6, ngram=(1, 2)):
     return out
 
 
-def bilingual_tags(label, keywords, en2ko, ko2en):
-    """Human label pieces + c-TF-IDF keywords, each mirrored through the glossary."""
-    ko, en = [], []
-    for piece in re.split(r"[·,/()]|\s{2,}", label or ""):
-        piece = piece.strip()
-        if not piece or piece.startswith("기타"):
-            continue
-        (ko if re.search(r"[가-힣]", piece) else en).append(piece.lower() if not re.search(r"[가-힣]", piece) else piece)
-    en += [k.lower() for k in keywords]
-    for term in list(en):
-        for word in [term] + term.split():
-            ko += en2ko.get(word, [])
-    for term in list(ko):
-        for key, ens in ko2en.items():
-            if key == term or key in term:
-                en += ens
-    dedupe = lambda xs: list(dict.fromkeys(x for x in xs if x))
-    return {"ko": dedupe(ko)[:12], "en": dedupe(en)[:12]}
+HANGUL = re.compile(r"[가-힣]")
+MISC = re.compile(r"^\s*(기타|other|misc)", re.I)
+
+
+def is_misc(label):
+    return bool(label and MISC.search(label))
+
+
+def english_label(keywords, curated=None, n=3):
+    """Curated label when it is English, else the leading c-TF-IDF terms; residual clusters
+    get an "Other · " prefix."""
+    misc = is_misc(curated)
+    if curated and not HANGUL.search(curated) and not misc:
+        return curated.strip()
+    terms, stems = [], set()
+    for k in keywords:
+        keys = {w[:7] for w in k.split()}   # electrochemistry ~ electrochemical; no repeated word
+        if k and not keys & stems:
+            terms.append(k)
+            stems |= keys
+        if len(terms) == n:
+            break
+    if not terms:
+        return "Other" if misc else "Unlabelled"
+    text = " · ".join(terms)
+    return f"Other · {text}" if misc else text[0].upper() + text[1:]
+
+
+def english_tags(label, keywords, n=12):
+    """Keywords plus English label pieces; nothing translated."""
+    pieces = [] if HANGUL.search(label or "") else [x.strip().lower() for x in re.split(r"[·,/()]", label or "") if x.strip()]
+    en = [x for x in pieces if not MISC.search(x)] + [k.lower() for k in keywords]
+    return {"en": list(dict.fromkeys(x for x in en if x))[:n], "ko": []}
 
 
 def build_lsa(texts, dims=48, max_terms=2400):
@@ -129,5 +152,5 @@ def topic_vectors(doc_vectors, members):
 
 
 def most_common_tags(index, n=30):
-    counts = Counter(t for r in index["researchers"] for topic in r["topics"] for t in topic.get("tags", {}).get("ko", []))
+    counts = Counter(t for r in index["researchers"] for topic in r["topics"] for t in topic.get("tags", {}).get("en", []))
     return [t for t, _ in counts.most_common(n)]
