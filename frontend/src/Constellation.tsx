@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Professor } from './types';
-import { canonicalSchool, institutionDisplayName, institutionSearchText } from './schoolIdentity';
+import { canonicalSchool, institutionDisplayName } from './schoolIdentity';
 import { type Hypergraph, type HypergraphLayout, type Hyperedge } from './constellation/hypergraph';
 import { createLifetimeIndex, type LifetimeStage } from './constellation/lifetime';
 import { toResearcherRecords } from './constellation/records';
 import type { CareerSummary } from './constellation/careerCatalog';
 import CareerDirectory from './CareerDirectory';
+import { indexResearchers, matchContext, RESEARCHER_QUERY_HINT, searchResearchers } from './researcherQuery';
+import { useResearchAreas } from './useResearchAreas';
+import ResearchAreaTree from './ResearchAreaTree';
 import './constellation.css';
 import TrajectoryPanel from './TrajectoryPanel';
 import { smoothEnvelope } from './constellation/smoothEnvelope';
@@ -143,7 +146,9 @@ export default function Constellation({ professors, names, releaseYear, onSelect
   const edgeList = useMemo(() => (selectedId && result
     ? result.graph.edges.filter(e => e.members.includes(index.get(selectedId) ?? -1)) : result?.graph.edges || [])
     .toSorted((a, b) => (a.kind === 'cohort' ? 0 : a.kind === 'spatial' ? 1 : 2) - (b.kind === 'cohort' ? 0 : b.kind === 'spatial' ? 1 : 2) || (a.years?.[0] ?? 0) - (b.years?.[0] ?? 0) || b.members.length - a.members.length), [result, index, selectedId]);
-  const matches = useMemo(() => query.trim() ? professors.filter(p => `${names?.[p.id] || ''} ${p.id} ${institutionSearchText(p.current_institution)}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).slice(0, 30) : [], [professors, names, query]);
+  const areas = useResearchAreas();
+  const searchIndex = useMemo(() => indexResearchers(professors, names, areas?.profiles), [professors, names, areas]);
+  const matches = useMemo(() => query.trim() ? searchResearchers(searchIndex, query).slice(0, 30) : [], [searchIndex, query]);
 
   const roster = useMemo(() => {
     const edge = result?.graph.edges.find(e => e.id === selectedEdge);
@@ -298,8 +303,8 @@ export default function Constellation({ professors, names, releaseYear, onSelect
           <p className="atlas-quiet">점 선택으로 동시 소속을 확인합니다. 집단을 강조해도 다른 소속은 계속 표시합니다.</p>
           {focusId !== selectedId && <button className="atlas-member-recenter" onClick={() => openResearcher(focusId)}>이 연구자 중심으로 보기 ↗</button>}
         </section>}
-        <div className="atlas-sidebar-section"><h2>연구자 찾기 <span>01</span></h2><label className="atlas-search-label" htmlFor="atlas-search">{names ? '이름 · 익명 ID · 현재기관' : '익명 ID · 현재기관'}</label><div className="atlas-search"><span aria-hidden="true">⌕</span><input id="atlas-search" value={query} onChange={e => setQuery(e.target.value)} placeholder={names ? '이름 또는 현재기관' : '익명 ID 또는 현재기관'} autoComplete="off"/></div>
-          {query && <div className="atlas-search-results" role="region" aria-label="연구자 검색 결과">{matches.length ? matches.map(p => <button key={p.id} onClick={() => { openResearcher(p.id); setQuery(''); }}><strong>{label(p.id)}</strong><span>{institutionDisplayName(p.current_institution)}</span><small>{subjects[p.subject] || p.subject}</small></button>) : <p>일치하는 연구자가 없습니다.</p>}</div>}
+        <div className="atlas-sidebar-section"><h2>연구자 찾기 <span>01</span></h2><label className="atlas-search-label" htmlFor="atlas-search">{names ? '이름 · 익명 ID · 재직 · 학부 · 박사 · 계열' : '익명 ID · 재직 · 학부 · 박사 · 계열'}</label><div className="atlas-search"><span aria-hidden="true">⌕</span><input id="atlas-search" value={query} onChange={e => setQuery(e.target.value)} placeholder={names ? '이름, 기관 또는 계열' : '익명 ID, 기관 또는 계열'} aria-describedby="atlas-search-hint" autoComplete="off"/></div><p id="atlas-search-hint" className="atlas-quiet">{RESEARCHER_QUERY_HINT}</p>
+          {query && <div className="atlas-search-results" role="region" aria-label="연구자 검색 결과">{matches.length ? matches.map(hit => { const p = hit.person; return  <button key={p.id} onClick={() => { openResearcher(p.id); setQuery(''); }}><strong>{label(p.id)}</strong><span>{institutionDisplayName(p.current_institution)}</span><small>{[subjects[p.subject] || p.subject, matchContext(hit)].filter(Boolean).join(' · ')}</small></button>; }) : <p>일치하는 연구자가 없습니다.</p>}</div>}
           {selected && <div className="atlas-selected-identity"><strong>{label(selected.id)}</strong><span>{institutionFor(selected.id)}</span><small>{subjects[selected.subject] || selected.subject}</small></div>}
         </div>
         <div className="atlas-sidebar-section"><h2>{scope === 'researcher' ? '기간과 근거' : '연결 조건'} <span>02</span></h2>
@@ -313,7 +318,7 @@ export default function Constellation({ professors, names, releaseYear, onSelect
         <div className="atlas-sidebar-section"><h2>배치 <span>03</span></h2>{scope === 'institution' && <label className="atlas-range">기관 ↔ 시간 비중 <output>{100 - balance} : {balance}</output><input type="range" min="10" max="90" step="5" value={balance} disabled={!spatial || !temporal} onChange={e => recompute(() => setBalance(Number(e.target.value)))}/></label>}<label className="atlas-range">노드 사이 여백 <output>{spacing}</output><input type="range" min="7" max="18" value={spacing} onChange={e => recompute(() => setSpacing(Number(e.target.value)))}/></label><p className="atlas-quiet">여러 집단에 속한 연구자는 모든 소속을 함께 반영해 배치합니다. 점 둘레의 색상은 소속 단계를 뜻합니다. 화면상 거리는 교류 강도가 아닙니다.</p></div>
       </aside>
     </div>
-    <div className="atlas-lower"><section className="atlas-selection"><div className="atlas-section-title"><div><h2>{selected ? label(selected.id) : '연구자와 연결 근거'}</h2>{selected && <p className="atlas-current-identity">{institutionFor(selected.id)}</p>}</div>{selected && <button onClick={() => onSelect(selected.id)}>경력과 논문 보기 ↗</button>}</div>{selected ? <><p>{subjects[selected.subject] || selected.subject}</p>{scope === 'institution' && <button className="trajectory-open" onClick={() => { setScope('researcher'); setSelectedEdge(''); }}>이 연구자의 경력 단계별 집단 보기 ↗</button>}<dl><div><dt>박사 출신기관</dt><dd>{institutionDisplayName(selected.phd_institution)}</dd></div><div><dt>박사 학위연도</dt><dd>{selected.phd_year || '정보 없음'}</dd></div><div><dt>표시 중인 집단</dt><dd>{edgeList.length}개</dd></div></dl></> : <p>연구자를 선택하면 경력 단계별 집단과 구성원 근거를 확인할 수 있습니다.</p>}
+    <div className="atlas-lower"><section className="atlas-selection"><div className="atlas-section-title"><div><h2>{selected ? label(selected.id) : '연구자와 연결 근거'}</h2>{selected && <p className="atlas-current-identity">{institutionFor(selected.id)}</p>}</div>{selected && <button onClick={() => onSelect(selected.id)}>경력과 논문 보기 ↗</button>}</div>{selected ? <><p>{subjects[selected.subject] || selected.subject}</p>{scope === 'institution' && <button className="trajectory-open" onClick={() => { setScope('researcher'); setSelectedEdge(''); }}>이 연구자의 경력 단계별 집단 보기 ↗</button>}<dl><div><dt>박사 출신기관</dt><dd>{institutionDisplayName(selected.phd_institution)}</dd></div><div><dt>박사 학위연도</dt><dd>{selected.phd_year || '정보 없음'}</dd></div><div><dt>표시 중인 집단</dt><dd>{edgeList.length}개</dd></div></dl><ResearchAreaTree profile={areas?.profiles.get(selected.id)} /></> : <p>연구자를 선택하면 경력 단계별 집단과 구성원 근거를 확인할 수 있습니다.</p>}
       <div className="atlas-disclosure"><strong>단계 전체의 연결 집단입니다.</strong><p>{scope === 'researcher' ? '같은 집단의 모든 구성원이 같은 해에 함께 있었다는 뜻은 아닙니다. 각 구성원과 선택 연구자가 겹친 기간을 따로 표시합니다. 첫 조교수는 직급과 최초 임용이 명확한 기록만 사용하며, 현직은 관측된 연도만 사용합니다.' : `학위연도 기반 추정 대상 ${estimatedCount.toLocaleString()}명, 기간 정보 없음 ${missingCount.toLocaleString()}명. 추정 구간은 학위연도−${years}부터 학위연도까지입니다.`} 기관·시기의 일치는 친분이나 공동연구를 뜻하지 않습니다.</p></div>
     </section><section className="atlas-groups"><div className="atlas-section-title"><h2>하이퍼엣지 · 집단 선택</h2><span>{edgeList.length}개</span></div><div className="atlas-edge-list">{edgeList.slice(0, 40).map(edge => <button key={edge.id} className={selectedEdge === edge.id ? 'active' : ''} aria-pressed={selectedEdge === edge.id} onClick={() => selectEdge(edge.id)}><i className={`atlas-line ${edge.kind}`} style={edge.lifetimeStage ? { borderColor: lifetimeStageColors[edge.lifetimeStage] } : undefined}/><span>{edgeDisplayLabel(edge)}<small>{edge.condition || (edge.kind === 'spatial' ? '같은 학교·학과' : edge.kind === 'temporal' ? '공통 박사과정 추정 기간' : '같은 학교·학과·시기')} {edge.startYear !== undefined && ` · ${edge.startYear}–${edge.endYear}`}</small></span><b>{edge.members.length}<small>명</small></b></button>)}{edgeList.length > 40 && <p className="atlas-quiet">40개 집단 표시 · 연구자나 단계로 범위를 좁힐 수 있습니다.</p>}{!edgeList.length && <p className="atlas-quiet">현재 근거와 조건에서 두 명 이상이 공유하는 집단이 없습니다.</p>}</div></section></div>
     {selected && scope === 'researcher' && <TrajectoryPanel lifetime={lifetime} stageFilter={lifetimeStage} selectedGroupId={selectedEdge} labelFor={label} institutionFor={institutionFor} subjectFor={id => subjects[byId.get(id)?.subject || ''] || '분야 미상'} onSelect={id => { setScope('researcher'); pick(id); }} onSelectGroup={selectEdge}/>}

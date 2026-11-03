@@ -2,7 +2,8 @@ import initSqlJs from 'sql.js';
 import type { Database } from 'sql.js';
 // Vite uses sql.js's browser export; keep its WASM companion from the same build.
 import wasmUrl from 'sql.js/dist/sql-wasm-browser.wasm?url';
-import { configureFlowSqlDatabase, FlowSqlError, runFlowSqlQuery, validateFlowSql } from './flowSql';
+import { attachResearchAreas, configureFlowSqlDatabase, FlowSqlError, runFlowSqlQuery, validateFlowSql } from './flowSql';
+import { normalizeResearchAreas } from './researchAreas';
 import type { FlowSqlRequest, FlowSqlResponse } from './flowSql';
 
 let database: Database | null = null;
@@ -32,7 +33,15 @@ self.onmessage = async (event: MessageEvent<FlowSqlRequest>) => {
       ]);
       if (!response.ok) throw new FlowSqlError('공개 SQL 자료를 불러오지 못했습니다. 잠시 후 다시 실행해 주세요.');
       const opened = new SQL.Database(new Uint8Array(await response.arrayBuffer()));
-      try { configureFlowSqlDatabase(opened, request.releaseYear); }
+      try {
+        // Optional: a missing or mismatched areas file leaves the table out rather than failing the query.
+        const areasUrl = request.areasUrl ? new URL(request.areasUrl, self.location.href) : null;
+        if (areasUrl && areasUrl.origin === self.location.origin) {
+          const areas = await fetch(areasUrl.href, { credentials: 'omit' }).then(r => r.ok ? r.json() : null).then(normalizeResearchAreas).catch(() => null);
+          if (areas && areas.releaseYear === request.releaseYear) attachResearchAreas(opened, areas);
+        }
+        configureFlowSqlDatabase(opened, request.releaseYear);
+      }
       catch (error) { opened.close(); throw error; }
       database = opened; databaseKey = key;
     }

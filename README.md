@@ -72,3 +72,6 @@ pnpm build
 - 저널 영향도: Clarivate JIF가 아닌 OpenAlex `summary_stats.2yr_mean_citedness`
 - 기관명: OpenAlex/ROR 정규화 풀네임
 - 동일 논문: 기본·보조 OpenAlex 저자 ID 사이에서 work ID 기준 한 번만 집계
+- 연구분야: 동명이인 제외 후 남은 논문(저자 순서 무관)의 OpenAlex primary topic을 domain › field › subfield › topic 계층으로 연구자별 집계(`public/data/research_areas.json`, `backend/scripts/build_research_areas.py`). 연구자 검색(`연구:` 접두어)·SQL `professor_research_areas` 테이블·연구자 화면의 계층 목록에 씁니다. 보조 OpenAlex 저자 ID의 논문은 아직 포함하지 않습니다.
+- 연구자 검색: 이름(잠금 해제 후)·익명 ID·재직·학부·박사 기관·계열·연구분야. `학부:서울대 박사:KAIST 계열:물리 연구:"condensed matter"`처럼 항목을 지정할 수 있습니다.
+- 흐름도 내보내기: 학력·임용 Sankey와 토픽 흐름을 PDF(브라우저 인쇄 → PDF로 저장, 벡터)·SVG로 저장합니다. 내보낸 파일에는 익명 ID나 별칭만 쓰고 복호화한 이름과 마우스 오버 문구는 넣지 않습니다.

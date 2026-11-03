@@ -1,10 +1,13 @@
-import { useCallback, useId, useMemo, useState } from 'react';
+import { useCallback, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { Professor } from './types';
 import { buildInstitutionOptions, buildSankey, colorOfOrigin, colorOfNode, institutionLabel, layoutSankey, ribbonPath, STAGES, STAGE_LABELS, SUBJECT_LABELS } from './sankey';
 import type { FlowNode, FlowLink, FlowRoute, FlowStage } from './sankey';
+import { indexResearchers, matchContext, RESEARCHER_QUERY_HINT, searchResearchers } from './researcherQuery';
+import { useResearchAreas } from './useResearchAreas';
 import { institutionSearchText } from './schoolIdentity';
 import ZoomableFlowViewport from './ZoomableFlowViewport';
+import { downloadSvg, figureDate, printSvgAsPdf, type FigureMeta } from './exportFigure';
 import FlowSqlQuery from './FlowSqlQuery';
 import './sankey.css';
 
@@ -46,6 +49,7 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
   // Searches from the unlocked state must never survive relocking.
   if (searchState.names !== names) setSearchState({ names, text: '' });
   function setSearch(text: string) { setSearchState({ names, text }); }
+  const svgRef = useRef<SVGSVGElement>(null);
   const cohort = useMemo(() => sqlIds === null ? professors : professors.filter(p => sqlIds.has(p.id)), [professors, sqlIds]);
   const publicIds = useMemo(() => professors.map(p => p.id), [professors]);
   const institutionOptions = useMemo(() => buildInstitutionOptions(cohort), [cohort]);
@@ -66,10 +70,9 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
   const selectedIds = useMemo(() => new Set(selection?.ids.filter(id => visibleIds.has(id)) ?? []), [selection, visibleIds]);
   const focusIds = useMemo(() => hover ? new Set(hover.ids) : selectedIds, [hover, selectedIds]);
   const focused = focusIds.size > 0;
-  const selectedPeople = useMemo(() => [...selectedIds].map(id => professorMap.get(id)!).filter(Boolean).filter(p => {
-    const query = search.trim().toLowerCase();
-    return !query || p.id.toLowerCase().includes(query) || (names?.[p.id] ?? '').toLowerCase().includes(query) || institutionSearchText(p.current_institution).toLowerCase().includes(query);
-  }).sort((a, b) => a.id.localeCompare(b.id)), [selectedIds, professorMap, search, names]);
+  const areas = useResearchAreas();
+  const selectedIndex = useMemo(() => indexResearchers([...selectedIds].map(id => professorMap.get(id)!).filter(Boolean).sort((a, b) => a.id.localeCompare(b.id)), names, areas?.profiles), [selectedIds, professorMap, names, areas]);
+  const selectedPeople = useMemo(() => searchResearchers(selectedIndex, search), [selectedIndex, search]);
   const routes = useMemo(() => selectedIds.size ? data.routes.flatMap(r => {
     const ids = r.personIds.filter(id => selectedIds.has(id));
     return ids.length ? [{ ...r, count: ids.length, personIds: ids }] : [];
@@ -103,6 +106,18 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function figureMeta(): FigureMeta {
+    const scope = [SUBJECT_LABELS[subject] ?? '전체 분야', sqlIds !== null ? 'SQL 조회 대상' : '', selfHireOnly ? '학부 모교 재직만' : '', groupForeign ? '해외 권역 묶음' : ''].filter(Boolean).join(' · ');
+    return {
+      title: '학사 → 박사 → 현재 재직',
+      subtitle: `${scope} · 세 단계 경로가 있는 연구자 ${count(data.count)}명 · 흐름 색 = 학부 출신기관${selection ? ` · 선택: ${selection.label}` : ''}`,
+      legend: [...[['서울대', 'snu'], ['고려대', 'korea'], ['연세대', 'yonsei'], ['KAIST', 'kaist'], ['POSTECH', 'postech']].map(([label, key]) => ({ label, color: colorOfOrigin(key) })), { label: '짙은 흐름: 학부 = 현재 재직기관', color: '#464c53', strong: true }],
+      note: `K–STEM Research Atlas · ${releaseYear} 공개 자료 · 흐름 폭은 인원에 비례 · ${figureDate()} 내보냄`,
+      columns: STAGES.flatMap(stage => { const node = layout.nodes.find(n => n.stage === stage); return node ? [{ x: node.x + 6, label: STAGE_LABELS[stage] }] : []; }),
+      filename: `kstem-education-flow-${releaseYear}${subject ? `-${subject}` : ''}-${figureDate()}`,
+    };
+  }
+
   return <section className="sankey-page" aria-labelledby="sankey-title">
     <header className="sk-intro">
       <div><p className="sk-eyebrow">EDUCATION & EMPLOYMENT</p><h1 id="sankey-title">학력·임용 흐름</h1><p className="sk-lead">학부 → 박사 → 현재 재직기관 3단계 Sankey와 모교 재직 비율을 표시합니다.</p></div>
@@ -127,13 +142,13 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
     <p className="sk-cohort-note">{sqlIds !== null && <>SQL 조회 {count(cohort.length)}명 → </>}선택 분야 {count(data.subjectCount)}명 → 기관·모교 재직 조건에 맞는 {count(data.filterCount)}명 → 세 단계 경로가 있는 {count(data.count)}명. 흐름도와 경로 표에는 마지막 {count(data.count)}명이 포함됩니다.</p>
 
     <section className="sk-chart-card" aria-labelledby="sk-chart-title">
-      <div className="sk-chart-heading"><div><h2 id="sk-chart-title">학사 → 박사 → 현재 재직</h2><p>흐름의 두께는 연구자 수에 비례합니다. 기관이나 연결을 선택하면 해당 연구자의 경로가 드러납니다.</p></div><div className="sk-chart-actions"><button className="sk-button sk-button-subtle" onClick={() => { const heading = document.getElementById('sk-routes-title'); heading?.focus({ preventScroll: true }); heading?.scrollIntoView({ block: 'start' }); }}>경로 표로 이동</button><button className="sk-button sk-button-subtle" onClick={resetSelection} disabled={!selection}>선택 초기화</button></div></div>
-      <div className="sk-legend" aria-label="흐름 색상 설명"><p><strong>흐름 색상은 학부 출신기관 기준</strong> · 아래 다섯 학교의 기관 막대는 학사·박사·현재 재직 단계에서 각각 같은 대표색을 사용합니다.</p><p className="sk-legend-self"><i aria-hidden="true"/><span>진한 흐름: 학부 = 현재기관 · 두 구간 모두</span></p></div>
+      <div className="sk-chart-heading"><div><h2 id="sk-chart-title">학사 → 박사 → 현재 재직</h2><p>흐름의 두께는 연구자 수에 비례합니다. 기관이나 연결을 선택하면 해당 연구자의 경로가 드러납니다.</p></div><div className="sk-chart-actions"><button className="sk-button sk-button-subtle" disabled={!data.count} onClick={() => svgRef.current && printSvgAsPdf(svgRef.current, figureMeta())}>PDF 저장</button><button className="sk-button sk-button-subtle" disabled={!data.count} onClick={() => { if (!svgRef.current) return; const meta = figureMeta(); downloadSvg(svgRef.current, meta.filename, meta.columns); }}>SVG 저장</button><button className="sk-button sk-button-subtle" onClick={() => { const heading = document.getElementById('sk-routes-title'); heading?.focus({ preventScroll: true }); heading?.scrollIntoView({ block: 'start' }); }}>경로 표로 이동</button><button className="sk-button sk-button-subtle" onClick={resetSelection} disabled={!selection}>선택 초기화</button></div></div>
+      <div className="sk-legend" aria-label="흐름 색상 설명"><p><strong>흐름 색상 = 학부 출신기관</strong> · 학사→박사, 박사→현재 재직 두 구간 모두 학부 학교의 색을 이어 씁니다. 아래 다섯 학교의 기관 막대는 세 단계에서 같은 대표색입니다.</p><p className="sk-legend-self"><i aria-hidden="true"/><span>짙은 흐름: 학부 = 현재 재직기관(자교 임용)</span></p></div>
       <ul className="sk-institution-colors" aria-label="학교별 대표색">{[['서울대', 'snu'], ['고려대', 'korea'], ['연세대', 'yonsei'], ['KAIST', 'kaist'], ['POSTECH', 'postech']].map(([label, key]) => <li key={key}><i style={{ background: colorOfOrigin(key) }} aria-hidden="true"/>{label}</li>)}</ul>
       {data.count === 0 ? <div className="sk-empty"><strong>선택한 조건에 맞는 완비 경로가 없습니다.</strong><p>{sqlIds !== null ? 'SQL 조건 또는 기관·연구 분야 필터를 조정하거나, 전체 자료로 돌아가 주세요.' : '기관·연구 분야 필터를 조정하거나 모든 필터를 초기화해 주세요.'}</p></div> : <>
         <ZoomableFlowViewport width={layout.width} height={layout.height + 72} resetToken={data} onGestureStart={clearGraphHover}>
           <div className="sk-column-labels">{STAGES.map((s, i) => <div key={s}><span>0{i + 1}</span><strong>{STAGE_LABELS[s]}</strong><small>{count(data.count)}명 · {count(data.nodes.filter(node => node.stage === s).length)}개 표시 단위</small></div>)}</div>
-          <svg className="sk-svg" viewBox={`0 0 ${layout.width} ${layout.height}`} width={layout.width} height={layout.height} aria-labelledby="sk-svg-title sk-svg-description">
+          <svg ref={svgRef} className="sk-svg" viewBox={`0 0 ${layout.width} ${layout.height}`} width={layout.width} height={layout.height} aria-labelledby="sk-svg-title sk-svg-description">
             <title id="sk-svg-title">{SUBJECT_LABELS[subject] ?? '전체 분야'} 연구자 {count(data.count)}명의 학력과 재직기관 흐름</title>
             <desc id="sk-svg-description">기관은 세 단계에 따로 표시됩니다. 모든 연결의 폭은 인원에 선형 비례합니다. 기관을 선택하려면 탭과 엔터를 사용하세요. 연결 경로는 아래 표에서도 선택할 수 있습니다.</desc>
             {[...new Set(layout.nodes.map(node => node.x + 6))].map(x => <line key={x} x1={x} x2={x} y1={14} y2={layout.height - 14} stroke="#eef1f4" strokeDasharray="2 5" />)}
@@ -141,13 +156,13 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
             {[false, true].map(selfHire => <g key={String(selfHire)}>
               <g className="sk-ribbons">{layout.links.filter(link => link.selfHire === selfHire).map(link => {
                 const info = linkSelection(link);
-                return <path key={link.id} d={link.path} fill={colorOfOrigin(link.origin)} fillOpacity={link.selfHire ? 0.85 : focused ? 0.055 : 0.16} role="button" tabIndex={-1} aria-label={`${info.label}, ${count(link.count)}명`} onClick={() => choose(info)} onKeyDown={event => keyChoose(event, info)} onMouseEnter={() => setHover(info)} onMouseLeave={() => setHover(null)}><title>{info.label} · {count(link.count)}명</title></path>;
+                return <path key={link.id} d={link.path} fill={colorOfOrigin(link.origin)} fillOpacity={link.selfHire ? 0.9 : focused ? 0.08 : 0.4} role="button" tabIndex={-1} aria-label={`${info.label}, ${count(link.count)}명`} onClick={() => choose(info)} onKeyDown={event => keyChoose(event, info)} onMouseEnter={() => setHover(info)} onMouseLeave={() => setHover(null)}><title>{info.label} · {count(link.count)}명</title></path>;
               })}</g>
               {focused && <g className="sk-highlight-ribbons" pointerEvents="none">{layout.links.filter(link => link.selfHire === selfHire).map(link => {
                 const selected = link.personIds.filter(id => focusIds.has(id)).length;
                 if (!selected) return null;
                 const h = selected * layout.scale, offset = (link.height - h) / 2;
-                return <path key={link.id} d={ribbonPath(link.sourceX, link.targetX, link.sourceY + offset, link.targetY + offset, h)} fill={colorOfOrigin(link.origin)} fillOpacity={link.selfHire ? 0.95 : 0.45} />;
+                return <path key={link.id} d={ribbonPath(link.sourceX, link.targetX, link.sourceY + offset, link.targetY + offset, h)} fill={colorOfOrigin(link.origin)} fillOpacity={link.selfHire ? 0.95 : 0.62} />;
               })}</g>}
             </g>)}
             <g>{layout.nodes.map(node => {
@@ -162,7 +177,6 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
                 <title>{info.label} · {count(node.count)}명{selected ? ` · 강조 ${count(selected)}명` : ''}</title>
                 <rect className="sk-node-target" x={node.x - 5} y={node.y - 5} width={22} height={Math.max(16, node.height + 10)} fill="transparent" />
                 <rect x={node.x} y={node.y} width={12} height={node.height} rx={2} fill={color} opacity={focused && !selected ? 0.38 : 1} />
-                <rect className="sk-label-bg" x={first ? x - labelWidth - 4 : x - 6} y={textTop - 6} width={labelWidth + 10} height={textHeight + 12} rx={3} fill="#fff" fillOpacity={0.96} />
                 <text x={x} y={textTop + 18} textAnchor={first ? 'end' : 'start'} fill={focused && !selected ? '#6d7882' : '#1e2124'} fontWeight={selected ? 700 : 400}>{lines.map((line, index) => <tspan key={index} x={x} dy={index ? labelLineHeight : 0}>{line}</tspan>)}<tspan x={x} dy={labelLineHeight} className="sk-node-count">{count(node.count)}명</tspan></text>
               </g>;
             })}</g>
@@ -174,8 +188,8 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
 
     {selection && selectedIds.size > 0 && <section className="sk-people" aria-labelledby="sk-people-title">
       <div className="sk-section-heading"><div><p className="sk-eyebrow">선택한 경로</p><h2 id="sk-people-title">이 흐름을 만든 연구자 {count(selectedIds.size)}명</h2><p>{selection.label}</p></div><span className="sk-privacy-badge">{names ? '이름 공개 상태' : '익명 탐색 중'}</span></div>
-      <div className="sk-people-tools"><label><span>연구자 찾기</span><input type="search" value={search} onChange={e => { setSearch(e.target.value); setPeoplePage(0); }} placeholder={names ? '이름, 익명 ID 또는 재직기관' : '익명 ID 또는 재직기관'} /></label><p>{names ? '연구자를 선택하면 개인 경력과 시공간적으로 유사한 연구자를 볼 수 있습니다.' : '비밀번호로 이름을 공개하기 전에는 익명 ID와 재직기관을 표시합니다.'}</p></div>
-      <div className="sk-person-grid">{selectedPeople.slice(currentPeoplePage * pageSize, (currentPeoplePage + 1) * pageSize).map(p => <button key={p.id} className="sk-person" onClick={() => onSelect(p.id)}><span className="sk-person-avatar" aria-hidden="true">{names?.[p.id] ? names[p.id].slice(0, 1) : '·'}</span><span><strong>{names?.[p.id] ?? p.id}</strong><small>{SUBJECT_LABELS[p.subject] ?? p.subject} · {p.current_institution ? institutionLabel(p.current_institution) : '재직기관 미확인'}</small></span><span aria-hidden="true">↗</span></button>)}</div>
+      <div className="sk-people-tools"><label><span>연구자 찾기</span><input type="search" value={search} onChange={e => { setSearch(e.target.value); setPeoplePage(0); }} placeholder={names ? '이름, 기관 또는 계열' : '익명 ID, 기관 또는 계열'} /></label><p>{RESEARCHER_QUERY_HINT} {names ? '연구자를 선택하면 개인 경력과 시공간적으로 유사한 연구자를 볼 수 있습니다.' : '비밀번호로 이름을 공개하기 전에는 익명 ID와 재직기관을 표시합니다.'}</p></div>
+      <div className="sk-person-grid">{selectedPeople.slice(currentPeoplePage * pageSize, (currentPeoplePage + 1) * pageSize).map(hit => { const p = hit.person; return <button key={p.id} className="sk-person" onClick={() => onSelect(p.id)}><span className="sk-person-avatar" aria-hidden="true">{names?.[p.id] ? names[p.id].slice(0, 1) : '·'}</span><span><strong>{names?.[p.id] ?? p.id}</strong><small>{[SUBJECT_LABELS[p.subject] ?? p.subject, p.current_institution ? institutionLabel(p.current_institution) : '재직기관 미확인', matchContext(hit)].filter(Boolean).join(' · ')}</small></span><span aria-hidden="true">↗</span></button>; })}</div>
       {!selectedPeople.length && <p className="sk-empty-small">검색 결과가 없습니다.</p>}
       <Pagination page={currentPeoplePage} total={selectedPeople.length} onChange={setPeoplePage} label="연구자 목록" />
     </section>}

@@ -1,4 +1,5 @@
 import type { Database, SqlValue } from 'sql.js';
+import type { ResearchAreas } from './researchAreas';
 
 export class FlowSqlError extends Error {}
 
@@ -9,6 +10,8 @@ export type FlowSqlRequest = {
   requestId: number;
   sql: string;
   databaseUrl: string;
+  /** Optional OpenAlex research areas JSON; becomes the professor_research_areas table. */
+  areasUrl?: string;
   releaseYear: number;
   professorIds: string[];
 };
@@ -23,6 +26,8 @@ export const FLOW_SQL_PRESETS: readonly { label: string; sql: string }[] = [
   { label: '물리 · 미국 박사', sql: "SELECT professor_id\nFROM professors\nWHERE subject = 'physics'\n  AND phd_country = 'United States';" },
   { label: '서울대학교 재직', sql: "SELECT professor_id\nFROM professors\nWHERE current_institution = 'Seoul National University';" },
   { label: '주저자 논문 100편 이상', sql: 'SELECT professor_id\nFROM professors\nWHERE lead_work_count >= 100;' },
+  { label: 'OpenAlex · 통계·비선형 물리 20% 이상', sql: "SELECT professor_id\nFROM professor_research_areas\nWHERE level = 'subfield'\n  AND area = 'Statistical and Nonlinear Physics'\n  AND share >= 0.2;" },
+  { label: '화학과 · OpenAlex 재료과학 중심', sql: "SELECT a.professor_id\nFROM professor_research_areas a\nJOIN professors p USING (professor_id)\nWHERE p.subject = 'chemistry'\n  AND a.level = 'field'\n  AND a.area = 'Materials Science'\n  AND a.share >= 0.4;" },
 ];
 
 export const FLOW_SQL_SCHEMA = [
@@ -30,6 +35,7 @@ export const FLOW_SQL_SCHEMA = [
   { table: 'career_segments', columns: 'professor_id, stage, institution, start_year, end_year, confidence, is_estimated' },
   { table: 'yearly_lead_output', columns: 'professor_id, year, career_stage, total_count, first_author_count, corresponding_author_count, mean_journal_2yr_citedness, article_citations_total' },
   { table: 'professor_journal_output', columns: 'professor_id, journal, lead_work_count, openalex_2yr_mean_citedness' },
+  { table: 'professor_research_areas', columns: 'professor_id, level (field·subfield·topic), area, subfield, field, domain, work_count, share' },
 ] as const;
 
 const forbiddenWords = new Set([
@@ -112,6 +118,27 @@ export function collectFlowSqlResult(
     ids.add(value);
   }
   return { ids: [...ids], rowCount };
+}
+
+/** Load OpenAlex areas into an application-owned table. Runs before query_only and before any user SQL. */
+export function attachResearchAreas(database: Database, areas: ResearchAreas): number {
+  database.run(`CREATE TABLE IF NOT EXISTS professor_research_areas (
+    professor_id TEXT NOT NULL, level TEXT NOT NULL, area TEXT NOT NULL, subfield TEXT, field TEXT, domain TEXT,
+    work_count INTEGER NOT NULL, share REAL NOT NULL)`);
+  const insert = database.prepare('INSERT INTO professor_research_areas VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  let count = 0;
+  try {
+    database.run('BEGIN');
+    for (const [id, profile] of areas.profiles) {
+      for (const area of [...profile.fields, ...profile.subfields, ...profile.topics]) {
+        const [domain = null, field = null, subfield = null] = area.path;
+        insert.run([id, area.level, area.name, area.level === 'field' ? null : subfield, field, domain, area.works, Math.round(area.share * 1e4) / 1e4]);
+        count += 1;
+      }
+    }
+    database.run('COMMIT');
+  } finally { insert.free(); }
+  return count;
 }
 
 /** Configure only application-owned pragmas before accepting any user SQL. */

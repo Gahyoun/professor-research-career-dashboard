@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import initSqlJs from 'sql.js';
 import {
-  validateFlowSql, collectFlowSqlResult, configureFlowSqlDatabase, runFlowSqlQuery,
+  validateFlowSql, collectFlowSqlResult, configureFlowSqlDatabase, runFlowSqlQuery, attachResearchAreas,
   FLOW_SQL_PRESETS, MAX_FLOW_SQL_LENGTH, MAX_FLOW_SQL_ROWS,
 } from '../work/test-dist/flowSql.js';
+import { normalizeResearchAreas } from '../work/test-dist/researchAreas.js';
 
 const SQL = await initSqlJs();
 const firstId = 'P-AAAAAAAAAA', secondId = 'P-BBBBBBBBBB';
@@ -100,9 +101,11 @@ test('REPLACE scalar functions remain available while CTE REPLACE writes stay re
 test('all shipped presets return validated IDs from the actual public SQLite release', () => {
   const db = new SQL.Database(readFileSync(new URL('../public/downloads/professor_dashboard_2026.sqlite', import.meta.url)));
   try {
+    const areas = normalizeResearchAreas(JSON.parse(readFileSync(new URL('../public/data/research_areas.json', import.meta.url), 'utf8')));
+    assert.ok(attachResearchAreas(db, areas) > 3000);
     configureFlowSqlDatabase(db, 2026);
     const publicIds = db.exec('SELECT professor_id FROM professors')[0].values.map(row => row[0]);
-    const expectedCounts = [3937, 299, 199, 164];
+    const expectedCounts = [3937, 299, 199, 164, 31, 216];
     for (const [index, preset] of FLOW_SQL_PRESETS.entries()) {
       const result = runFlowSqlQuery(db, preset.sql, publicIds);
       assert.equal(result.ids.length, expectedCounts[index], preset.label);

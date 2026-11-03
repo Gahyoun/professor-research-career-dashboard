@@ -5,7 +5,11 @@ import {
   layoutAlluvial, layoutMulti, normalizeTopicIndex, orderedTopics, queryResearchers, searchTopics, seriesFromHits, tagCloud, topicColors, yearRange,
   type AlluvialMode, type EncryptedPaperTitles, type MultiMode, type QueryEntry, type TopicHit, type TopicIndex, type TopicResearcher,
 } from './topics';
+import ResearchAreaTree from './ResearchAreaTree';
+import { researcherTexts } from './researcherQuery';
+import { useResearchAreas } from './useResearchAreas';
 import InfoFlowPanel from './InfoFlowPanel';
+import { downloadSvg, figureDate, printSvgAsPdf, type FigureMeta } from './exportFigure';
 import './topics.css';
 
 type Props = { professors: Professor[]; names: Record<string, string> | null; titles: EncryptedPaperTitles | null; releaseYear: number; onOpenCareer: (id: string) => void };
@@ -59,9 +63,9 @@ function useFitColumns(columns: number, left: number, minimum: number, maximum: 
 
 type Tip = { x: number; y: number; topic: number; column: number; count: number; cited: number } | null;
 
-function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles }: {
+function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles, svgRef }: {
   researcher: TopicResearcher; mode: AlluvialMode; showArcs: boolean; focus: number | null; setFocus: (topic: number | null) => void;
-  titles: EncryptedPaperTitles[string] | null;
+  titles: EncryptedPaperTitles[string] | null; svgRef?: React.Ref<SVGSVGElement>;
 }) {
   const columnCount = mode === 'year' ? (yearRange(researcher) ? yearRange(researcher)![1] - yearRange(researcher)![0] + 1 : 0) : researcher.eras.length;
   const { ref: wrap, columnWidth } = useFitColumns(columnCount, 228, mode === 'year' ? 34 : 120, mode === 'year' ? 72 : 260);
@@ -82,7 +86,7 @@ function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles }: 
   }
   const clear = () => { if (!pinned) { setTip(null); setFocus(null); } };
   return <div className="tp-chart-scroll" ref={wrap} onMouseLeave={clear}>
-    {!layout.lanes.length ? <p className="tp-empty">표시할 논문이 없습니다.</p> : <svg className="tp-chart" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-labelledby="tp-chart-title tp-chart-desc">
+    {!layout.lanes.length ? <p className="tp-empty">표시할 논문이 없습니다.</p> : <svg ref={svgRef} className="tp-chart" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-labelledby="tp-chart-title tp-chart-desc">
       <title id="tp-chart-title">{mode === 'year' ? '연도별' : '경력 시기별'} 연구 토픽 흐름</title>
       <desc id="tp-chart-desc">토픽 {layout.lanes.length}개, 논문 {layout.placed}편. 띠의 두께는 해당 {mode === 'year' ? '연도' : '시기'} 논문 수, 점선은 모토픽에서의 분기입니다.</desc>
       {layout.bands.map((band, i) => <g key={i} className="tp-band"><rect x={band.x} y={12 + band.row * 28} width={band.width} height={24} rx="6" /><text x={band.x + 8} y={12 + band.row * 28 + 16}>{band.label}<title>{band.label}</title></text></g>)}
@@ -162,6 +166,15 @@ function TopicTable({ researcher, focus, setFocus }: { researcher: TopicResearch
 
 export default function TopicsPage({ professors, names, titles, releaseYear, onOpenCareer }: Props) {
   const [index, setIndex] = useState<TopicIndex | null>(null);
+  const areas = useResearchAreas();
+  const chartSvg = useRef<SVGSVGElement>(null);
+  // Exports name the researcher by alias or anonymous ID only; decrypted names stay on screen.
+  const chartMeta = (r: TopicResearcher): FigureMeta => ({
+    title: `연구 토픽 흐름 · ${r.alias || r.id}`,
+    subtitle: `${mode === 'year' ? '연도별' : '경력 시기별'} · 띠 두께 = 논문 수 · 점선 = 모토픽에서의 분기${showArcs ? ' · ABA 경로 표시' : ''}`,
+    note: `K–STEM Research Atlas · ${releaseYear} 공개 자료 · 토픽 = 공유 참고문헌 Louvain 군집, 이름 = c-TF-IDF 특징어 · ${figureDate()} 내보냄`,
+    filename: `kstem-topic-flow-${r.id}-${mode}-${figureDate()}`,
+  });
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -203,11 +216,12 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
     const list: QueryEntry[] = professors.map(p => {
       const school = canonicalSchool(p.current_institution);
       return { id: p.id, name: names?.[p.id] || null, alias: null, subject: p.subject, institution: school,
-        institutionText: `${institutionSearchText(p.current_institution)} ${institutionDisplayName(p.current_institution)} ${p.department || ''}`, hasTopics: topicById.has(p.id) };
+        institutionText: `${institutionSearchText(p.current_institution)} ${institutionDisplayName(p.current_institution)} ${p.department || ''}`,
+        otherText: Object.values(researcherTexts(p, null, areas?.profiles.get(p.id))).join(' '), hasTopics: topicById.has(p.id) };
     });
     for (const r of index?.researchers || []) if (!professorById.has(r.id)) list.push({ id: r.id, name: null, alias: r.alias, subject: r.subject, institution: r.institution, institutionText: r.institution || '', hasTopics: true });
     return list;
-  }, [professors, names, index, topicById, professorById]);
+  }, [professors, names, index, topicById, professorById, areas]);
   const visibleEntries = useMemo(() => subject ? entries.filter(e => e.subject === subject) : entries, [entries, subject]);
   const results = useMemo(() => queryResearchers(visibleEntries, query, SUBJECTS), [visibleEntries, query]);
   const options = [...results.institutions.map(i => ({ kind: 'institution' as const, key: i.key })), ...results.researchers.map(r => ({ kind: 'researcher' as const, id: r.id }))];
@@ -339,11 +353,14 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
                 <button type="button" className={mode === 'era' ? 'is-on' : ''} aria-pressed={mode === 'era'} onClick={() => setMode('era')}>경력 시기</button>
               </div>
               <label className="v2-switch"><input type="checkbox" checked={showArcs} onChange={e => setShowArcs(e.target.checked)} /><span />ABA 경로</label>
+              <button type="button" className="v2-btn-quiet" onClick={() => chartSvg.current && printSvgAsPdf(chartSvg.current, chartMeta(researcher))}>PDF 저장</button>
+              <button type="button" className="v2-btn-quiet" onClick={() => chartSvg.current && downloadSvg(chartSvg.current, chartMeta(researcher).filename)}>SVG 저장</button>
             </div>
           </div>
-          <AlluvialChart researcher={researcher} mode={mode} showArcs={showArcs} focus={focus} setFocus={setFocus} titles={titles?.[researcher.id] || null} />
+          <AlluvialChart researcher={researcher} mode={mode} showArcs={showArcs} focus={focus} setFocus={setFocus} titles={titles?.[researcher.id] || null} svgRef={chartSvg} />
         </section>
         <InfoFlowPanel key={researcher.id} researcher={researcher} />
+        <ResearchAreaTree profile={areas?.profiles.get(researcher.id)} title="OpenAlex 연구분야 계층" />
         <section className="tp-split">
           <div className="tp-panel"><h3>토픽과 분기</h3><TopicTable researcher={researcher} focus={focus} setFocus={setFocus} /></div>
           <div className="tp-panel tp-notes"><h3>읽는 법과 한계</h3><ul>
