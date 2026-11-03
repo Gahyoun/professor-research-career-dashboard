@@ -11,12 +11,14 @@ privacy rules (docs/SECURITY.md): anonymous ID only, no names, no paper titles o
 Titles, venues and DOIs go to ``encrypted_titles.json`` (PBKDF2-SHA256 600k → AES-256-GCM,
 same scheme as encrypted_names.json) when ``NAMES_PASSWORD`` is set, so the page can show
 them after unlock. Keywords, bilingual tags and one shared LSA space are added through
-topic_semantics.py.
+topic_semantics.py. Topic merge/diverge measures (info_flow.py) are computed here from
+reference lists and only the aggregated topic×topic masses are published.
 """
 import argparse, base64, hashlib, json, os, secrets, sys
 from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from info_flow import analyse, stable_seed  # noqa: E402
 from topic_semantics import bilingual_tags, build_lsa, ctfidf_terms, load_glossary, semantic_block, topic_vectors  # noqa: E402
 
 SCHEMA = "kstem-topic-alluvial/1"
@@ -58,6 +60,8 @@ def main():
     p.add_argument("--out-dir", default="public/data/topics")
     p.add_argument("--dims", type=int, default=48)
     p.add_argument("--password-env", default="NAMES_PASSWORD")
+    p.add_argument("--window", type=int, default=3, help="info-flow window width in years")
+    p.add_argument("--null", type=int, default=200)
     a = p.parse_args()
 
     dashboard = json.load(open(a.dashboard, encoding="utf-8"))
@@ -71,7 +75,7 @@ def main():
         A = json.load(open(os.path.join(folder, "alluvial.json"), encoding="utf-8"))
         seeds = {w["id"]: w for w in json.load(open(os.path.join(folder, "seeds.json"), encoding="utf-8"))["works"]}
         spans = A.get("era_span") or [{"label": e} for e in A["eras"]]
-        papers, private = [], []
+        papers, private, refs = [], [], []
         for paper in sorted(A["papers"], key=lambda x: (x.get("year") or 0)):
             if not paper.get("year"):
                 continue
@@ -79,6 +83,7 @@ def main():
             private.append({"year": paper["year"], "topic": paper["topic"], "title": paper["title"],
                             "venue": paper.get("venue") or None, "doi": paper.get("doi") or None})
             texts.append(text_of(seeds.get(paper["id"], {"title": paper["title"]})))
+            refs.append(seeds.get(paper["id"], {}).get("referenced_works") or [])
             owners.append((len(researchers), paper["topic"]))
         topics = [{"id": t["id"], "label": t["label"], "size": t["size"], "birth_year": t.get("birth_year"),
                    "parent": ({k: t["parent"].get(k) for k in ("from", "sim", "from_year", "to_year")} if t.get("parent") else None)}
@@ -89,7 +94,9 @@ def main():
                             "eras": [{"label": e.get("label"), "start": e.get("start"), "end": e.get("end")} for e in spans],
                             "topics": topics, "papers": papers, "recip": recip,
                             "counts": {"source_works": None, "kept_works": len(papers), "merged_versions": None},
-                            "fetched_at": A.get("fetched_at") or str(date.today())})
+                            "fetched_at": A.get("fetched_at") or str(date.today()),
+                            "info": analyse([x["year"] for x in papers], [x["topic"] for x in papers], refs,
+                                            width=a.window, n_null=a.null, n_boot=a.null, seed=stable_seed(anon))})
         titles[anon] = private
 
     vocab, term_vecs, doc_vecs = build_lsa(texts, dims=a.dims)

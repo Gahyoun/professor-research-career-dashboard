@@ -168,3 +168,35 @@
 .tp-table tbody th { white-space: normal; min-width: 220px; }
 
 .tp-cloud button { min-height: 0; line-height: 1; align-items: center; }
+
+/* Topic merge / diverge information panel */
+.tp-info-stats { padding: 16px 24px 0; }
+.tp-info-stats .v2-stat em { margin-left: 4px; font-size: 13px; font-style: normal; font-weight: 500; color: var(--v2-muted); }
+.tp-info-plot { padding: 8px 24px 0; overflow: hidden; }
+.tp-info-plot svg { display: block; }
+.tp-grid-line { stroke: var(--v2-line-soft); stroke-width: 1; }
+.tp-axis { fill: var(--v2-muted); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.tp-info-hit { fill: transparent; cursor: pointer; }
+.tp-info-hit:hover { fill: var(--v2-fill); }
+.tp-info-hit.is-on { fill: var(--v2-fill-strong); }
+.tp-legend .tp-legend-dash { width: 16px; height: 0; border-radius: 0; border-top: 2px dashed #8a949e; }
+.tp-legend .tp-legend-band { width: 16px; background: rgb(30 33 36 / 10%); }
+.tp-legend .tp-legend-hollow { border: 1.5px solid var(--v2-ink); border-radius: 50%; background: #fff; }
+.tp-info-split { padding: 0 24px 24px; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); }
+.tp-info-table tbody tr { cursor: pointer; }
+.tp-info-table tbody tr:hover > * { background: var(--v2-fill); }
+.tp-info-table td small { color: var(--v2-faint); font-size: 11px; }
+.tp-info-detail h4 { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--v2-ink); }
+.tp-info-detail h4 + * { margin-bottom: 18px; }
+.tp-flows { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 13px; color: var(--v2-body); }
+.tp-flows li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tp-flows span { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-flows i { flex: none; width: 9px; height: 9px; border-radius: 3px; border: 1.5px dashed transparent; }
+.tp-flows b { color: var(--v2-faint); font-weight: 500; }
+.tp-flows em { margin-left: auto; flex: none; font-style: normal; font-variant-numeric: tabular-nums; color: var(--v2-muted); }
+.tp-info-notes { margin: 0; padding-left: 18px; display: grid; gap: 8px; font-size: 13px; line-height: 1.6; color: var(--v2-body); }
+.tp-info-notes b { color: var(--v2-ink); margin-right: 4px; }
+@media (max-width: 900px) {
+  .tp-info-split { grid-template-columns: 1fr; padding: 0 16px 16px; }
+  .tp-info-stats, .tp-info-plot { padding-left: 16px; padding-right: 16px; }
+}

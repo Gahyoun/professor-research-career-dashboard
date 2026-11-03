@@ -5,6 +5,7 @@ import {
   layoutAlluvial, layoutMulti, normalizeTopicIndex, orderedTopics, queryResearchers, searchTopics, seriesFromHits, tagCloud, topicColors, yearRange,
   type AlluvialMode, type EncryptedPaperTitles, type MultiMode, type QueryEntry, type TopicHit, type TopicIndex, type TopicResearcher,
 } from './topics';
+import InfoFlowPanel from './InfoFlowPanel';
 import './topics.css';
 
 type Props = { professors: Professor[]; names: Record<string, string> | null; titles: EncryptedPaperTitles | null; releaseYear: number; onOpenCareer: (id: string) => void };
@@ -335,6 +336,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
           </div>
           <AlluvialChart researcher={researcher} mode={mode} showArcs={showArcs} focus={focus} setFocus={setFocus} titles={titles?.[researcher.id] || null} />
         </section>
+        <InfoFlowPanel key={researcher.id} researcher={researcher} />
         <section className="tp-split">
           <div className="tp-panel"><h3>토픽과 분기</h3><TopicTable researcher={researcher} focus={focus} setFocus={setFocus} /></div>
           <div className="tp-panel tp-notes"><h3>읽는 법과 한계</h3><ul>

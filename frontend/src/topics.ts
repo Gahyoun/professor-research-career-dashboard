@@ -8,10 +8,27 @@ export type TopicNode = { id: number; label: string; size: number; birth_year: n
 export type TopicPaper = { year: number; topic: number; era: number | null; cited: number };
 export type TopicRecip = { from_topic: number; to_topic: number; from_year: number; to_year: number; x_year: number };
 export type TopicCounts = { source_works: number | null; kept_works: number | null; merged_versions: number | null };
+/** One measure on a window transition (bits): estimate, bootstrap 95% CI, null mean ± sd, z. */
+export type InfoMeasure = { value: number; ci: [number, number] | null; null: [number, number] | null; z: number | null };
+export const INFO_KEYS = ['diverge', 'merge', 'continuity', 'diverge_norm', 'merge_norm'] as const;
+export type InfoKey = typeof INFO_KEYS[number];
+export type InfoWindow = { start: number; end: number; n: number; diversity: number | null; effective_topics: number | null };
+export type InfoTransition = {
+  from: [number, number]; to: [number, number]; n_from: number; n_to: number;
+  measures: Partial<Record<InfoKey, InfoMeasure>>; nmi: number | null; jsd: number | null;
+  birth_share: number; ending_share: number; sparse: boolean;
+  /** Topic → topic mass; null = ∅ (birth on the source side, ending on the target side). */
+  flows: { from: number | null; to: number | null; mass: number }[];
+};
+export type InfoFlow = {
+  estimator: string; width: number; nullKind: string; nullRuns: number;
+  windows: InfoWindow[]; transitions: InfoTransition[];
+  summary: Partial<Record<InfoKey | 'nmi' | 'jsd' | 'continuity_excess' | 'birth_share', number>>;
+};
 export type TopicResearcher = {
   id: string; alias: string | null; subject: string; institution: string | null;
   eras: TopicEra[]; topics: TopicNode[]; papers: TopicPaper[]; recip: TopicRecip[];
-  counts: TopicCounts | null; fetched_at: string | null;
+  counts: TopicCounts | null; fetched_at: string | null; info: InfoFlow | null;
 };
 /** One LSA space shared by every researcher; int8 unit vectors. */
 export type TopicSemantic = { dims: number; terms: Map<string, Float32Array>; glossary: Map<string, string[]> };
@@ -102,7 +119,7 @@ export function normalizeTopicIndex(raw: unknown): TopicIndex {
       id, alias: str(r.alias), subject: str(r.subject) || 'unknown', institution: str(r.institution),
       eras: (Array.isArray(r.eras) ? r.eras : []).map(normalizeEra), topics, papers, recip,
       counts: counts ? { source_works: num(counts.source_works), kept_works: num(counts.kept_works), merged_versions: num(counts.merged_versions) } : null,
-      fetched_at: str(r.fetched_at),
+      fetched_at: str(r.fetched_at), info: normalizeInfoFlow(r.info, topicIds),
     };
   });
   return {
@@ -110,6 +127,60 @@ export function normalizeTopicIndex(raw: unknown): TopicIndex {
     method: Object.fromEntries(Object.entries((root.method || {}) as Record<string, unknown>).filter(([, v]) => typeof v === 'string')) as Record<string, string>,
     researchers, semantic: normalizeSemantic(root.semantic),
   };
+}
+
+const pair = (value: unknown): [number, number] | null =>
+  Array.isArray(value) && value.length === 2 && num(value[0]) !== null && num(value[1]) !== null ? [value[0] as number, value[1] as number] : null;
+
+/** info_flow.py output → typed block; transitions with unknown topics or bad windows are dropped. */
+export function normalizeInfoFlow(raw: unknown, topicIds: Set<number>): InfoFlow | null {
+  const block = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+  if (!block || !Array.isArray(block.transitions)) return null;
+  const nullBlock = (block.null || {}) as Record<string, unknown>;
+  const windows = (Array.isArray(block.windows) ? block.windows : []).map((value): InfoWindow | null => {
+    const w = (value || {}) as Record<string, unknown>;
+    const start = num(w.start), end = num(w.end);
+    return start !== null && end !== null ? { start, end, n: num(w.n) ?? 0, diversity: num(w.diversity), effective_topics: num(w.effective_topics) } : null;
+  }).filter((w): w is InfoWindow => w !== null);
+  const known = (t: unknown) => t === null || (num(t) !== null && topicIds.has(t as number));
+  const transitions = block.transitions.map((value): InfoTransition | null => {
+    const t = (value || {}) as Record<string, unknown>;
+    const from = pair(t.from), to = pair(t.to);
+    if (!from || !to) return null;
+    const measures: Partial<Record<InfoKey, InfoMeasure>> = {};
+    for (const key of INFO_KEYS) {
+      const v = num(t[key]);
+      if (v !== null) measures[key] = { value: v, ci: pair(t[`${key}_ci`]), null: pair(t[`${key}_null`]), z: num(t[`${key}_z`]) };
+    }
+    const flows = (Array.isArray(t.flows) ? t.flows : [])
+      .filter((f): f is [number | null, number | null, number] => Array.isArray(f) && f.length === 3 && known(f[0]) && known(f[1]) && num(f[2]) !== null)
+      .map(([a, b, mass]) => ({ from: a, to: b, mass }));
+    return { from, to, n_from: num(t.n_from) ?? 0, n_to: num(t.n_to) ?? 0, measures, nmi: num(t.nmi), jsd: num(t.jsd),
+      birth_share: num(t.birth_share) ?? 0, ending_share: num(t.ending_share) ?? 0, sparse: t.sparse === true, flows };
+  }).filter((t): t is InfoTransition => t !== null);
+  const summary: InfoFlow['summary'] = {};
+  for (const [key, value] of Object.entries((block.summary || {}) as Record<string, unknown>)) {
+    const v = num(value);
+    if (v !== null && key !== 'transitions') summary[key as keyof InfoFlow['summary']] = v;
+  }
+  return { estimator: str(block.estimator) || '', width: num(block.width) ?? 0, nullKind: str(nullBlock.kind) || '', nullRuns: num(nullBlock.n) ?? 0,
+    windows, transitions, summary };
+}
+
+/** Rows a transition's flows into per-topic branching (by source) or merging (by target) entropies, plug-in bits. */
+export function conditionalEntropies(flows: InfoTransition['flows'], by: 'from' | 'to'): { topic: number | null; bits: number; mass: number; partners: number }[] {
+  const groups = new Map<number | null, Map<number | null, number>>();
+  for (const f of flows) {
+    const key = by === 'from' ? f.from : f.to, other = by === 'from' ? f.to : f.from;
+    const g = groups.get(key) ?? new Map<number | null, number>();
+    g.set(other, (g.get(other) ?? 0) + f.mass);
+    groups.set(key, g);
+  }
+  return [...groups].map(([topic, g]) => {
+    const masses = [...g.values()].filter(m => m > 0), total = masses.reduce((a, b) => a + b, 0);
+    const bits = total ? -masses.reduce((s, m) => s + m / total * Math.log2(m / total), 0) : 0;
+    return { topic, bits: Math.max(0, bits), mass: total, partners: masses.length };
+  }).sort((a, b) => b.mass - a.mass);
 }
 
 function unit(values: ArrayLike<number>): Float32Array {

@@ -134,3 +134,48 @@ test('multi layout keeps every selected paper in stack and overlay modes', () =>
   }
   assert.equal(layoutMulti(series, 'overlay').totals.reduce((s, t) => s + t.n, 0), papers);
 });
+
+import { normalizeInfoFlow, conditionalEntropies } from '../work/test-dist/topics.js';
+
+test('info-flow block parses measures, drops unknown topics and bad windows', () => {
+  const info = normalizeInfoFlow({
+    estimator: 'Miller–Madow, bits', width: 3, null: { kind: 'within-window topic-label permutation', n: 50 },
+    windows: [{ start: 2001, end: 2003, n: 4 }, { start: 'x' }],
+    transitions: [
+      { from: [2001, 2003], to: [2004, 2006], n_from: 4, n_to: 5, diverge: 0.5, diverge_ci: [0.2, 0.9], diverge_null: [1.1, 0.2], diverge_z: -3,
+        continuity: 1.2, nmi: 0.6, birth_share: 0.2, ending_share: 0, sparse: true,
+        flows: [[0, 1, 2], [0, 0, 2], [null, 1, 1], [7, 1, 1], [0, null, 1]] },
+      { from: [2004], to: [2007, 2009] },
+    ],
+    summary: { diverge: 0.5, transitions: 1 },
+  }, new Set([0, 1]));
+  assert.equal(info.windows.length, 1);
+  assert.equal(info.transitions.length, 1);
+  const t = info.transitions[0];
+  assert.deepEqual(t.measures.diverge, { value: 0.5, ci: [0.2, 0.9], null: [1.1, 0.2], z: -3 });
+  assert.equal(t.measures.merge, undefined);
+  assert.equal(t.flows.length, 4);                       // topic 7 is not in the researcher's topics
+  assert.deepEqual(info.summary, { diverge: 0.5 });
+  assert.equal(normalizeInfoFlow(null, new Set()), null);
+});
+
+test('per-topic branching and merging entropies from flows', () => {
+  const flows = [{ from: 0, to: 1, mass: 2 }, { from: 0, to: 2, mass: 2 }, { from: 3, to: 1, mass: 4 }, { from: null, to: 2, mass: 1 }];
+  const branching = Object.fromEntries(conditionalEntropies(flows, 'from').map(r => [String(r.topic), r]));
+  assert.equal(branching['0'].bits, 1);
+  assert.equal(branching['0'].partners, 2);
+  assert.equal(branching['3'].bits, 0);
+  const merging = Object.fromEntries(conditionalEntropies(flows, 'to').map(r => [String(r.topic), r]));
+  assert.ok(Math.abs(merging['1'].bits - (-(1 / 3) * Math.log2(1 / 3) - (2 / 3) * Math.log2(2 / 3))) < 1e-12);
+});
+
+test('shipped demo index carries info-flow measures for every researcher', () => {
+  for (const r of shipped().researchers) {
+    assert.ok(r.info && r.info.transitions.length > 0, r.id);
+    for (const t of r.info.transitions) {
+      const { diverge, merge, continuity } = t.measures;
+      assert.ok(diverge.value >= 0 && merge.value >= 0 && continuity.value >= 0);
+      if (t.measures.diverge_norm) assert.ok(t.measures.diverge_norm.value <= 1);
+    }
+  }
+});

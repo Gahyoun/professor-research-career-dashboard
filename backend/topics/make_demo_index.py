@@ -5,11 +5,16 @@ Every researcher, institution and topic here is fictitious (ids DEMO-xxxx). The 
 shows an "예시 데이터" badge whenever ``source == "demo"``. Replace the output with
 ``export_public_index.py`` once real alluvial.json files are prepared.
 
+Reference lists are synthetic too: each topic draws from its own drifting pool, a young
+child topic also from its parent's pool, "기타" topics from other pools, plus a small
+shared pool. They exist only to feed info_flow.py and are not written out.
+
   python3 backend/topics/make_demo_index.py --out public/data/topics/index.json
 """
 import argparse, json, os, random, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from info_flow import analyse, stable_seed  # noqa: E402
 from topic_semantics import bilingual_tags, build_lsa, ctfidf_terms, load_glossary, semantic_block, topic_vectors  # noqa: E402
 
 SCHEMA = "kstem-topic-alluvial/1"
@@ -46,6 +51,25 @@ PEOPLE = [
 ]
 
 
+def synthetic_refs(rnd, n, tid, year, birth, parent, labels, k=18):
+    """Reference ids for one demo paper; the pool window drifts 4 ids per year."""
+    out = set()
+    other = [t for t in range(len(labels)) if t != tid]
+    while len(out) < k:
+        r = rnd.random()
+        if labels[tid].startswith("기타") and other and r < 0.6:
+            src, base = rnd.choice(other), 0
+        elif parent is not None and year - birth <= 3 and r < 0.35:
+            src, base = parent, 40
+        elif r < 0.04:
+            out.add(f"G{n}-{rnd.randrange(120)}")
+            continue
+        else:
+            src, base = tid, 4 * (year - birth)
+        out.add(f"R{n}-{src}-{base + rnd.randrange(30)}")
+    return sorted(out)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--out", required=True)
@@ -67,7 +91,8 @@ def main():
                 if year == birth:
                     k = max(1, k)
                 for _ in range(k):
-                    papers.append({"year": year, "topic": tid, "cited": int(rnd.paretovariate(1.3) * 6)})
+                    papers.append({"year": year, "topic": tid, "cited": int(rnd.paretovariate(1.3) * 6),
+                                   "_refs": synthetic_refs(rnd, n, tid, year, birth, parent, [t[0] for t in topics])})
                     # Pseudo-abstract: the topic vocabulary plus a little shared noise.
                     texts.append((n - 1, tid, " ".join(rnd.sample(_words.split(), k=min(4, len(_words.split()))) + rnd.sample(NOISE, 2))))
             topic_rows.append((tid, label, birth, parent))
@@ -87,13 +112,16 @@ def main():
             fy = rnd.randint(f[2], min(end_year - 3, f[2] + 6))
             ty = rnd.randint(fy + 2, min(end_year, fy + 9))
             recip.append({"from_topic": f[0], "to_topic": t[0], "from_year": fy, "to_year": ty, "x_year": rnd.randint(fy + 1, ty)})
+        papers.sort(key=lambda x: x["year"])
+        info = analyse([x["year"] for x in papers], [x["topic"] for x in papers], [x.pop("_refs") for x in papers],
+                       width=3, n_null=200, n_boot=200, seed=stable_seed(f"DEMO-{n:04d}"))
         researchers.append({
             "id": f"DEMO-{n:04d}", "alias": alias, "subject": subject, "institution": inst,
             "eras": [{"label": l, "start": s, "end": e} for l, s, e in eras],
             "topics": out_topics, "papers": sorted(papers, key=lambda x: x["year"]), "recip": recip,
             "counts": {"source_works": len(papers) * 3 + rnd.randint(5, 40), "kept_works": len(papers) + rnd.randint(2, 9),
                        "merged_versions": rnd.randint(1, 8)},
-            "fetched_at": "2026-11-03",
+            "fetched_at": "2026-11-03", "info": info,
         })
     # Keywords, bilingual tags and topic vectors via the same code path as real exports.
     en2ko, ko2en = load_glossary()
