@@ -4,12 +4,14 @@
 Runs where the private source DB lives (never in CI). Every step is resumable and only
 redoes what changed, so the whole population can be rebuilt after a yearly release:
 
-  python3 backend/topics/topic_batch.py all --year 2026          # every step below in order
+  python3 backend/topics/topic_batch.py all --year 2026          # steps 1–4 in order
 
   python3 backend/topics/topic_batch.py works      # 1. retained works per researcher (KOAD namesake drop)
-  python3 backend/topics/topic_batch.py fetch      # 2. OpenAlex references/abstracts → backend/cache/YEAR/topic_works.sqlite
+  python3 backend/topics/topic_batch.py fetch      # 2. OpenAlex references/abstracts/dates → backend/cache/YEAR/topic_works.sqlite
   python3 backend/topics/topic_batch.py cluster    # 3. coupling Louvain per researcher → topics DB
-  python3 backend/topics/topic_batch.py summarize  # 4. Claude summaries (`claude -p` by default) → topics DB
+  python3 backend/topics/topic_batch.py corpus     # 4. summary corpus (one text per topic) → topics DB
+     then, in Claude Code:  /topic-summaries        #    Claude Code reads the corpus and writes summaries back
+                                                    #    (backend/topics/topic_corpus.py next / submit)
   python3 backend/topics/topic_batch.py export     # 5. public/data/topics (index + per-researcher shards)
 
 Works follow the public release's identity rules exactly as build_research_areas.py does:
@@ -21,8 +23,9 @@ topic also gets an English and a Korean summary from Claude, written from repres
 titles/abstracts and OpenAlex publication dates (no names, IDs or institutions are sent), that
 says what the topic studies and how it developed over time. A summary is rejected when it
 repeats a whole paper title or eight consecutive words of one (titles stay behind the unlock).
-Summaries run through the Claude Code CLI (``claude -p``, the logged-in account) by default,
-or through the Message Batches API with ``--engine api``.
+No model is called from this script by default: ``corpus`` stores one text per topic in the
+topics DB and a Claude Code session works through it (.claude/skills/topic-summaries). The
+``summarize`` step remains as an unattended alternative (``claude -p`` or ``--engine api``).
 
 Private outputs: the topics DB (default .private/topics_YEAR.sqlite) holds professor UIDs,
 work IDs and summaries; the OpenAlex cache holds titles. Neither is committed.
@@ -113,6 +116,10 @@ CREATE TABLE IF NOT EXISTS topic_members(
 CREATE TABLE IF NOT EXISTS summaries(
   members_hash TEXT PRIMARY KEY, status TEXT NOT NULL, summary_en TEXT, summary_ko TEXT,
   model TEXT, detail TEXT, created_at TEXT NOT NULL, prompt_version TEXT NOT NULL DEFAULT '1');
+CREATE TABLE IF NOT EXISTS summary_corpus(
+  members_hash TEXT PRIMARY KEY, chunk INTEGER NOT NULL, anon_id TEXT NOT NULL, topic_id INTEGER NOT NULL,
+  prompt TEXT NOT NULL, titles TEXT NOT NULL, prompt_version TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS summary_corpus_chunk ON summary_corpus(chunk);
 CREATE TABLE IF NOT EXISTS summary_batches(
   batch_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, n_requests INTEGER NOT NULL, model TEXT NOT NULL,
   collected INTEGER NOT NULL DEFAULT 0);
@@ -560,7 +567,36 @@ def estimate(requests, engine, model):
     print(f"summarize: {len(requests):,} topics to summarize, ≈{chars / 4 / 1e6:.1f}M input tokens ({model}, {engine})")
 
 
-# 4a. Claude Code CLI (default) ---------------------------------------------------------------
+# 4. corpus for Claude Code -------------------------------------------------------------------
+
+def step_corpus(paths, opts):
+    """One text per named topic still lacking a current summary, grouped into fixed chunks.
+
+    The corpus is rebuilt from scratch each time; topics already summarized with the current
+    PROMPT_VERSION are left out. Claude Code takes chunks with topic_corpus.py and submits
+    summaries back; chunk numbers let parallel sessions or subagents split the work."""
+    con = open_topics(paths.topics_db)
+    cache = open_cache(paths.cache_db)
+    pending = pending_summaries(con, retry_failed=True)
+    rows = []
+    for i, (members_hash, anon, topic_id, keywords) in enumerate(pending):
+        recs = topic_records(con, cache, anon, topic_id)
+        if recs:
+            rows.append((members_hash, len(rows) // opts.chunk_size, anon, topic_id,
+                         summary_prompt(json.loads(keywords), recs),
+                         json.dumps([r.get("title") or "" for r in recs], ensure_ascii=False), PROMPT_VERSION, now()))
+    with con:
+        con.execute("DELETE FROM summary_corpus")
+        con.executemany("INSERT INTO summary_corpus VALUES (?,?,?,?,?,?,?,?)", rows)
+    chars = sum(len(r[4]) for r in rows)
+    chunks = (len(rows) + opts.chunk_size - 1) // opts.chunk_size
+    con.close()
+    cache.close()
+    print(f"corpus: {len(rows):,} topics to summarize in {chunks:,} chunks of {opts.chunk_size} "
+          f"(≈{chars / 4 / 1e6:.1f}M tokens of text). Next: run /topic-summaries in Claude Code, then 'export'.")
+
+
+# 4a. Claude Code CLI ---------------------------------------------------------------------------
 
 def claude_cli(prompt, opts):
     """One ``claude -p`` call with structured output, no tools and no project context.
@@ -884,7 +920,7 @@ def step_export(paths, opts):
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("step", choices=["works", "fetch", "cluster", "summarize", "collect", "export", "all"])
+    p.add_argument("step", choices=["works", "fetch", "cluster", "corpus", "summarize", "collect", "export", "all"])
     p.add_argument("--year", default=os.environ.get("RELEASE_YEAR", "2026"))
     p.add_argument("--project-root", default=str(ROOT))
     p.add_argument("--source-db", help="private career DB (default: backend/cache/YEAR/source_db_path.txt)")
@@ -901,6 +937,7 @@ def parser():
     p.add_argument("--window", type=int, default=3, help="info-flow window width in years")
     p.add_argument("--null", type=int, default=200, help="info-flow permutations/bootstraps (-1 skips info flow)")
     p.add_argument("--force", action="store_true", help="recluster researchers whose input did not change")
+    p.add_argument("--chunk-size", type=int, default=20, help="topics per corpus chunk")
     p.add_argument("--engine", choices=["cli", "api"], default="cli",
                    help="cli: `claude -p` with the logged-in Claude Code account; api: Message Batches API")
     p.add_argument("--model", default=DEFAULT_MODEL)
@@ -924,7 +961,7 @@ def parser():
 def main(argv=None):
     a = parser().parse_args(argv)
     paths = Paths(a)
-    steps = ["works", "fetch", "cluster", "summarize", "export"] if a.step == "all" else [a.step]
+    steps = ["works", "fetch", "cluster", "corpus"] if a.step == "all" else [a.step]
     for step in steps:
         if step == "works":
             step_works(paths)
@@ -932,6 +969,8 @@ def main(argv=None):
             step_fetch(paths, workers=a.workers)
         elif step == "cluster":
             step_cluster(paths, a)
+        elif step == "corpus":
+            step_corpus(paths, a)
         elif step == "summarize":
             step_summarize(paths, a)
         elif step == "collect":

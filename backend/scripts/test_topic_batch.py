@@ -183,6 +183,71 @@ class TopicBatchTest(unittest.TestCase):
             self.assertTrue(all(r['doi'].startswith('https://doi.org/') for r in rows))
             con.close()
 
+    def test_corpus_flow(self):
+        """works → fetch → cluster → corpus; Claude Code reads chunks and submits; export publishes."""
+        import contextlib
+        import io
+        import re
+        import topic_corpus as tc
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src, works, a, b = make_world(root)
+            common = ['--project-root', tmp, '--source-db', str(src), '--anon-salt', str(root / 'salt.bin'),
+                      '--dashboard', str(root / 'dashboard.json'), '--topics-db', str(root / 'topics.sqlite'),
+                      '--cache-db', str(root / 'cache.sqlite'), '--out-dir', str(root / 'out'), '--null', '10', '--chunk-size', '2']
+            args = tb.parser().parse_args(['all'] + common)
+            paths = tb.Paths(args)
+            tb.step_works(paths)
+            tb.step_fetch(paths, fetcher=lambda ids: (ids, {i: tb.compact_work(works[i]) for i in ids}))
+            tb.step_cluster(paths, args)
+            tb.step_corpus(paths, args)
+
+            def run(*argv, stdin=None):
+                out = io.StringIO()
+                old = sys.stdin
+                if stdin is not None:
+                    sys.stdin = io.StringIO(stdin)
+                code = 0
+                try:
+                    with contextlib.redirect_stdout(out):
+                        tc.main(list(argv) + ['--topics-db', str(root / 'topics.sqlite')])
+                except SystemExit as e:
+                    code = e.code or 0
+                finally:
+                    sys.stdin = old
+                return code, out.getvalue()
+
+            code, status = run('status')
+            self.assertIn('5 topics, 0 done, 5 pending in 3 chunks', status)
+            self.assertIn('Do not quote', run('rules')[1])
+            _, chunk0 = run('next', '--chunk', '0')
+            ids = re.findall(r'^## id: (\w+)$', chunk0, re.M)
+            self.assertEqual(len(ids), 2)
+            self.assertNotIn(a, chunk0)
+            self.assertNotIn('Univ', chunk0)
+            self.assertIn('Papers per year:', chunk0)
+            second = chunk0.split(f'## id: {ids[1]}')[1]
+            title = re.search(r'^1\. \S+ — (.+?) — ', second, re.M).group(1)
+            lines = [json.dumps({'id': ids[0], 'en': 'Collective behaviour studied since 2000.', 'ko': '2000년부터 집단 거동을 다룬다.'}),
+                     json.dumps({'id': ids[1], 'en': f'It repeats {title} verbatim.', 'ko': '제목 반복.'}),
+                     json.dumps({'id': 'nope', 'en': 'x', 'ko': 'y'})]
+            code, out = run('submit', '-', stdin='\n'.join(lines))
+            self.assertEqual(code, 1)
+            self.assertIn('ok 1, rejected_title_overlap 1', out)
+            self.assertIn("unknown id 'nope'", out)
+            _, again = run('next', '--chunk', '0')
+            self.assertEqual(re.findall(r'^## id: (\w+)$', again, re.M), [ids[1]])  # only the rejected one remains
+            code, out = run('submit', '-', stdin=json.dumps({'id': ids[1], 'en': 'Rewritten summary.', 'ko': '다시 쓴 요약.'}))
+            self.assertEqual(code, 0)
+            self.assertIn('pending topics left: 3', out)
+            tb.step_corpus(paths, args)  # rebuilding leaves out summarized topics
+            self.assertIn('3 topics, 0 done, 3 pending', run('status')[1])
+            tb.step_export(paths, args)
+            summaries = [json.loads((root / 'out' / 'detail' / f'{x}.json').read_text())['summaries'] for x in (a, b)]
+            self.assertEqual(sum(len(x) for x in summaries), 2)
+            index = json.loads((root / 'out' / 'index.json').read_text())
+            self.assertIn('claude-code', index['method']['summaries'])
+
     def test_repeats_title(self):
         title = 'Synchronization of phase oscillators on scale-free networks'
         self.assertFalse(tb.repeats_title('Starting with oscillators on scale-free networks, it moved to power grids.', [title]))

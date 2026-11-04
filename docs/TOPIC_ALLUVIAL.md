@@ -11,7 +11,7 @@
 | 단일 연구자 | 토픽 레인 × 연도(또는 경력 시기). 띠 두께 = 논문 수, 점선 = 모토픽 분기, NEW = 독립 신규, 회색 호 = ABA 경로. |
 | 멀티 연구자 | 검색에 걸린 토픽을 **스택**(연구자별 레인) 또는 **오버랩**(연구자별 색 누적)으로 비교. |
 | 논문 제목 | 잠금 해제 후 툴팁에 제목·저널·DOI 표시(연구자별 암호화 조각). |
-| 토픽 요약 | 토픽표에 Claude가 대표 논문의 제목·초록·출판일로 생성한 한국어·영문 요약(주제, 시작 시기, 전개)을 표시. |
+| 토픽 요약 | 토픽표에 Claude Code가 말뭉치(대표 논문의 제목·초록·출판일)로 쓴 한국어·영문 요약(주제, 시작 시기, 전개)을 표시. |
 
 멀티 뷰의 토픽은 연구자마다 따로 클러스터링한 결과다. 같은 질의에 걸린 토픽을 같은 연도축에 놓은 비교이며, 전원을 다시 클러스터링한 공통 토픽축(`pipeline/scripts/build_multi.py`)과는 다르다.
 
@@ -34,42 +34,45 @@
 비공개 원본 DB가 있는 환경에서 실행한다. 단계마다 결과를 저장하므로 중간에 끊겨도 같은 명령으로 이어서 하고, 입력이 바뀐 연구자만 다시 계산한다.
 
 ```bash
-pip install -r backend/topics/pipeline/requirements.txt cryptography anthropic
+pip install -r backend/topics/pipeline/requirements.txt cryptography
 
 export OPENALEX_API_KEY=...      # 선택: OpenAlex 한도 상향
 export NAMES_PASSWORD=...        # 제목 조각 암호화
-claude -p "hi"                   # 요약 단계는 로그인된 Claude Code CLI를 쓴다
 
-python3 backend/topics/topic_batch.py all --year 2026
+python3 backend/topics/topic_batch.py all --year 2026   # works → fetch → cluster → corpus
+# Claude Code(이 저장소 폴더)에서:  /topic-summaries
+python3 backend/topics/topic_batch.py export
 ```
 
-`all`은 아래 다섯 단계를 차례로 실행한다. 원본 DB 경로는 `backend/cache/YEAR/source_db_path.txt`(릴리스 파이프라인이 기록) 또는 `--source-db`, 익명 ID 솔트는 `.private/anon_salt.bin`을 쓴다.
+원본 DB 경로는 `backend/cache/YEAR/source_db_path.txt`(릴리스 파이프라인이 기록) 또는 `--source-db`, 익명 ID 솔트는 `.private/anon_salt.bin`을 쓴다.
 
 | 단계 | 하는 일 | 저장 위치 (커밋 금지) |
 | --- | --- | --- |
 | `works` | `work_authorship_evidence`에서 `keep` 판정 + KOAD `namesake_paper` 전부 제외 + phd_year−5 ≤ 연도 ≤ 릴리스 연도 논문(저자 순서 무관, `build_research_areas.py`와 같은 규칙). 공개 모집단에 있는 익명 ID만 | `.private/topics_YEAR.sqlite` |
 | `fetch` | OpenAlex에서 참고문헌·초록·제목·출판일을 50편씩 OR 필터로 수집, 병합된 ID는 개별 조회로 보완 | `backend/cache/YEAR/topic_works.sqlite` |
 | `cluster` | 연구자별 공유 참고문헌 코사인 가중 Louvain(공유 ≥2편, resolution 1.05). `--min-size`(기본 3)편 미만 군집은 연구자당 하나의 `Other` 토픽으로 묶는다. 영문 c-TF-IDF 이름·특징어, 모토픽, 분기·합류 정보량 계산 | 토픽 DB |
-| `summarize` | 이름 붙은 토픽마다 특징어, 연도별 편수, 출판일 순 대표 논문(활동 기간을 세 구간으로 나눠 구간마다 TF-IDF 중심에 가까운 논문, 최대 10편)의 제목·초록 발췌를 `claude -p`로 보내 무엇을 연구했는지와 언제 시작해 어디로 옮겨 갔는지를 담은 영문·한국어 요약 생성 | 토픽 DB `summaries` |
+| `corpus` | 아직 요약이 없는 토픽마다 말뭉치 한 건: 특징어, 활동 기간, 연도별 편수, 출판일 순 대표 논문(활동 기간을 세 구간으로 나눠 구간마다 TF-IDF 중심에 가까운 논문, 최대 10편)의 날짜·제목·초록 발췌. 20건씩 청크 번호를 붙인다(`--chunk-size`) | 토픽 DB `summary_corpus` |
+| Claude Code `/topic-summaries` | 세션이 청크를 읽고 직접 영문·한국어 요약을 써서 제출 | 토픽 DB `summaries` |
 | `export` | 공유 LSA 공간을 만들고 위 공개 파일을 쓴다 | `public/data/topics` |
 
-토픽 DB의 주요 테이블: `researcher_works`(연구자–논문), `topics`(토픽 이름·특징어·크기·모토픽·구성 해시), `topic_members`(토픽–논문), `researcher_runs`(입력 해시·경력 시기·정보량), `summaries`(구성 해시별 요약과 상태).
+토픽 DB의 주요 테이블: `researcher_works`(연구자–논문), `topics`(토픽 이름·특징어·크기·모토픽·구성 해시), `topic_members`(토픽–논문), `researcher_runs`(입력 해시·경력 시기·정보량), `summary_corpus`(요약할 말뭉치), `summaries`(구성 해시별 요약과 상태).
 
-**요약 엔진.** 기본은 Claude Code CLI(`claude -p --json-schema … --tools "" --no-session-persistence`)다. 로그인된 계정으로 실행하고, 빈 임시 폴더에서 돌려 프로젝트 설정·CLAUDE.md가 섞이지 않게 한다. 기본 4개를 병렬로 돌리고(`--cli-workers`), 한 묶음이 전부 실패하면(사용량 한도·장애) 시도 횟수를 쓰지 않고 1분부터 두 배씩 최대 30분 간격으로 기다리다 `--max-wait`(기본 360분)을 넘으면 멈춘다. 끝난 요약은 그때그때 저장하므로 같은 명령으로 이어서 하면 된다. `--engine api`는 Message Batches API(ANTHROPIC_API_KEY)를 쓴다.
-
-**요약 규칙.** Claude에는 실명·익명 ID·기관을 보내지 않는다(특징어, 군집 편수, 대표 논문 제목·초록 발췌만 보낸다). 요약은 구성 논문 집합의 해시에 묶여 있어, 다시 클러스터링해도 구성이 같으면 다시 요청하지 않는다. 요약이 논문 제목 전체(8단어보다 긴 제목은 연속 8단어)를 그대로 담으면 공개하지 않는다(`rejected_title_overlap`). 분야 용어 수준의 짧은 구절 겹침은 허용한다 — 제목은 잠금 해제 뒤에만 보이므로 요약으로 제목이 새면 익명성이 깨진다. 거부(`refused`)·형식 오류(`invalid`)도 저장하며 `--retry-failed`로만 다시 보낸다. 오류·만료된 배치 요청은 다음 실행 때 자동으로 다시 보낸다.
-
-**시험 실행과 옵션.**
+**Claude Code가 말뭉치로 요약하기.** 파이썬은 모델을 부르지 않는다. 말뭉치를 DB에 쌓아 두면 Claude Code 세션이 `.claude/skills/topic-summaries`(슬래시 명령 `/topic-summaries`)의 절차대로 `backend/topics/topic_corpus.py`를 써서 작업한다.
 
 ```bash
-python3 backend/topics/topic_batch.py summarize --dry-run           # 요청 수와 입력 토큰 추정만
-python3 backend/topics/topic_batch.py summarize --limit 50          # 50개 토픽만 시험
-python3 backend/topics/topic_batch.py summarize --cli-workers 8     # CLI 병렬 수
-python3 backend/topics/topic_batch.py summarize --model claude-sonnet-5-5 --effort low
-python3 backend/topics/topic_batch.py summarize --engine api --no-wait && python3 backend/topics/topic_batch.py collect
+python3 backend/topics/topic_corpus.py status            # 진행률과 남은 청크 번호
+python3 backend/topics/topic_corpus.py rules             # 요약 규칙
+python3 backend/topics/topic_corpus.py next --chunk 12   # 청크 12의 남은 토픽 말뭉치
+python3 backend/topics/topic_corpus.py submit - <<'JSONL'
+{"id": "<토픽 id>", "en": "...", "ko": "..."}
+JSONL
 ```
 
-기본 모델은 `claude-opus-5-5`(effort `low`, 구조화 출력)다. 요약 지시문을 바꾸면 `PROMPT_VERSION`을 올린다 — 이전 버전 요약은 다음 실행에서 다시 만든다(새 요약이 생길 때까지는 이전 요약을 공개한다).
+`submit`은 두 언어가 모두 있고 논문 제목을 옮기지 않은 요약만 저장하고, 거부한 id를 알려 준다(다시 써서 제출). `next`는 아직 요약이 없는 토픽만 보여 주므로 같은 청크를 두 번 열어도 문제없고, 청크 번호 구간을 나눠 하위 에이전트나 여러 세션이 동시에 작업할 수 있다. 중간에 멈춰도 저장된 요약은 남고, `corpus`를 다시 돌리면 요약된 토픽은 빠진다.
+
+**요약 규칙.** 말뭉치에는 실명·익명 ID·기관이 없다(특징어, 기간·연도별 편수, 대표 논문 날짜·제목·초록 발췌만). 요약은 무엇을 연구했는지와 언제 시작해 어디로 옮겨 갔는지를 쓴다. 요약은 구성 논문 집합의 해시에 묶여 있어, 다시 클러스터링해도 구성이 같으면 다시 쓰지 않는다. 요약이 논문 제목 전체(8단어보다 긴 제목은 연속 8단어)를 그대로 담으면 저장하지 않는다(`rejected_title_overlap`). 분야 용어 수준의 짧은 구절 겹침은 허용한다 — 제목은 잠금 해제 뒤에만 보이므로 요약으로 제목이 새면 익명성이 깨진다. 요약 규칙(`SUMMARY_SYSTEM`)이나 말뭉치 형식을 바꾸면 `PROMPT_VERSION`을 올린다 — 이전 버전 요약은 새 요약이 생길 때까지 공개된다.
+
+**무인 실행 대안.** 사람이 세션을 지켜보지 않고 돌리려면 `topic_batch.py summarize`가 같은 말뭉치 문장을 토픽마다 `claude -p`(기본, `--cli-workers`, 사용량 한도 시 대기 후 재시도) 또는 Message Batches API(`--engine api`, ANTHROPIC_API_KEY)로 보낸다. `--dry-run`, `--limit N`, `--model`, `--effort` 옵션이 있다.
 
 **개별 연구자 정밀 파이프라인.** `backend/topics/pipeline`(대표 논문으로 저자 ID 역추적 → 판별 → 토픽 → 라벨 → 분기, `--citers`로 ABA 경로 포함)과 `export_public_index.py`는 한 사람씩 사람이 라벨을 고쳐 가며 만드는 기존 절차로 남겨 둔다. 두 경로의 군집·분기 계산은 `pipeline/scripts/topics.py`의 `cluster`와 `branching.py`의 `parent_links`를 함께 쓴다.
 
