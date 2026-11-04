@@ -4,7 +4,8 @@
 export type TopicEra = { label: string; start: number | null; end: number | null };
 export type TopicParent = { from: number; sim: number; from_year: number | null; to_year: number | null };
 export type TopicTags = { ko: string[]; en: string[] };
-export type TopicNode = { id: number; label: string; size: number; birth_year: number | null; parent: TopicParent | null; keywords: string[]; tags: TopicTags; vector: number[] | null };
+export type TopicSummary = { en: string; ko: string };
+export type TopicNode = { id: number; label: string; size: number; birth_year: number | null; parent: TopicParent | null; keywords: string[]; tags: TopicTags; vector: number[] | null; misc: boolean; summary: TopicSummary | null };
 export type TopicPaper = { year: number; topic: number; era: number | null; cited: number };
 export type TopicRecip = { from_topic: number; to_topic: number; from_year: number; to_year: number; x_year: number };
 export type TopicCounts = { source_works: number | null; kept_works: number | null; merged_versions: number | null };
@@ -29,7 +30,11 @@ export type TopicResearcher = {
   id: string; alias: string | null; subject: string; institution: string | null;
   eras: TopicEra[]; topics: TopicNode[]; papers: TopicPaper[]; recip: TopicRecip[];
   counts: TopicCounts | null; fetched_at: string | null; info: InfoFlow | null;
+  /** Relative path of the per-researcher shard (info flow, summaries) in a sharded release; null when inline. */
+  detail: string | null;
 };
+/** Per-researcher shard of a sharded release: loaded when the researcher is opened. */
+export type TopicDetail = { info: InfoFlow | null; summaries: Map<number, TopicSummary> };
 /** One LSA space shared by every researcher; int8 unit vectors. */
 export type TopicSemantic = { dims: number; terms: Map<string, Float32Array>; glossary: Map<string, string[]> };
 export type TopicIndex = {
@@ -53,6 +58,9 @@ export function validatePaperTitles(raw: unknown): EncryptedPaperTitles {
 }
 
 export const TOPIC_SCHEMA = 'kstem-topic-alluvial/1';
+/** Sharded release: paper_cells, base64 int8 vectors, per-researcher detail and title shards. */
+export const TOPIC_SCHEMA_V2 = 'kstem-topic-alluvial/2';
+const DETAIL_PATH = /^detail\/[A-Za-z0-9-]+\.json$/;
 export const TOPIC_PALETTE = ['#3366FF', '#12B5A6', '#F59E0B', '#E5484D', '#8E4EC6', '#0EA5E9', '#65A30D', '#D946EF', '#F97316', '#64748B'];
 const OTHER_COLOR = '#A3A9B4';
 
@@ -83,7 +91,7 @@ function normalizeEra(raw: unknown): TopicEra {
 /** Validates the public index. Paper titles are rejected so a mistaken export cannot publish them. */
 export function normalizeTopicIndex(raw: unknown): TopicIndex {
   const root = (raw || {}) as Record<string, unknown>;
-  if (root.schema !== TOPIC_SCHEMA) throw new Error(`Unsupported topic schema: ${String(root.schema)}`);
+  if (root.schema !== TOPIC_SCHEMA && root.schema !== TOPIC_SCHEMA_V2) throw new Error(`Unsupported topic schema: ${String(root.schema)}`);
   if (!Array.isArray(root.researchers)) throw new Error('Topic index has no researchers');
   const researchers = root.researchers.map((entry): TopicResearcher => {
     const r = (entry || {}) as Record<string, unknown>;
@@ -94,15 +102,18 @@ export function normalizeTopicIndex(raw: unknown): TopicIndex {
       const parent = t.parent && typeof t.parent === 'object' ? t.parent as Record<string, unknown> : null;
       const tags = (t.tags || {}) as Record<string, unknown>;
       const strings = (value: unknown) => Array.isArray(value) ? value.filter((x): x is string => typeof x === 'string' && Boolean(x.trim())) : [];
-      const vector = Array.isArray(t.vector) && t.vector.every(v => typeof v === 'number') ? t.vector as number[] : null;
+      const vector = Array.isArray(t.vector) && t.vector.every(v => typeof v === 'number') ? t.vector as number[] : decodeVector(t.vector_b64);
+      const label = str(t.label) || `T${String(t.id)}`, keywords = strings(t.keywords);
+      const tagsEn = strings(tags.en);
       return {
-        id: num(t.id) ?? -1, label: str(t.label) || `T${String(t.id)}`, size: num(t.size) ?? 0, birth_year: num(t.birth_year),
+        id: num(t.id) ?? -1, label, size: num(t.size) ?? 0, birth_year: num(t.birth_year),
         parent: parent && num(parent.from) !== null ? { from: num(parent.from)!, sim: num(parent.sim) ?? 0, from_year: num(parent.from_year), to_year: num(parent.to_year) } : null,
-        keywords: strings(t.keywords), tags: { ko: strings(tags.ko), en: strings(tags.en) }, vector,
+        keywords, tags: { ko: strings(tags.ko), en: tagsEn.length ? tagsEn : englishTags(label, keywords) }, vector,
+        misc: t.misc === true || /^\s*(other\b|기타)/i.test(label), summary: normalizeSummary(t.summary),
       };
     }).filter(t => t.id >= 0);
     const topicIds = new Set(topics.map(t => t.id));
-    const papers = (Array.isArray(r.papers) ? r.papers : []).map((value): TopicPaper | null => {
+    const papers = (Array.isArray(r.papers) ? r.papers : []).concat(expandCells(r.paper_cells)).map((value): TopicPaper | null => {
       const p = (value || {}) as Record<string, unknown>;
       if ('title' in p || 'doi' in p) throw new Error(`Public topic index for ${id} contains paper titles`);
       const year = num(p.year), topic = num(p.topic);
@@ -120,13 +131,66 @@ export function normalizeTopicIndex(raw: unknown): TopicIndex {
       eras: (Array.isArray(r.eras) ? r.eras : []).map(normalizeEra), topics, papers, recip,
       counts: counts ? { source_works: num(counts.source_works), kept_works: num(counts.kept_works), merged_versions: num(counts.merged_versions) } : null,
       fetched_at: str(r.fetched_at), info: normalizeInfoFlow(r.info, topicIds),
+      detail: typeof r.detail === 'string' && DETAIL_PATH.test(r.detail) ? r.detail : null,
     };
   });
   return {
-    schema: TOPIC_SCHEMA, source: root.source === 'release' ? 'release' : 'demo', generated_at: str(root.generated_at) || '',
+    schema: String(root.schema), source: root.source === 'release' ? 'release' : 'demo', generated_at: str(root.generated_at) || '',
     method: Object.fromEntries(Object.entries((root.method || {}) as Record<string, unknown>).filter(([, v]) => typeof v === 'string')) as Record<string, string>,
     researchers, semantic: normalizeSemantic(root.semantic),
   };
+}
+
+function normalizeSummary(raw: unknown): TopicSummary | null {
+  const s = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+  const en = str(s?.en), ko = str(s?.ko);
+  return en || ko ? { en: en || '', ko: ko || '' } : null;
+}
+
+/** base64 of int8 values → number[] (sharded release); null when absent or malformed. */
+export function decodeVector(raw: unknown): number[] | null {
+  if (typeof raw !== 'string' || !raw || !/^[A-Za-z0-9+/]+=*$/.test(raw)) return null;
+  const bytes = Uint8Array.from(atob(raw), c => c.charCodeAt(0));
+  return Array.from(new Int8Array(bytes.buffer));
+}
+
+/** [year, topic, era, n, cited] cells → n paper rows; the first row carries the cell's citation sum. */
+function expandCells(raw: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Record<string, unknown>[] = [];
+  for (const cell of raw) {
+    if (!Array.isArray(cell) || cell.length < 5) continue;
+    const [year, topic, era, n, cited] = cell;
+    const count = num(n);
+    if (count === null || count < 1 || count > 100000) continue;
+    for (let i = 0; i < count; i++) out.push({ year, topic, era, cited: i === 0 ? cited : 0 });
+  }
+  return out;
+}
+
+/** English tags from label pieces plus keywords, mirroring topic_semantics.english_tags. */
+function englishTags(label: string, keywords: string[], n = 12): string[] {
+  const pieces = /[가-힣]/.test(label) ? [] : label.split(/[·,/()]/).map(x => x.trim().toLowerCase()).filter(x => x && !/^(other|misc)\b/i.test(x));
+  return [...new Set([...pieces, ...keywords.map(k => k.toLowerCase())].filter(Boolean))].slice(0, n);
+}
+
+/** Per-researcher detail shard → info flow + summaries; topics the index does not know are dropped. */
+export function normalizeTopicDetail(raw: unknown, researcher: TopicResearcher): TopicDetail {
+  const root = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  if (root.id !== researcher.id) throw new Error('Topic detail does not match researcher');
+  const topicIds = new Set(researcher.topics.map(t => t.id));
+  const summaries = new Map<number, TopicSummary>();
+  for (const [key, value] of Object.entries((root.summaries || {}) as Record<string, unknown>)) {
+    const id = Number(key), s = normalizeSummary(value);
+    if (Number.isInteger(id) && topicIds.has(id) && s) summaries.set(id, s);
+  }
+  return { info: normalizeInfoFlow(root.info, topicIds), summaries };
+}
+
+/** Researcher with its detail shard merged in (info flow, per-topic summaries). */
+export function withDetail(researcher: TopicResearcher, detail: TopicDetail | null): TopicResearcher {
+  if (!detail) return researcher;
+  return { ...researcher, info: detail.info ?? researcher.info, topics: researcher.topics.map(t => ({ ...t, summary: detail.summaries.get(t.id) ?? t.summary })) };
 }
 
 const pair = (value: unknown): [number, number] | null =>
@@ -214,7 +278,7 @@ export function orderedTopics(r: TopicResearcher): TopicNode[] {
 export function topicColors(r: TopicResearcher): Map<number, string> {
   const colors = new Map<number, string>();
   let next = 0;
-  for (const topic of orderedTopics(r)) colors.set(topic.id, /기타|other/i.test(topic.label) ? OTHER_COLOR : TOPIC_PALETTE[next++ % TOPIC_PALETTE.length]);
+  for (const topic of orderedTopics(r)) colors.set(topic.id, topic.misc || /기타|other/i.test(topic.label) ? OTHER_COLOR : TOPIC_PALETTE[next++ % TOPIC_PALETTE.length]);
   return colors;
 }
 
@@ -332,7 +396,7 @@ export function layoutAlluvial(r: TopicResearcher, mode: AlluvialMode, options: 
     topEdge.push([x(b) + columnWidth * 0.42, lane.mid - 0.5]); bottomEdge.push([x(b) + columnWidth * 0.42, lane.mid + 0.5]);
     ribbons.push({ topic: lane.topic.id, color: lane.color, d: `${smooth(topEdge, false)} ${smooth(bottomEdge, true)} Z` });
     for (const i of active) dots.push({ topic: lane.topic.id, column: i, x: x(i), y: lane.mid, r: compact ? 1 : Math.min(7, 2.5 + Math.sqrt(lane.counts[i]) * 1.6), count: lane.counts[i], cited: cited.get(lane.topic.id)![i] });
-    births.push({ topic: lane.topic.id, x: x(a) - columnWidth * 0.42, y: lane.mid, independent: !lane.topic.parent });
+    births.push({ topic: lane.topic.id, x: x(a) - columnWidth * 0.42, y: lane.mid, independent: !lane.topic.parent && !lane.topic.misc });
   }
 
   const laneOf = new Map(lanes.map(l => [l.topic.id, l]));

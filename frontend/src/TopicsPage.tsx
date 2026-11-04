@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Professor } from './types';
 import { canonicalSchool, institutionDisplayName, institutionSearchText } from './schoolIdentity';
 import {
-  layoutAlluvial, layoutMulti, normalizeTopicIndex, orderedTopics, queryResearchers, searchTopics, seriesFromHits, tagCloud, topicColors, yearRange,
-  type AlluvialMode, type EncryptedPaperTitles, type MultiMode, type QueryEntry, type TopicHit, type TopicIndex, type TopicResearcher,
+  layoutAlluvial, layoutMulti, normalizeTopicDetail, normalizeTopicIndex, orderedTopics, queryResearchers, searchTopics, seriesFromHits, tagCloud, topicColors, withDetail, yearRange,
+  type AlluvialMode, type EncryptedPaperTitles, type MultiMode, type QueryEntry, type TopicDetail, type TopicHit, type TopicIndex, type TopicResearcher,
 } from './topics';
+import type { TopicTitleSource } from './topicTitles';
 import ResearchAreaTree from './ResearchAreaTree';
 import { researcherTexts } from './researcherQuery';
 import { useResearchAreas } from './useResearchAreas';
@@ -12,7 +13,8 @@ import InfoFlowPanel from './InfoFlowPanel';
 import { downloadSvg, figureDate, printSvgAsPdf, type FigureMeta } from './exportFigure';
 import './topics.css';
 
-type Props = { professors: Professor[]; names: Record<string, string> | null; titles: EncryptedPaperTitles | null; releaseYear: number; onOpenCareer: (id: string) => void };
+type Props = { professors: Professor[]; names: Record<string, string> | null; titles: TopicTitleSource | null; releaseYear: number; onOpenCareer: (id: string) => void };
+const PAGE = 60;
 type Selection = { kind: 'none' } | { kind: 'institution'; key: string } | { kind: 'researcher'; id: string } | { kind: 'topic'; q: string };
 const SUBJECTS: Record<string, string> = { mathematics: '수학', physics: '물리', chemistry: '화학', biology: '생물' };
 const n = (value: number) => value.toLocaleString('ko-KR');
@@ -151,14 +153,15 @@ function TopicTable({ researcher, focus, setFocus }: { researcher: TopicResearch
   const colors = topicColors(researcher);
   const byId = new Map(researcher.topics.map(t => [t.id, t]));
   return <div className="tp-table-wrap"><table className="tp-table">
-    <thead><tr><th>토픽 · 특징어 (c-TF-IDF)</th><th className="num">논문</th><th>활동</th><th>기원</th></tr></thead>
+    <thead><tr><th>토픽 · 특징어 (c-TF-IDF) · 요약</th><th className="num">논문</th><th>활동</th><th>기원</th></tr></thead>
     <tbody>{orderedTopics(researcher).map(topic => {
       const years = researcher.papers.filter(p => p.topic === topic.id).map(p => p.year);
       return <tr key={topic.id} className={focus === topic.id ? 'is-focus' : ''} onMouseEnter={() => setFocus(topic.id)} onMouseLeave={() => setFocus(null)}>
-        <th scope="row"><i style={{ background: colors.get(topic.id) }} />{topic.label}{topic.tags.en.length > 0 && <span className="tp-tags">{topic.tags.en.filter(tag => !topic.label.toLowerCase().includes(tag)).slice(0, 5).map(tag => <em key={tag}>{tag}</em>)}</span>}</th>
+        <th scope="row"><i style={{ background: colors.get(topic.id) }} />{topic.label}{topic.tags.en.length > 0 && <span className="tp-tags">{topic.tags.en.filter(tag => !topic.label.toLowerCase().includes(tag)).slice(0, 5).map(tag => <em key={tag}>{tag}</em>)}</span>}
+          {topic.summary && <span className="tp-summary">{topic.summary.ko && <span lang="ko">{topic.summary.ko}</span>}{topic.summary.en && <small lang="en">{topic.summary.en}</small>}</span>}</th>
         <td className="num">{years.length}</td>
         <td>{years.length ? `${Math.min(...years)}–${Math.max(...years)}` : '—'}</td>
-        <td>{topic.parent ? <span className="tp-origin">← {byId.get(topic.parent.from)?.label || `T${topic.parent.from}`}<small>coupling {topic.parent.sim}</small></span> : <span className="tp-chip tp-chip-new">독립 신규</span>}</td>
+        <td>{topic.misc ? <span className="tp-muted">작은 군집 묶음</span> : topic.parent ? <span className="tp-origin">← {byId.get(topic.parent.from)?.label || `T${topic.parent.from}`}<small>coupling {topic.parent.sim}</small></span> : <span className="tp-chip tp-chip-new">독립 신규</span>}</td>
       </tr>;
     })}</tbody>
   </table></div>;
@@ -188,6 +191,9 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
   const [topicQuery, setTopicQuery] = useState(() => { const sel = readSelection(); return sel.kind === 'topic' ? sel.q : ''; });
   const [multiMode, setMultiMode] = useState<MultiMode>('stack');
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const [details, setDetails] = useState<Map<string, TopicDetail | 'error'>>(new Map());
+  const [paperTitles, setPaperTitles] = useState<{ id: string; rows: EncryptedPaperTitles[string] | null } | null>(null);
+  const [paging, setPaging] = useState({ key: '', n: PAGE });
   const input = useRef<HTMLInputElement>(null);
   function select(next: Selection) { setSelectionState(next); writeSelection(next); setOpen(false); setQuery(''); setFocus(null); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 
@@ -211,6 +217,24 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
   }, []);
 
   const topicById = useMemo(() => new Map((index?.researchers || []).map(r => [r.id, r])), [index]);
+  const selectedId = selection.kind === 'researcher' ? selection.id : null;
+  const selectedBase = selectedId ? topicById.get(selectedId) || null : null;
+  useEffect(() => {
+    // Sharded releases keep info flow and summaries per researcher; fetch the shard once when opened.
+    if (!selectedBase?.detail || details.has(selectedBase.id)) return;
+    let alive = true;
+    const base = selectedBase;
+    fetch(`${import.meta.env.BASE_URL}data/topics/${base.detail}`).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then(raw => { if (alive) setDetails(prev => new Map(prev).set(base.id, normalizeTopicDetail(raw, base))); })
+      .catch(() => { if (alive) setDetails(prev => new Map(prev).set(base.id, 'error')); });
+    return () => { alive = false; };
+  }, [selectedBase, details]);
+  useEffect(() => {
+    if (!titles || !selectedId) return;
+    let alive = true;
+    titles(selectedId).then(rows => { if (alive) setPaperTitles({ id: selectedId, rows }); });
+    return () => { alive = false; };
+  }, [titles, selectedId]);
   const professorById = useMemo(() => new Map(professors.map(p => [p.id, p])), [professors]);
   const entries = useMemo<QueryEntry[]>(() => {
     const list: QueryEntry[] = professors.map(p => {
@@ -239,7 +263,15 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
   if (!index) return <section className="tp-page"><p className="tp-empty" aria-live="polite">토픽 색인을 불러오는 중입니다.</p></section>;
 
   const withTopics = index.researchers.filter(r => !subject || r.subject === subject);
-  const researcher = selection.kind === 'researcher' ? topicById.get(selection.id) || null : null;
+  // Card paging restarts whenever the field filter or the selection changes.
+  const pageKey = `${subject}|${JSON.stringify(selection)}`;
+  const shown = paging.key === pageKey ? paging.n : PAGE;
+  const more = () => setPaging({ key: pageKey, n: shown + PAGE });
+  const detail = selectedBase ? details.get(selectedBase.id) : undefined;
+  const researcher = selectedBase ? withDetail(selectedBase, detail && detail !== 'error' ? detail : null) : null;
+  const detailPending = Boolean(selectedBase?.detail) && detail === undefined;
+  const recipComputed = index.method.recip !== 'not_computed';
+  const researcherTitles = titles && paperTitles && researcher && paperTitles.id === researcher.id ? paperTitles.rows : null;
   const selectedEntry = selection.kind === 'researcher' ? entryById.get(selection.id) : null;
   const institutionMembers = selection.kind === 'institution' ? visibleEntries.filter(e => e.institution === selection.key) : [];
   const totalPapers = index.researchers.reduce((s, r) => s + r.papers.length, 0);
@@ -257,7 +289,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
       <div>
         <span className="v2-kicker">Topic alluvial · {releaseYear}</span>
         <h1 id="tp-title">연구 토픽 흐름</h1>
-        <p>교수별 논문을 공유 참고문헌으로 클러스터링한 토픽을 연도·경력 시기 축에 배치합니다. 토픽의 생성 시점, 모토픽, 연도별 논문 수를 표시합니다. 토픽 이름과 특징어는 c-TF-IDF 영문 용어입니다. 검색: 소속 기관·익명 ID·토픽 키워드(영문, 한국어 검색어는 용어집으로 영문 변환), 이름은 잠금 해제 후.</p>
+        <p>교수별 논문을 공유 참고문헌으로 클러스터링한 토픽을 연도·경력 시기 축에 배치합니다. 토픽의 생성 시점, 모토픽, 연도별 논문 수를 표시합니다. 토픽 이름과 특징어는 c-TF-IDF 영문 용어이고, 토픽 요약은 대표 논문에서 생성했습니다. 검색: 소속 기관·익명 ID·토픽 키워드(영문, 한국어 검색어는 용어집으로 영문 변환), 이름은 잠금 해제 후.</p>
       </div>
       <div className="v2-stats">
         <div className="v2-stat"><span>토픽 데이터 연구자</span><strong>{n(index.researchers.length)}</strong><small>전체 {n(professors.length)}명 중</small></div>
@@ -328,7 +360,8 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
 
     {selection.kind === 'researcher' && researcher && (() => {
       const range = yearRange(researcher)!;
-      const independent = researcher.topics.filter(t => !t.parent).length;
+      const independent = researcher.topics.filter(t => !t.parent && !t.misc).length;
+      const branched = researcher.topics.filter(t => t.parent && !t.misc).length;
       return <article className="tp-detail">
         <header className="tp-profile">
           <div><span className="tp-chip">{SUBJECTS[researcher.subject] || researcher.subject}</span>
@@ -338,11 +371,11 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
           </div>
           {professorById.has(researcher.id) && <button type="button" className="v2-button" onClick={() => onOpenCareer(researcher.id)}>경력·생산성 보기 →</button>}
         </header>
-        <div className="v2-stats v2-stats-4">
+        <div className={`v2-stats ${recipComputed ? 'v2-stats-4' : ''}`}>
           <div className="v2-stat"><span>논문</span><strong>{n(researcher.papers.length)}</strong><small>{researcher.counts?.source_works ? `원본 ${n(researcher.counts.source_works)}건에서 판별` : '판별 후 고유 논문'}</small></div>
-          <div className="v2-stat"><span>토픽</span><strong>{researcher.topics.length}</strong><small>독립 신규 {independent} · 분기 {researcher.topics.length - independent}</small></div>
+          <div className="v2-stat"><span>토픽</span><strong>{researcher.topics.length}</strong><small>독립 신규 {independent} · 분기 {branched}{researcher.topics.some(t => t.misc) ? ' · 기타 1' : ''}</small></div>
           <div className="v2-stat"><span>활동 기간</span><strong>{range[1] - range[0] + 1}<em>년</em></strong><small>{range[0]} – {range[1]}</small></div>
-          <div className="v2-stat"><span>ABA 경로</span><strong>{researcher.recip.length}</strong><small>피인용 상위 표본</small></div>
+          {recipComputed && <div className="v2-stat"><span>ABA 경로</span><strong>{researcher.recip.length}</strong><small>피인용 상위 표본</small></div>}
         </div>
         <section className="tp-chart-card" aria-label="토픽 흐름 다이어그램">
           <div className="tp-chart-bar">
@@ -352,21 +385,24 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
                 <button type="button" className={mode === 'year' ? 'is-on' : ''} aria-pressed={mode === 'year'} onClick={() => setMode('year')}>연도</button>
                 <button type="button" className={mode === 'era' ? 'is-on' : ''} aria-pressed={mode === 'era'} onClick={() => setMode('era')}>경력 시기</button>
               </div>
-              <label className="v2-switch"><input type="checkbox" checked={showArcs} onChange={e => setShowArcs(e.target.checked)} /><span />ABA 경로</label>
+              {recipComputed && <label className="v2-switch"><input type="checkbox" checked={showArcs} onChange={e => setShowArcs(e.target.checked)} /><span />ABA 경로</label>}
               <button type="button" className="v2-btn-quiet" onClick={() => chartSvg.current && printSvgAsPdf(chartSvg.current, chartMeta(researcher))}>PDF 저장</button>
               <button type="button" className="v2-btn-quiet" onClick={() => chartSvg.current && downloadSvg(chartSvg.current, chartMeta(researcher).filename)}>SVG 저장</button>
             </div>
           </div>
-          <AlluvialChart researcher={researcher} mode={mode} showArcs={showArcs} focus={focus} setFocus={setFocus} titles={titles?.[researcher.id] || null} svgRef={chartSvg} />
+          <AlluvialChart researcher={researcher} mode={mode} showArcs={showArcs && recipComputed} focus={focus} setFocus={setFocus} titles={researcherTitles} svgRef={chartSvg} />
         </section>
-        <InfoFlowPanel key={researcher.id} researcher={researcher} />
+        {detailPending ? <p className="tp-muted" aria-live="polite">분기·합류 정보량과 토픽 요약을 불러오는 중입니다.</p>
+          : detail === 'error' ? <p className="tp-muted" role="alert">분기·합류 정보량과 토픽 요약을 불러오지 못했습니다.</p>
+          : <InfoFlowPanel key={researcher.id} researcher={researcher} />}
         <ResearchAreaTree profile={areas?.profiles.get(researcher.id)} title="OpenAlex 연구분야 계층" />
         <section className="tp-split">
           <div className="tp-panel"><h3>토픽과 분기</h3><TopicTable researcher={researcher} focus={focus} setFocus={setFocus} /></div>
           <div className="tp-panel tp-notes"><h3>읽는 법과 한계</h3><ul>
-            <li><b>토픽</b> 공유 참고문헌 양을 코사인 정규화한 가중 Louvain 군집입니다. 라벨은 c-TF-IDF 자동 라벨을 사람이 고친 해석입니다.</li>
+            <li><b>토픽</b> 공유 참고문헌 양을 코사인 정규화한 가중 Louvain 군집입니다. 이름은 c-TF-IDF 영문 특징어이고, 작은 군집은 ‘Other’로 묶습니다.</li>
+            {researcher.topics.some(t => t.summary) && <li><b>요약</b> 토픽별 대표 논문의 제목·초록을 Claude가 요약했습니다. 논문 제목을 5단어 이상 그대로 옮긴 요약은 싣지 않습니다.</li>}
             <li><b>분기</b> 새 토픽의 탄생기 논문과 그 이전 논문 사이 coupling 최댓값으로 모토픽을 정합니다. 연결이 없으면 독립 신규로 표시합니다.</li>
-            <li><b>ABA 경로</b> 본인이 저자가 아닌 논문이 초기 논문을 인용하고 후기 논문이 그것을 다시 인용한 경우입니다. 피인용 상위 표본이며 전수가 아닙니다.</li>
+            {recipComputed && <li><b>ABA 경로</b> 본인이 저자가 아닌 논문이 초기 논문을 인용하고 후기 논문이 그것을 다시 인용한 경우입니다. 피인용 상위 표본이며 전수가 아닙니다.</li>}
             <li><b>동명이인</b> KOAD 경력 연속성 판별을 통과한 논문만 씁니다. 국내 학회지·단행본·학위논문은 OpenAlex 수록이 불균일합니다.</li>
             {researcher.fetched_at && <li><b>수집일</b> {researcher.fetched_at}</li>}
           </ul></div>
@@ -383,15 +419,17 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
 
     {selection.kind === 'institution' && <section className="tp-grid-section">
       <div className="tp-section-head"><h2>{institutionName(selection.key)}</h2><p>{n(institutionMembers.length)}명 중 토픽 데이터 {n(institutionMembers.filter(m => m.hasTopics).length)}명</p></div>
-      <div className="tp-grid">{institutionMembers.filter(m => m.hasTopics).map(m => <ResearcherCard key={m.id} researcher={topicById.get(m.id)!} label={labelFor(m.id)} onOpen={() => select({ kind: 'researcher', id: m.id })} />)}</div>
+      <div className="tp-grid">{institutionMembers.filter(m => m.hasTopics).slice(0, shown).map(m => <ResearcherCard key={m.id} researcher={topicById.get(m.id)!} label={labelFor(m.id)} onOpen={() => select({ kind: 'researcher', id: m.id })} />)}</div>
+      {institutionMembers.filter(m => m.hasTopics).length > shown && <button type="button" className="v2-button tp-more" onClick={more}>더 보기 ({n(shown)} / {n(institutionMembers.filter(m => m.hasTopics).length)})</button>}
       {institutionMembers.some(m => !m.hasTopics) && <details className="tp-waiting"><summary>토픽 데이터 준비 중 {n(institutionMembers.filter(m => !m.hasTopics).length)}명</summary>
         <div>{institutionMembers.filter(m => !m.hasTopics).slice(0, 120).map(m => <button type="button" key={m.id} onClick={() => select({ kind: 'researcher', id: m.id })}>{labelFor(m.id)}<small>{SUBJECTS[m.subject] || m.subject}</small></button>)}</div></details>}
     </section>}
 
     {selection.kind === 'none' && <section className="tp-grid-section">
       <div className="tp-section-head"><h2>토픽 데이터가 있는 연구자</h2><p>{n(withTopics.length)}명 · 카드의 작은 그림은 연도별 토픽 띠입니다</p></div>
-      {withTopics.length ? <div className="tp-grid">{withTopics.map(r => <ResearcherCard key={r.id} researcher={r} label={labelFor(r.id)} onOpen={() => select({ kind: 'researcher', id: r.id })} />)}</div>
+      {withTopics.length ? <div className="tp-grid">{withTopics.slice(0, shown).map(r => <ResearcherCard key={r.id} researcher={r} label={labelFor(r.id)} onOpen={() => select({ kind: 'researcher', id: r.id })} />)}</div>
         : <p className="tp-empty">이 분야에는 아직 토픽 데이터가 없습니다.</p>}
+      {withTopics.length > shown && <button type="button" className="v2-button tp-more" onClick={more}>더 보기 ({n(shown)} / {n(withTopics.length)})</button>}
     </section>}
   </section>;
 }

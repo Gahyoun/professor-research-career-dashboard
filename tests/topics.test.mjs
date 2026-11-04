@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseEraLabel, normalizeTopicIndex, layoutAlluvial, queryResearchers, orderedTopics, eraOfYear, validatePaperTitles, TOPIC_SCHEMA } from '../work/test-dist/topics.js';
+import { parseEraLabel, normalizeTopicIndex, normalizeTopicDetail, withDetail, layoutAlluvial, queryResearchers, orderedTopics, eraOfYear, validatePaperTitles, TOPIC_SCHEMA, TOPIC_SCHEMA_V2 } from '../work/test-dist/topics.js';
 
 const researcher = (extra = {}) => ({
   id: 'P-AAAAAAAAAA', subject: 'physics', institution: 'Example University',
@@ -202,4 +202,41 @@ test('plural and singular English forms meet in topic search', () => {
   assert.equal(singular('gas'), 'gas');
   const index = shipped();
   for (const q of ['battery', 'batteries', '배터리']) assert.match(searchTopics(index, q).hits[0]?.topic.label || '', /batter/i, q);
+});
+
+test('sharded v2 index expands paper cells, decodes vectors and merges the detail shard', () => {
+  const vec = Buffer.from(Int8Array.from([127, -127, 0, 5]).buffer).toString('base64');
+  const raw = {
+    schema: TOPIC_SCHEMA_V2, source: 'release', generated_at: '2026-11-04', method: { recip: 'not_computed' }, researchers: [{
+      id: 'P-BBBBBBBBBB', subject: 'chemistry', institution: 'Example University', eras: [{ label: 'Example University 교원 (2010-)', start: 2010, end: null }],
+      topics: [
+        { id: 0, label: 'Photoredox catalysis · radical', size: 3, birth_year: 2011, parent: null, keywords: ['photoredox catalysis', 'radical'], misc: false, vector_b64: vec },
+        { id: 1, label: 'Other · misc notes', size: 1, birth_year: 2015, parent: null, keywords: ['notes'], misc: true, vector_b64: null },
+      ],
+      paper_cells: [[2011, 0, 0, 2, 9], [2012, 0, 0, 1, 4], [2015, 1, 0, 1, 0]],
+      recip: [], counts: { source_works: 5, kept_works: 4, merged_versions: null }, fetched_at: '2026-11-04', detail: 'detail/P-BBBBBBBBBB.json',
+    }],
+  };
+  const idx = normalizeTopicIndex(raw);
+  const r = idx.researchers[0];
+  assert.equal(r.papers.length, 4);
+  assert.equal(r.papers.filter(p => p.year === 2011).reduce((s, p) => s + p.cited, 0), 9);
+  assert.deepEqual(r.topics[0].vector, [127, -127, 0, 5]);
+  assert.deepEqual(r.topics[0].tags.en.slice(0, 2), ['photoredox catalysis', 'radical']);
+  assert.equal(r.topics[1].misc, true);
+  assert.equal(r.detail, 'detail/P-BBBBBBBBBB.json');
+  assert.equal(idx.method.recip, 'not_computed');
+  const detail = normalizeTopicDetail({ id: r.id, info: null, summaries: { 0: { en: 'Light-driven radical chemistry.', ko: '광화학 라디칼 반응 연구.' }, 7: { en: 'x', ko: 'y' } } }, r);
+  assert.equal(detail.summaries.size, 1);
+  const merged = withDetail(r, detail);
+  assert.equal(merged.topics[0].summary.ko, '광화학 라디칼 반응 연구.');
+  assert.equal(merged.topics[1].summary, null);
+  assert.throws(() => normalizeTopicDetail({ id: 'P-OTHER', summaries: {} }, r));
+  const unsafe = normalizeTopicIndex({ ...raw, researchers: [{ ...raw.researchers[0], detail: '../../secret.json' }] });
+  assert.equal(unsafe.researchers[0].detail, null);
+});
+
+test('v2 public index still rejects titles inside paper rows', () => {
+  const leaky = { schema: TOPIC_SCHEMA_V2, source: 'release', researchers: [{ id: 'P-CCCCCCCCCC', topics: [{ id: 0, label: 'x' }], papers: [{ year: 2001, topic: 0, title: 'secret' }] }] };
+  assert.throws(() => normalizeTopicIndex(leaky), /titles/);
 });

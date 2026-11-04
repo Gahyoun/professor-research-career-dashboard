@@ -81,6 +81,37 @@ def fetch_citers(ids, mailto, cache, group=25, pages=3):
     return out
 
 
+def parent_links(papers, refs, topic_ids):
+    """papers: [{id, title?, year, era, topic}] → (births {topic: era}, parents {topic: link | None}).
+
+    비교 범위를 탄생기 논문 × 그 이전 시기 논문으로 제한한다.
+    전 기간에서 최대값을 찾으면 10년 뒤 논문이 초기 줄기의 부모가 되는 역방향 분기가 나온다."""
+    births, parents = {}, {}
+    for k in topic_ids:
+        ps = [p for p in papers if p["topic"] == k]
+        if not ps:
+            continue
+        b = min(p["era"] for p in ps)
+        births[k] = b
+        earlier = [r for r in papers if r["era"] < b and r["topic"] != k and refs.get(r["id"])]
+        best = None
+        for q in [x for x in ps if x["era"] == b]:
+            ra = refs.get(q["id"])
+            if not ra:
+                continue
+            for r in earlier:
+                rb = refs[r["id"]]
+                sim = len(ra & rb) / math.sqrt(len(ra) * len(rb))
+                if best is None or sim > best[2]:
+                    best = (r, q, sim)
+        parents[k] = ({"from": best[0]["topic"], "via": best[0].get("title"),
+                       "to": best[1].get("title"), "sim": round(best[2], 3),
+                       # 연도축으로 그릴 때 분기선을 정확한 논문 연도에 물린다
+                       "from_year": best[0]["year"], "to_year": best[1]["year"]}
+                      if best and best[2] > 0 else None)
+    return births, parents
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--seeds", required=True)
@@ -114,30 +145,7 @@ def main():
     cells = Counter((p["era"], p["topic"]) for p in papers)
 
     # 토픽 탄생과 모토픽
-    births, parents = {}, {}
-    for t in T["topics"]:
-        k = t["id"]
-        ps = [p for p in papers if p["topic"] == k]
-        if not ps:
-            continue
-        b = min(p["era"] for p in ps)
-        births[k] = b
-        best = None
-        # 비교 범위를 탄생기 논문 × 그 이전 시기 논문으로 제한한다.
-        # 전 기간에서 최대값을 찾으면 10년 뒤 논문이 초기 줄기의 부모가 되는 역방향 분기가 나온다.
-        for q in [x for x in ps if x["era"] == b]:
-            for r in papers:
-                if r["era"] >= b or r["topic"] == k:
-                    continue
-                ra, rb = refs[q["id"]], refs[r["id"]]
-                sim = (len(ra & rb) / math.sqrt(max(1, len(ra)) * max(1, len(rb)))) if ra and rb else 0
-                if best is None or sim > best[2]:
-                    best = (r, q, sim)
-        parents[k] = ({"from": best[0]["topic"], "via": best[0]["title"],
-                       "to": best[1]["title"], "sim": round(best[2], 3),
-                       # 연도축으로 그릴 때 분기선을 정확한 논문 연도에 물린다
-                       "from_year": best[0]["year"], "to_year": best[1]["year"]}
-                      if best and best[2] > 0 else None)
+    births, parents = parent_links(papers, refs, [t["id"] for t in T["topics"]])
 
     # 상호 쌍: 외부 논문 X 가 초기 논문을 인용 + 후기 논문이 X 를 인용
     # X 는 반드시 '다른 연구자'여야 한다. 본인이 저자인 논문이 끼면 양쪽 고리가 모두

@@ -10,40 +10,66 @@
 | 토픽·키워드 검색 | 영문 질의, 한국어 질의는 용어집으로 영문 변환. 태그 일치(0.45)와 LSA 코사인(0.55)을 합산해 모든 연구자의 토픽을 순위화한다. |
 | 단일 연구자 | 토픽 레인 × 연도(또는 경력 시기). 띠 두께 = 논문 수, 점선 = 모토픽 분기, NEW = 독립 신규, 회색 호 = ABA 경로. |
 | 멀티 연구자 | 검색에 걸린 토픽을 **스택**(연구자별 레인) 또는 **오버랩**(연구자별 색 누적)으로 비교. |
-| 논문 제목 | `encrypted_titles.json`이 있으면 잠금 해제 후 툴팁에 제목·저널·DOI 표시. |
+| 논문 제목 | 잠금 해제 후 툴팁에 제목·저널·DOI 표시(연구자별 암호화 조각). |
+| 토픽 요약 | 토픽표에 Claude가 대표 논문에서 생성한 한국어·영문 요약을 표시. |
 
 멀티 뷰의 토픽은 연구자마다 따로 클러스터링한 결과다. 같은 질의에 걸린 토픽을 같은 연도축에 놓은 비교이며, 전원을 다시 클러스터링한 공통 토픽축(`pipeline/scripts/build_multi.py`)과는 다르다.
 
 ## 공개 범위
 
-- `public/data/topics/index.json`: 익명 ID, 분야, 현재 기관, 경력 시기 라벨, 토픽 이름·특징어(영문)·LSA 벡터, 논문별 `{year, topic, era, cited}`, ABA 쌍의 연도·토픽. **논문 제목·DOI·실명 없음** — `normalizeTopicIndex`가 제목 필드를 발견하면 로딩을 거부한다.
-- `public/data/topics/encrypted_titles.json`: `{anon_id: [{year, topic, title, venue, doi}]}`를 `encrypted_names.json`과 같은 방식(PBKDF2-SHA256 600,000회 → AES-256-GCM, AAD `topic-titles-v1`)으로 암호화.
-- `source: "demo"`인 색인은 화면에 "예시 데이터" 표시가 붙는다. 현재 저장소의 색인은 `backend/topics/make_demo_index.py`로 만든 합성 데이터다.
+전 인원 릴리스(`kstem-topic-alluvial/2`, `backend/topics/topic_batch.py export`)는 파일을 나눠 공개한다.
 
-## 데이터 만들기
+| 파일 | 내용 | 언제 읽나 |
+| --- | --- | --- |
+| `public/data/topics/index.json` | 익명 ID, 분야, 현재 기관, 경력 시기, 토픽(이름·특징어·base64 int8 LSA 벡터·탄생 연도·모토픽), `paper_cells` = `[연도, 토픽, 시기, 편수, 피인용 합]`, 공유 LSA 공간 | 페이지 진입 |
+| `public/data/topics/detail/<익명 ID>.json` | 분기·합류 정보량(`info_flow.py`), 토픽별 요약 `{en, ko}` | 연구자 화면을 열 때 |
+| `public/data/topics/titles/key.json`, `titles/<익명 ID>.json` | 논문 `{year, topic, title, venue, doi}`. 키 유도 값(PBKDF2-SHA256 600,000회)은 한 번, 연구자별 AES-256-GCM 조각(AAD `topic-titles-v2`) | 잠금 해제 후 연구자 화면을 열 때 |
+
+- **논문 제목·DOI·실명·professor_uid·work ID 없음** — 내보내기가 공개 색인에서 이 키를 발견하면 쓰기를 거부하고, `normalizeTopicIndex`도 제목 필드를 발견하면 로딩을 거부한다.
+- 잠금 해제 시 키를 한 번만 유도해 메모리(추출 불가 CryptoKey)에 두고, 연 연구자의 제목 조각만 내려받아 복호화한다. 이전 형식의 단일 `encrypted_titles.json`도 읽는다.
+- `source: "demo"`인 색인은 화면에 "예시 데이터" 표시가 붙는다(`backend/topics/make_demo_index.py`). `method.recip = "not_computed"`이면 ABA 경로 표시를 숨긴다(전 인원 릴리스는 피인용 표본을 수집하지 않는다).
+
+## 데이터 만들기 (전 인원)
+
+비공개 원본 DB가 있는 환경에서 실행한다. 단계마다 결과를 저장하므로 중간에 끊겨도 같은 명령으로 이어서 하고, 입력이 바뀐 연구자만 다시 계산한다.
 
 ```bash
-pip install -r backend/topics/pipeline/requirements.txt cryptography
+pip install -r backend/topics/pipeline/requirements.txt cryptography anthropic
 
-# 1) KOAD 판정을 파이프라인 입력으로 (대시보드와 같은 논문 집합)
-python3 backend/topics/koad_verdicts.py --koad-dir "$KOAD_RUN" \
-    --professor-uid "$PROFESSOR_UID" --out "$WORK/<slug>/verdicts.json"
+export OPENALEX_API_KEY=...      # 선택: OpenAlex 한도 상향
+export ANTHROPIC_API_KEY=...     # 요약 단계 (또는 `ant auth login` 프로필)
+export NAMES_PASSWORD=...        # 제목 조각 암호화
 
-# 2) 수집 → 판별(어댑터) → 토픽 → 라벨 → 분기  (backend/topics/pipeline, 원본 run.sh와 같은 순서)
-python3 backend/topics/pipeline/scripts/fetch_works.py --name "..." --seed-title "..." --out "$WORK/<slug>/works.json"
-python3 backend/topics/pipeline/adapters/external_disambiguator.py --works "$WORK/<slug>/works.json" \
-    --verdicts "$WORK/<slug>/verdicts.json" --institutions "$WORK/<slug>/institutions.json" --out "$WORK/<slug>/seeds.json"
-python3 backend/topics/pipeline/scripts/topics.py --seeds "$WORK/<slug>/seeds.json" --out "$WORK/<slug>/topics.json"
-python3 backend/topics/pipeline/scripts/label_topics.py --seeds "$WORK/<slug>/seeds.json" --topics "$WORK/<slug>/topics.json"
-python3 backend/topics/pipeline/scripts/branching.py --seeds "$WORK/<slug>/seeds.json" \
-    --topics "$WORK/<slug>/topics.json" --out "$WORK/<slug>/alluvial.json" --citers
-
-# 3) 공개 색인 + 암호화 제목 (익명 ID는 공개 대시보드 모집단에 있어야 한다)
-NAMES_PASSWORD=... python3 backend/topics/export_public_index.py \
-    --researcher "$WORK/<slug>=P-XXXXXXXXXX" --out-dir public/data/topics
+python3 backend/topics/topic_batch.py all --year 2026
 ```
 
-`$WORK`는 비공개 경로다. `works.json`, `seeds.json`, `alluvial.json`에는 제목이 있으므로 저장소에 커밋하지 않는다.
+`all`은 아래 다섯 단계를 차례로 실행한다. 원본 DB 경로는 `backend/cache/YEAR/source_db_path.txt`(릴리스 파이프라인이 기록) 또는 `--source-db`, 익명 ID 솔트는 `.private/anon_salt.bin`을 쓴다.
+
+| 단계 | 하는 일 | 저장 위치 (커밋 금지) |
+| --- | --- | --- |
+| `works` | `work_authorship_evidence`에서 `keep` 판정 + KOAD `namesake_paper` 전부 제외 + phd_year−5 ≤ 연도 ≤ 릴리스 연도 논문(저자 순서 무관, `build_research_areas.py`와 같은 규칙). 공개 모집단에 있는 익명 ID만 | `.private/topics_YEAR.sqlite` |
+| `fetch` | OpenAlex에서 참고문헌·초록·제목을 50편씩 OR 필터로 수집, 병합된 ID는 개별 조회로 보완 | `backend/cache/YEAR/topic_works.sqlite` |
+| `cluster` | 연구자별 공유 참고문헌 코사인 가중 Louvain(공유 ≥2편, resolution 1.05). `--min-size`(기본 3)편 미만 군집은 연구자당 하나의 `Other` 토픽으로 묶는다. 영문 c-TF-IDF 이름·특징어, 모토픽, 분기·합류 정보량 계산 | 토픽 DB |
+| `summarize` | 이름 붙은 토픽마다 대표 논문(TF-IDF 중심에 가까운 최대 10편)의 제목·초록 발췌와 특징어를 Claude Message Batches API로 보내 영문·한국어 요약 생성 | 토픽 DB `summaries` |
+| `export` | 공유 LSA 공간을 만들고 위 공개 파일을 쓴다 | `public/data/topics` |
+
+토픽 DB의 주요 테이블: `researcher_works`(연구자–논문), `topics`(토픽 이름·특징어·크기·모토픽·구성 해시), `topic_members`(토픽–논문), `researcher_runs`(입력 해시·경력 시기·정보량), `summaries`(구성 해시별 요약과 상태).
+
+**요약 규칙.** Claude에는 실명·익명 ID·기관을 보내지 않는다(특징어, 군집 편수, 대표 논문 제목·초록 발췌만 보낸다). 요약은 구성 논문 집합의 해시에 묶여 있어, 다시 클러스터링해도 구성이 같으면 다시 요청하지 않는다. 요약이 어떤 논문 제목의 연속 5단어 이상을 그대로 담으면 공개하지 않는다(`rejected_title_overlap`) — 제목은 잠금 해제 뒤에만 보이므로 요약으로 제목이 새면 익명성이 깨진다. 거부(`refused`)·형식 오류(`invalid`)도 저장하며 `--retry-failed`로만 다시 보낸다. 오류·만료된 배치 요청은 다음 실행 때 자동으로 다시 보낸다.
+
+**비용 확인과 시험 실행.**
+
+```bash
+python3 backend/topics/topic_batch.py summarize --dry-run           # 요청 수와 입력 토큰 추정만
+python3 backend/topics/topic_batch.py summarize --limit 50          # 50개 토픽만 시험
+python3 backend/topics/topic_batch.py summarize --no-wait           # 제출만 하고 종료
+python3 backend/topics/topic_batch.py collect                       # 나중에 결과 수거
+python3 backend/topics/topic_batch.py summarize --model claude-sonnet-5-5   # 모델 지정
+```
+
+기본 모델은 `claude-opus-5-5`(effort `low`, 구조화 출력)이고 Batches API는 표준 단가의 50%다.
+
+**개별 연구자 정밀 파이프라인.** `backend/topics/pipeline`(대표 논문으로 저자 ID 역추적 → 판별 → 토픽 → 라벨 → 분기, `--citers`로 ABA 경로 포함)과 `export_public_index.py`는 한 사람씩 사람이 라벨을 고쳐 가며 만드는 기존 절차로 남겨 둔다. 두 경로의 군집·분기 계산은 `pipeline/scripts/topics.py`의 `cluster`와 `branching.py`의 `parent_links`를 함께 쓴다.
 
 ## 이름·특징어와 검색 (영문 기준)
 

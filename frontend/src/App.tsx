@@ -2,14 +2,14 @@ import SankeyPage from './SankeyPage';
 import TemporalInstitutionsPage from './TemporalInstitutionsPage';
 import { loadDashboard } from './metadata';
 import { canonicalSchool, institutionDisplayName } from './schoolIdentity';
-import { decryptJson, decryptNameMap, type EncryptedNames } from './privacy';
+import { decryptNameMap, type EncryptedNames } from './privacy';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Stage, Career, YearPoint, Professor, Dashboard } from './types';
 import Constellation from './Constellation';
 import AtlasMark from './AtlasMark';
 import TopicsPage from './TopicsPage';
-import { validatePaperTitles, type EncryptedPaperTitles } from './topics';
+import { openTopicTitles, type TopicTitleSource } from './topicTitles';
 
 type Filters = { subject: string; institution: string };
 
@@ -155,7 +155,7 @@ export default function App() {
   const authGeneration = useRef(0);
   useEffect(() => () => { authGeneration.current += 1; }, []);
   const [names, setNames] = useState<Record<string, string> | null>(null);
-  const [topicTitles, setTopicTitles] = useState<EncryptedPaperTitles | null>(null);
+  const [topicTitles, setTopicTitles] = useState<TopicTitleSource | null>(null);
   const [message, setMessage] = useState('실명은 암호화되어 있습니다.');
   const [zoom, setZoom] = useState(100);
   const [contrast, setContrast] = useState(false);
@@ -203,11 +203,10 @@ export default function App() {
       const payload = await response.json() as EncryptedNames;
       const decrypted = await decryptNameMap(submittedPassword, payload);
       // The topic title bundle is optional: absent until a real topic release ships.
-      let titles: EncryptedPaperTitles | null = null;
-      const topicResponse = await fetch(`${import.meta.env.BASE_URL}data/topics/encrypted_titles.json`).catch(() => null);
-      if (topicResponse?.ok) try { titles = validatePaperTitles(await decryptJson(submittedPassword, await topicResponse.json() as EncryptedNames)); } catch { titles = null; }
+      let titles: TopicTitleSource | null = null;
+      try { titles = await openTopicTitles(submittedPassword, import.meta.env.BASE_URL); } catch { titles = null; }
       if (generation !== authGeneration.current) return;
-      setNames(decrypted); setTopicTitles(titles); setMessage('실명과 그룹 쿼리가 이 기기의 메모리에서만 활성화되었습니다.');
+      setNames(decrypted); setTopicTitles(() => titles); setMessage('실명과 그룹 쿼리가 이 기기의 메모리에서만 활성화되었습니다.');
     } catch { if (generation === authGeneration.current) setMessage('비밀번호가 맞지 않거나 실명 파일을 불러오지 못했습니다.'); }
     finally { if (generation === authGeneration.current) setUnlocking(false); }
   }

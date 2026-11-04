@@ -145,6 +145,10 @@
 .tp-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .tp-tags em { padding: 1px 7px; border-radius: 4px; background: var(--v2-fill); color: var(--v2-body); font-style: normal; font-size: 11.5px; font-weight: 500; }
 .tp-tags em.is-hit { background: var(--v2-ink); color: #fff; }
+.tp-summary { display: grid; gap: 2px; max-width: 64ch; margin-top: 6px; font-weight: 400; line-height: 1.5; }
+.tp-summary span { color: var(--v2-body); font-size: 13px; }
+.tp-summary small { color: var(--v2-muted); font-size: 12px; }
+.tp-more { display: block; margin: 16px auto 0; }
 .tp-table tbody th .tp-tags { margin-left: 17px; }
 .tp-panel h3 small { margin-left: 6px; color: var(--v2-muted); font-size: 12px; font-weight: 500; }
 .tp-hits { margin: 0; padding: 0; list-style: none; }

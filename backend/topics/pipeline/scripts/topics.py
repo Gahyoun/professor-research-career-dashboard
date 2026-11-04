@@ -20,6 +20,38 @@ def coupling(ra, rb):
     return len(ra & rb) / math.sqrt(len(ra) * len(rb))
 
 
+def coupling_graph(refs, min_shared=2):
+    """{work id: set(references)} → weighted coupling graph.
+
+    Pairs are found through an inverted reference index, so a researcher with ~1,000
+    papers costs the shared references actually present, not all n² pairs."""
+    G = nx.Graph()
+    G.add_nodes_from(refs)
+    citing = {}
+    for i, rs in refs.items():
+        for r in rs:
+            citing.setdefault(r, []).append(i)
+    shared = Counter()
+    for ws in citing.values():
+        if len(ws) < 2:
+            continue
+        ws = sorted(ws)
+        for x in range(len(ws)):
+            for y in range(x + 1, len(ws)):
+                shared[(ws[x], ws[y])] += 1
+    for (i, j), n in shared.items():
+        if n >= min_shared:
+            G.add_edge(i, j, weight=coupling(refs[i], refs[j]))
+    return G
+
+
+def cluster(refs, min_shared=2, resolution=1.05, seed=4):
+    """{work id: references} → (communities sorted by size desc, graph). Same Louvain call as the CLI."""
+    G = coupling_graph({i: set(r or []) for i, r in refs.items()}, min_shared)
+    com = nx.community.louvain_communities(G, weight="weight", seed=seed, resolution=resolution) if len(G) else []
+    return sorted((set(c) for c in com), key=lambda c: (-len(c), min(c))), G
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--seeds", required=True)
@@ -34,17 +66,8 @@ def main():
     W = {w["id"]: w for w in D["works"]}
     refs = {i: set(w.get("referenced_works") or []) for i, w in W.items()}
 
-    G = nx.Graph()
-    G.add_nodes_from(W)
     ids = list(W)
-    for x in range(len(ids)):
-        for y in range(x + 1, len(ids)):
-            i, j = ids[x], ids[y]
-            if len(refs[i] & refs[j]) >= a.min_shared:
-                G.add_edge(i, j, weight=coupling(refs[i], refs[j]))
-
-    com = sorted(nx.community.louvain_communities(
-        G, weight="weight", seed=a.seed_rng, resolution=a.resolution), key=len, reverse=True)
+    com, G = cluster(refs, a.min_shared, a.resolution, a.seed_rng)
 
     topics = []
     for k, c in enumerate(com):
