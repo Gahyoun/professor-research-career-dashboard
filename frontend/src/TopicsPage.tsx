@@ -400,7 +400,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
           <div className="tp-panel"><h3>토픽과 분기</h3><TopicTable researcher={researcher} focus={focus} setFocus={setFocus} /></div>
           <div className="tp-panel tp-notes"><h3>읽는 법과 한계</h3><ul>
             <li><b>토픽</b> 공유 참고문헌 양을 코사인 정규화한 가중 Louvain 군집입니다. 이름은 c-TF-IDF 영문 특징어이고, 작은 군집은 ‘Other’로 묶습니다.</li>
-            {researcher.topics.some(t => t.summary) && <li><b>요약</b> 토픽별 대표 논문의 제목·초록을 Claude가 요약했습니다. 논문 제목을 5단어 이상 그대로 옮긴 요약은 싣지 않습니다.</li>}
+            {researcher.topics.some(t => t.summary) && <li><b>요약</b> 토픽별 대표 논문의 제목·초록·출판일로 Claude가 주제와 시기별 전개를 요약했습니다. 논문 제목을 그대로 옮긴 요약은 싣지 않습니다.</li>}
             <li><b>분기</b> 새 토픽의 탄생기 논문과 그 이전 논문 사이 coupling 최댓값으로 모토픽을 정합니다. 연결이 없으면 독립 신규로 표시합니다.</li>
             {recipComputed && <li><b>ABA 경로</b> 본인이 저자가 아닌 논문이 초기 논문을 인용하고 후기 논문이 그것을 다시 인용한 경우입니다. 피인용 상위 표본이며 전수가 아닙니다.</li>}
             <li><b>동명이인</b> KOAD 경력 연속성 판별을 통과한 논문만 씁니다. 국내 학회지·단행본·학위논문은 OpenAlex 수록이 불균일합니다.</li>

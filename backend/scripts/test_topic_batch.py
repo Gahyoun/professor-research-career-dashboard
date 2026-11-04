@@ -43,7 +43,7 @@ def make_world(root):
                 refs = [f'R-{theme}-{rnd.randrange(12)}' for _ in range(8)] if theme else []
                 text = POOLS.get(theme, 'unrelated note')
                 works[wid] = {'id': f'https://openalex.org/{wid}', 'doi': f'10.1/{wid}', 'title': f'Paper {wid} on {text.split()[0]} {text.split()[1]}',
-                              'publication_year': year, 'cited_by_count': k, 'referenced_works': [f'https://openalex.org/{r}' for r in refs],
+                              'publication_year': year, 'publication_date': f'{year}-0{1 + k % 9}-15', 'cited_by_count': k, 'referenced_works': [f'https://openalex.org/{r}' for r in refs],
                               'primary_location': {'source': {'display_name': 'Journal X'}}, 'topics': [], 'keywords': [],
                               'abstract_inverted_index': {w: [i] for i, w in enumerate(text.split())}, 'type': 'article'}
                 con.execute('INSERT INTO work_authorship_evidence VALUES (?,?,?,?)', (uid, wid, year, 'keep'))
@@ -119,23 +119,41 @@ class TopicBatchTest(unittest.TestCase):
             tb.step_cluster(paths, args)  # unchanged input → skipped, same hash
             self.assertEqual(first, con.execute('SELECT input_hash FROM researcher_runs').fetchall())
 
-            def reply(request):
-                prompt = request['params']['messages'][0]['content']
+            def text_reply(prompt):
                 self.assertNotIn('uid-', prompt)
                 self.assertNotIn(a, prompt)
                 self.assertNotIn('Univ', prompt)
+                self.assertIn('Papers per year: ', prompt)
+                self.assertRegex(prompt, r'published \d{4}-\d{2}-\d{2} – \d{4}-\d{2}-\d{2}')
                 if 'kuramoto' in prompt.lower():  # copies a title verbatim → must be rejected
-                    title = next(l for l in prompt.splitlines() if l.startswith('1. ')).split(' — ')[0][3:]
+                    title = next(l for l in prompt.splitlines() if l.startswith('1. ')).split(' — ')[1]
                     return {'summary_en': f'This cluster is {title} again', 'summary_ko': '동기화 연구'}
-                return {'summary_en': 'Studies of collective behaviour in disordered systems.', 'summary_ko': '무질서계의 집단 거동 연구.'}
-            client = SimpleNamespace(messages=SimpleNamespace(batches=FakeBatches(reply)))
-            tb.step_summarize(paths, args, client=client)
+                return {'summary_en': 'Studies of collective behaviour in disordered systems, growing after 2004.', 'summary_ko': '무질서계의 집단 거동 연구.'}
+
+            calls = {'n': 0}
+
+            def runner(prompt):
+                calls['n'] += 1
+                if calls['n'] <= 2:  # first wave hits a usage limit: whole wave retried, no attempt spent
+                    return {'status': 'retry', 'detail': 'usage limit'}
+                return {'status': 'ok', **{k[8:]: v for k, v in text_reply(prompt).items()}, 'cost': 0.01}
+            args.cli_workers, args.backoff = 1, 0
+            tb.step_summarize(paths, args, runner=runner)
             statuses = dict(con.execute('SELECT status, COUNT(*) FROM summaries GROUP BY status').fetchall())
             self.assertGreater(statuses.get('ok', 0), 0)
             self.assertGreater(statuses.get('rejected_title_overlap', 0), 0)
-            submitted = sum(len(v) for v in client.messages.batches.store.values())
-            tb.step_summarize(paths, args, client=client)  # nothing pending on rerun
-            self.assertEqual(submitted, sum(len(v) for v in client.messages.batches.store.values()))
+            self.assertEqual(sum(statuses.values()), 5)
+            before = calls['n']
+            tb.step_summarize(paths, args, runner=runner)  # nothing pending on rerun
+            self.assertEqual(before, calls['n'])
+
+            # The Batches API engine stores the same rows; force it by clearing summaries.
+            with con:
+                con.execute('DELETE FROM summaries')
+            args.engine = 'api'
+            client = SimpleNamespace(messages=SimpleNamespace(batches=FakeBatches(lambda r: text_reply(r['params']['messages'][0]['content']))))
+            tb.step_summarize(paths, args, client=client)
+            self.assertEqual(dict(con.execute('SELECT status, COUNT(*) FROM summaries GROUP BY status').fetchall()), statuses)
 
             import os
             os.environ['TEST_TOPIC_PW'] = 'pw'
@@ -166,9 +184,12 @@ class TopicBatchTest(unittest.TestCase):
             con.close()
 
     def test_repeats_title(self):
-        self.assertTrue(tb.repeats_title('We revisit the spin glass replica symmetry breaking picture', ['Spin glass replica symmetry breaking in 3D']))
-        self.assertFalse(tb.repeats_title('Replica methods for spin glasses', ['Spin glass replica symmetry breaking in 3D']))
-
+        title = 'Synchronization of phase oscillators on scale-free networks'
+        self.assertFalse(tb.repeats_title('Starting with oscillators on scale-free networks, it moved to power grids.', [title]))
+        self.assertTrue(tb.repeats_title(f'This cluster revisits {title.lower()} in detail.', [title]))
+        long_title = 'A unified view of replica symmetry breaking in finite dimensional spin glass models'
+        self.assertTrue(tb.repeats_title('It builds a unified view of replica symmetry breaking in finite dimensional systems.', [long_title]))
+        self.assertFalse(tb.repeats_title('Explosive synchronization recurs.', ['Explosive synchronization']))
 
 if __name__ == '__main__':
     unittest.main()

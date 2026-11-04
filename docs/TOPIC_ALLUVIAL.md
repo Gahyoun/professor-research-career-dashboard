@@ -11,7 +11,7 @@
 | 단일 연구자 | 토픽 레인 × 연도(또는 경력 시기). 띠 두께 = 논문 수, 점선 = 모토픽 분기, NEW = 독립 신규, 회색 호 = ABA 경로. |
 | 멀티 연구자 | 검색에 걸린 토픽을 **스택**(연구자별 레인) 또는 **오버랩**(연구자별 색 누적)으로 비교. |
 | 논문 제목 | 잠금 해제 후 툴팁에 제목·저널·DOI 표시(연구자별 암호화 조각). |
-| 토픽 요약 | 토픽표에 Claude가 대표 논문에서 생성한 한국어·영문 요약을 표시. |
+| 토픽 요약 | 토픽표에 Claude가 대표 논문의 제목·초록·출판일로 생성한 한국어·영문 요약(주제, 시작 시기, 전개)을 표시. |
 
 멀티 뷰의 토픽은 연구자마다 따로 클러스터링한 결과다. 같은 질의에 걸린 토픽을 같은 연도축에 놓은 비교이며, 전원을 다시 클러스터링한 공통 토픽축(`pipeline/scripts/build_multi.py`)과는 다르다.
 
@@ -37,8 +37,8 @@
 pip install -r backend/topics/pipeline/requirements.txt cryptography anthropic
 
 export OPENALEX_API_KEY=...      # 선택: OpenAlex 한도 상향
-export ANTHROPIC_API_KEY=...     # 요약 단계 (또는 `ant auth login` 프로필)
 export NAMES_PASSWORD=...        # 제목 조각 암호화
+claude -p "hi"                   # 요약 단계는 로그인된 Claude Code CLI를 쓴다
 
 python3 backend/topics/topic_batch.py all --year 2026
 ```
@@ -48,26 +48,28 @@ python3 backend/topics/topic_batch.py all --year 2026
 | 단계 | 하는 일 | 저장 위치 (커밋 금지) |
 | --- | --- | --- |
 | `works` | `work_authorship_evidence`에서 `keep` 판정 + KOAD `namesake_paper` 전부 제외 + phd_year−5 ≤ 연도 ≤ 릴리스 연도 논문(저자 순서 무관, `build_research_areas.py`와 같은 규칙). 공개 모집단에 있는 익명 ID만 | `.private/topics_YEAR.sqlite` |
-| `fetch` | OpenAlex에서 참고문헌·초록·제목을 50편씩 OR 필터로 수집, 병합된 ID는 개별 조회로 보완 | `backend/cache/YEAR/topic_works.sqlite` |
+| `fetch` | OpenAlex에서 참고문헌·초록·제목·출판일을 50편씩 OR 필터로 수집, 병합된 ID는 개별 조회로 보완 | `backend/cache/YEAR/topic_works.sqlite` |
 | `cluster` | 연구자별 공유 참고문헌 코사인 가중 Louvain(공유 ≥2편, resolution 1.05). `--min-size`(기본 3)편 미만 군집은 연구자당 하나의 `Other` 토픽으로 묶는다. 영문 c-TF-IDF 이름·특징어, 모토픽, 분기·합류 정보량 계산 | 토픽 DB |
-| `summarize` | 이름 붙은 토픽마다 대표 논문(TF-IDF 중심에 가까운 최대 10편)의 제목·초록 발췌와 특징어를 Claude Message Batches API로 보내 영문·한국어 요약 생성 | 토픽 DB `summaries` |
+| `summarize` | 이름 붙은 토픽마다 특징어, 연도별 편수, 출판일 순 대표 논문(활동 기간을 세 구간으로 나눠 구간마다 TF-IDF 중심에 가까운 논문, 최대 10편)의 제목·초록 발췌를 `claude -p`로 보내 무엇을 연구했는지와 언제 시작해 어디로 옮겨 갔는지를 담은 영문·한국어 요약 생성 | 토픽 DB `summaries` |
 | `export` | 공유 LSA 공간을 만들고 위 공개 파일을 쓴다 | `public/data/topics` |
 
 토픽 DB의 주요 테이블: `researcher_works`(연구자–논문), `topics`(토픽 이름·특징어·크기·모토픽·구성 해시), `topic_members`(토픽–논문), `researcher_runs`(입력 해시·경력 시기·정보량), `summaries`(구성 해시별 요약과 상태).
 
-**요약 규칙.** Claude에는 실명·익명 ID·기관을 보내지 않는다(특징어, 군집 편수, 대표 논문 제목·초록 발췌만 보낸다). 요약은 구성 논문 집합의 해시에 묶여 있어, 다시 클러스터링해도 구성이 같으면 다시 요청하지 않는다. 요약이 어떤 논문 제목의 연속 5단어 이상을 그대로 담으면 공개하지 않는다(`rejected_title_overlap`) — 제목은 잠금 해제 뒤에만 보이므로 요약으로 제목이 새면 익명성이 깨진다. 거부(`refused`)·형식 오류(`invalid`)도 저장하며 `--retry-failed`로만 다시 보낸다. 오류·만료된 배치 요청은 다음 실행 때 자동으로 다시 보낸다.
+**요약 엔진.** 기본은 Claude Code CLI(`claude -p --json-schema … --tools "" --no-session-persistence`)다. 로그인된 계정으로 실행하고, 빈 임시 폴더에서 돌려 프로젝트 설정·CLAUDE.md가 섞이지 않게 한다. 기본 4개를 병렬로 돌리고(`--cli-workers`), 한 묶음이 전부 실패하면(사용량 한도·장애) 시도 횟수를 쓰지 않고 1분부터 두 배씩 최대 30분 간격으로 기다리다 `--max-wait`(기본 360분)을 넘으면 멈춘다. 끝난 요약은 그때그때 저장하므로 같은 명령으로 이어서 하면 된다. `--engine api`는 Message Batches API(ANTHROPIC_API_KEY)를 쓴다.
 
-**비용 확인과 시험 실행.**
+**요약 규칙.** Claude에는 실명·익명 ID·기관을 보내지 않는다(특징어, 군집 편수, 대표 논문 제목·초록 발췌만 보낸다). 요약은 구성 논문 집합의 해시에 묶여 있어, 다시 클러스터링해도 구성이 같으면 다시 요청하지 않는다. 요약이 논문 제목 전체(8단어보다 긴 제목은 연속 8단어)를 그대로 담으면 공개하지 않는다(`rejected_title_overlap`). 분야 용어 수준의 짧은 구절 겹침은 허용한다 — 제목은 잠금 해제 뒤에만 보이므로 요약으로 제목이 새면 익명성이 깨진다. 거부(`refused`)·형식 오류(`invalid`)도 저장하며 `--retry-failed`로만 다시 보낸다. 오류·만료된 배치 요청은 다음 실행 때 자동으로 다시 보낸다.
+
+**시험 실행과 옵션.**
 
 ```bash
 python3 backend/topics/topic_batch.py summarize --dry-run           # 요청 수와 입력 토큰 추정만
 python3 backend/topics/topic_batch.py summarize --limit 50          # 50개 토픽만 시험
-python3 backend/topics/topic_batch.py summarize --no-wait           # 제출만 하고 종료
-python3 backend/topics/topic_batch.py collect                       # 나중에 결과 수거
-python3 backend/topics/topic_batch.py summarize --model claude-sonnet-5-5   # 모델 지정
+python3 backend/topics/topic_batch.py summarize --cli-workers 8     # CLI 병렬 수
+python3 backend/topics/topic_batch.py summarize --model claude-sonnet-5-5 --effort low
+python3 backend/topics/topic_batch.py summarize --engine api --no-wait && python3 backend/topics/topic_batch.py collect
 ```
 
-기본 모델은 `claude-opus-5-5`(effort `low`, 구조화 출력)이고 Batches API는 표준 단가의 50%다.
+기본 모델은 `claude-opus-5-5`(effort `low`, 구조화 출력)다. 요약 지시문을 바꾸면 `PROMPT_VERSION`을 올린다 — 이전 버전 요약은 다음 실행에서 다시 만든다(새 요약이 생길 때까지는 이전 요약을 공개한다).
 
 **개별 연구자 정밀 파이프라인.** `backend/topics/pipeline`(대표 논문으로 저자 ID 역추적 → 판별 → 토픽 → 라벨 → 분기, `--citers`로 ABA 경로 포함)과 `export_public_index.py`는 한 사람씩 사람이 라벨을 고쳐 가며 만드는 기존 절차로 남겨 둔다. 두 경로의 군집·분기 계산은 `pipeline/scripts/topics.py`의 `cluster`와 `branching.py`의 `parent_links`를 함께 쓴다.
 

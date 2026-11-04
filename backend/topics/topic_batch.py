@@ -9,7 +9,7 @@ redoes what changed, so the whole population can be rebuilt after a yearly relea
   python3 backend/topics/topic_batch.py works      # 1. retained works per researcher (KOAD namesake drop)
   python3 backend/topics/topic_batch.py fetch      # 2. OpenAlex references/abstracts → backend/cache/YEAR/topic_works.sqlite
   python3 backend/topics/topic_batch.py cluster    # 3. coupling Louvain per researcher → topics DB
-  python3 backend/topics/topic_batch.py summarize  # 4. Claude summaries (Message Batches) → topics DB
+  python3 backend/topics/topic_batch.py summarize  # 4. Claude summaries (`claude -p` by default) → topics DB
   python3 backend/topics/topic_batch.py export     # 5. public/data/topics (index + per-researcher shards)
 
 Works follow the public release's identity rules exactly as build_research_areas.py does:
@@ -18,13 +18,17 @@ year, all author positions. Topics are communities of the bibliographic-coupling
 (pipeline/scripts/topics.py); communities smaller than ``--min-size`` are pooled into one
 "Other" topic per researcher. Topic names/keywords are English c-TF-IDF terms; each named
 topic also gets an English and a Korean summary from Claude, written from representative
-titles/abstracts only (no names, IDs or institutions are sent) and rejected when it repeats
-five or more consecutive words of any paper title (titles stay behind the unlock).
+titles/abstracts and OpenAlex publication dates (no names, IDs or institutions are sent), that
+says what the topic studies and how it developed over time. A summary is rejected when it
+repeats a whole paper title or eight consecutive words of one (titles stay behind the unlock).
+Summaries run through the Claude Code CLI (``claude -p``, the logged-in account) by default,
+or through the Message Batches API with ``--engine api``.
 
 Private outputs: the topics DB (default .private/topics_YEAR.sqlite) holds professor UIDs,
 work IDs and summaries; the OpenAlex cache holds titles. Neither is committed.
-Environment: OPENALEX_API_KEY (optional, raises OpenAlex limits), ANTHROPIC_API_KEY (or an
-``ant auth login`` profile) for ``summarize``, NAMES_PASSWORD for encrypted title shards.
+Environment: OPENALEX_API_KEY (optional, raises OpenAlex limits), a logged-in ``claude`` CLI
+(or ANTHROPIC_API_KEY with ``--engine api``) for ``summarize``, NAMES_PASSWORD for encrypted
+title shards.
 """
 import argparse
 import base64
@@ -36,7 +40,9 @@ import re
 import secrets
 import shutil
 import sqlite3
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -61,10 +67,11 @@ from topics import cluster  # noqa: E402
 SCHEMA = "kstem-topic-alluvial/2"
 TITLE_AAD = b"topic-titles-v2"
 OPENALEX = "https://api.openalex.org"
-SELECT = ("id,doi,title,publication_year,cited_by_count,referenced_works,primary_location,"
+SELECT = ("id,doi,title,publication_year,publication_date,cited_by_count,referenced_works,primary_location,"
           "topics,keywords,abstract_inverted_index,type")
 STAGE_KO = {"doctoral": "박사과정", "postdoc": "박사후", "faculty": "교원"}
 DEFAULT_MODEL = "claude-opus-5-5"
+PROMPT_VERSION = "2"  # bump when SUMMARY_SYSTEM or summary_prompt changes: stored summaries are redone
 SUMMARY_SCHEMA = {
     "type": "object",
     "properties": {"summary_en": {"type": "string"}, "summary_ko": {"type": "string"}},
@@ -75,14 +82,16 @@ SUMMARY_SYSTEM = """You describe the research theme of one cluster of papers wri
 The cluster was found from shared references, so its papers address a common problem.
 
 Return two summaries of the same content:
-- summary_en: one or two sentences in English, at most 45 words.
-- summary_ko: the same content in natural Korean, at most 120 characters, using standard Korean \
+- summary_en: two or three sentences in English, at most 70 words.
+- summary_ko: the same content in natural Korean, at most 180 characters, using standard Korean \
 scientific terms; add an English term in parentheses only when no common Korean term exists.
 
-Describe the shared research problem, the objects or systems studied and the main approach. \
-Do not quote or closely paraphrase any paper title. Do not mention people, institutions, \
-countries, journals, years, paper counts or citation numbers. If the papers are heterogeneous, \
-state what links them instead of listing them."""
+Describe the shared research problem, the objects or systems studied and the main approach, \
+then how the theme developed over time using the publication dates given: when it began, \
+when it was most active and what it moved toward. Use years, not exact dates. Do not quote or \
+closely paraphrase any paper title. Do not mention people, institutions, countries, journals \
+or citation numbers. If the papers are heterogeneous, state what links them instead of \
+listing them."""
 
 DDL = """
 CREATE TABLE IF NOT EXISTS researcher_works(
@@ -103,7 +112,7 @@ CREATE TABLE IF NOT EXISTS topic_members(
   era INTEGER, cited INTEGER NOT NULL, PRIMARY KEY(anon_id, work_id));
 CREATE TABLE IF NOT EXISTS summaries(
   members_hash TEXT PRIMARY KEY, status TEXT NOT NULL, summary_en TEXT, summary_ko TEXT,
-  model TEXT, detail TEXT, created_at TEXT NOT NULL);
+  model TEXT, detail TEXT, created_at TEXT NOT NULL, prompt_version TEXT NOT NULL DEFAULT '1');
 CREATE TABLE IF NOT EXISTS summary_batches(
   batch_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, n_requests INTEGER NOT NULL, model TEXT NOT NULL,
   collected INTEGER NOT NULL DEFAULT 0);
@@ -239,7 +248,8 @@ def openalex_url(path, params):
 def compact_work(w):
     source = ((w.get("primary_location") or {}).get("source") or {})
     return {"id": short_id(w.get("id")), "doi": w.get("doi"), "title": w.get("title") or "",
-            "publication_year": w.get("publication_year"), "cited_by_count": w.get("cited_by_count") or 0,
+            "publication_year": w.get("publication_year"), "publication_date": w.get("publication_date"),
+            "cited_by_count": w.get("cited_by_count") or 0,
             "referenced_works": [short_id(r) for r in w.get("referenced_works") or []],
             "venue": source.get("display_name"), "type": w.get("type"),
             "topics": [{"display_name": t.get("display_name")} for t in (w.get("topics") or [])[:3]],
@@ -422,30 +432,54 @@ def tokens(text):
     return re.findall(r"[0-9a-z가-힣]+", (text or "").lower())
 
 
-def repeats_title(summary, titles, n=5):
-    """True when the summary contains n consecutive words of any title (de-anonymisation guard)."""
+def repeats_title(summary, titles, n=8):
+    """True when the summary contains a whole title, or n consecutive words of a longer one.
+
+    Titles are only shown after unlock; a summary that reproduces one would let anyone find the
+    paper and so the researcher. Shared technical phrases ("oscillators on scale-free networks")
+    are expected and allowed. Titles under four words are too generic to identify a paper."""
     words = tokens(summary)
-    grams = {tuple(words[i:i + n]) for i in range(len(words) - n + 1)}
     for title in titles:
         t = tokens(title)
-        if any(tuple(t[i:i + n]) in grams for i in range(len(t) - n + 1)):
+        if len(t) < 4:
+            continue
+        k = min(n, len(t))
+        grams = {tuple(words[i:i + k]) for i in range(len(words) - k + 1)}
+        if any(tuple(t[i:i + k]) in grams for i in range(len(t) - k + 1)):
             return True
     return False
 
 
+def pub_date(rec):
+    return rec.get("publication_date") or (str(rec["publication_year"]) if rec.get("publication_year") else "")
+
+
 def exemplars(recs, n=10):
-    """Members closest to the topic's TF-IDF centroid (same idea as label_topics.exemplars)."""
+    """Members closest to the topic's TF-IDF centroid, spread over the active period.
+
+    The topic's papers are cut into up to three consecutive time slices by publication date and
+    each slice contributes its most central papers in proportion to its size, so the summary can
+    say how the theme developed instead of describing only its busiest years."""
     from sklearn.feature_extraction.text import TfidfVectorizer
+    recs = sorted(recs, key=lambda r: (pub_date(r), r.get("id") or ""))
+    if len(recs) <= n:
+        return recs
     texts = [text_of(r) for r in recs]
     try:
         M = TfidfVectorizer(stop_words="english", token_pattern=r"[a-zA-Z][a-zA-Z-]{2,}").fit_transform(texts).toarray()
+        M = M / (np.linalg.norm(M, axis=1, keepdims=True) + 1e-9)
+        c = M.mean(axis=0)
+        score = M @ (c / (np.linalg.norm(c) + 1e-9))
     except ValueError:
-        return sorted(recs, key=lambda r: -(r.get("cited_by_count") or 0))[:n]
-    M = M / (np.linalg.norm(M, axis=1, keepdims=True) + 1e-9)
-    c = M.mean(axis=0)
-    c = c / (np.linalg.norm(c) + 1e-9)
-    order = np.argsort(-(M @ c))
-    return [recs[i] for i in order[:n]]
+        score = np.array([r.get("cited_by_count") or 0 for r in recs], dtype=float)
+    slices = np.array_split(np.arange(len(recs)), min(3, n))
+    quota = [max(1, round(n * len(sl) / len(recs))) for sl in slices]
+    while sum(quota) > n:
+        quota[quota.index(max(quota))] -= 1
+    picked = []
+    for sl, q in zip(slices, quota):
+        picked += sorted(sl, key=lambda i: -score[i])[:q]
+    return [recs[i] for i in sorted(picked)]
 
 
 def abstract(rec, words=70):
@@ -458,11 +492,15 @@ def abstract(rec, words=70):
 
 
 def summary_prompt(keywords, recs):
-    lines = [f"Distinctive terms (c-TF-IDF): {', '.join(keywords) or '—'}", f"Papers in cluster: {len(recs)}",
-             "Representative papers (title — abstract excerpt):"]
+    years = Counter(int(str(pub_date(r))[:4]) for r in recs if pub_date(r))
+    dates = sorted(pub_date(r) for r in recs if pub_date(r))
+    lines = [f"Distinctive terms (c-TF-IDF): {', '.join(keywords) or '—'}",
+             f"Papers in cluster: {len(recs)}" + (f", published {dates[0]} – {dates[-1]}" if dates else ""),
+             "Papers per year: " + (", ".join(f"{y}: {k}" for y, k in sorted(years.items())) or "—"),
+             "Representative papers in publication order (date — title — abstract excerpt):"]
     for i, r in enumerate(exemplars(recs), 1):
         excerpt = abstract(r)
-        lines.append(f"{i}. {r.get('title') or '(untitled)'}" + (f" — {excerpt}" if excerpt else ""))
+        lines.append(f"{i}. {pub_date(r) or 'undated'} — {r.get('title') or '(untitled)'}" + (f" — {excerpt}" if excerpt else ""))
     return "\n".join(lines)
 
 
@@ -478,16 +516,140 @@ def pending_summaries(con, retry_failed=False):
     rows = con.execute(f"""
       SELECT t.members_hash, MIN(t.anon_id), MIN(t.topic_id), MAX(t.keywords) FROM topics t
       WHERE t.is_misc=0
-        AND t.members_hash NOT IN (SELECT members_hash FROM summaries WHERE status IN ({','.join('?' * len(statuses))}))
+        AND t.members_hash NOT IN (SELECT members_hash FROM summaries
+          WHERE prompt_version='{PROMPT_VERSION}' AND status IN ({','.join('?' * len(statuses))}))
         AND t.members_hash NOT IN (SELECT r.members_hash FROM summary_requests r JOIN summary_batches b USING(batch_id) WHERE b.collected=0)
       GROUP BY t.members_hash ORDER BY MIN(t.anon_id), MIN(t.topic_id)""", statuses).fetchall()
     return rows
 
 
-def build_request(custom_id, prompt, model):
+def pending_requests(con, cache, opts):
+    """[(members_hash, prompt, member titles)] for topics that still need a summary."""
+    pending = pending_summaries(con, opts.retry_failed)
+    if opts.limit:
+        pending = pending[:opts.limit]
+    out = []
+    for members_hash, anon, topic_id, keywords in pending:
+        recs = topic_records(con, cache, anon, topic_id)
+        if recs:
+            out.append((members_hash, summary_prompt(json.loads(keywords), recs), [r.get("title") or "" for r in recs]))
+    return out
+
+
+def summary_row(members_hash, status, model, en=None, ko=None, detail=None):
+    return (members_hash, status, en, ko, model, detail, now(), PROMPT_VERSION)
+
+
+def judge(members_hash, en, ko, titles, model):
+    """Accepted summary row, or a rejection when empty or when it repeats a paper title."""
+    en, ko = (en or "").strip(), (ko or "").strip()
+    if not en or not ko:
+        return summary_row(members_hash, "invalid", model, detail="empty summary")
+    if repeats_title(en, titles) or repeats_title(ko, titles):
+        return summary_row(members_hash, "rejected_title_overlap", model, detail=en[:300])
+    return summary_row(members_hash, "ok", model, en, ko)
+
+
+def store_summaries(con, rows):
+    with con:
+        con.executemany("INSERT OR REPLACE INTO summaries VALUES (?,?,?,?,?,?,?,?)", rows)
+
+
+def estimate(requests, engine, model):
+    chars = sum(len(SUMMARY_SYSTEM) + len(prompt) for _, prompt, _ in requests)
+    print(f"summarize: {len(requests):,} topics to summarize, ≈{chars / 4 / 1e6:.1f}M input tokens ({model}, {engine})")
+
+
+# 4a. Claude Code CLI (default) ---------------------------------------------------------------
+
+def claude_cli(prompt, opts):
+    """One ``claude -p`` call with structured output, no tools and no project context.
+
+    Returns {"status": "ok"|"refused"|"retry", ...}; "retry" covers timeouts, usage limits and
+    transient errors, which the caller retries with backoff."""
+    cmd = [opts.claude_bin, "-p", "--output-format", "json", "--json-schema", json.dumps(SUMMARY_SCHEMA),
+           "--system-prompt", SUMMARY_SYSTEM, "--tools", "", "--strict-mcp-config", "--no-session-persistence",
+           "--model", opts.model, "--effort", opts.effort]
+    with tempfile.TemporaryDirectory() as cwd:  # empty cwd: no CLAUDE.md or project settings
+        try:
+            run = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=opts.cli_timeout, cwd=cwd)
+        except subprocess.TimeoutExpired:
+            return {"status": "retry", "detail": "timeout"}
+    try:
+        out = json.loads(run.stdout)
+    except json.JSONDecodeError:
+        return {"status": "retry", "detail": (run.stderr or run.stdout or f"exit {run.returncode}").strip()[-300:]}
+    cost = out.get("total_cost_usd") or 0
+    data = out.get("structured_output")
+    if out.get("stop_reason") == "refusal":
+        return {"status": "refused", "detail": str(out.get("result") or "")[:300], "cost": cost}
+    if out.get("is_error") or not isinstance(data, dict):
+        return {"status": "retry", "detail": str(out.get("result") or out.get("subtype") or "no structured output")[:300], "cost": cost}
+    return {"status": "ok", "en": data.get("summary_en"), "ko": data.get("summary_ko"), "cost": cost}
+
+
+def summarize_cli(paths, opts, runner=None):
+    con = open_topics(paths.topics_db)
+    cache = open_cache(paths.cache_db)
+    todo = pending_requests(con, cache, opts)
+    estimate(todo, f"claude CLI × {opts.cli_workers}", opts.model)
+    if opts.dry_run or not todo:
+        con.close()
+        cache.close()
+        return
+    if runner is None:
+        if not shutil.which(opts.claude_bin):
+            raise SystemExit(f"'{opts.claude_bin}' not found — install Claude Code or pass --claude-bin / --engine api")
+        runner = lambda prompt: claude_cli(prompt, opts)  # noqa: E731
+    counts, attempts = Counter(), Counter()
+    cost, waited, backoff, done = 0.0, 0, opts.backoff, 0
+    queue, wave_size = list(todo), max(1, opts.cli_workers * 4)
+    with ThreadPoolExecutor(max_workers=opts.cli_workers) as pool:
+        while queue:
+            wave, queue = queue[:wave_size], queue[wave_size:]
+            results = list(pool.map(lambda item: runner(item[1]), wave))
+            cost += sum(r.get("cost") or 0 for r in results)
+            failed = [(item, r) for item, r in zip(wave, results) if r["status"] == "retry"]
+            if len(failed) == len(wave):
+                # Every call failed: usage limit or outage. Wait without spending the items' attempts.
+                if waited >= opts.max_wait * 60:
+                    print(f"  stopping: still failing after {waited // 60} min ({failed[0][1].get('detail')}). "
+                          f"Rerun 'summarize' later; finished topics are kept.")
+                    break
+                print(f"  all {len(wave)} calls failed ({failed[0][1].get('detail')}); waiting {backoff}s")
+                time.sleep(backoff)
+                waited += backoff
+                backoff = min(max(backoff, 1) * 2, 1800)
+                queue = wave + queue
+                continue
+            backoff = opts.backoff
+            rows = []
+            for (members_hash, _, titles), r in zip(wave, results):
+                if r["status"] == "ok":
+                    rows.append(judge(members_hash, r.get("en"), r.get("ko"), titles, opts.model))
+                elif r["status"] == "refused":
+                    rows.append(summary_row(members_hash, "refused", opts.model, detail=r.get("detail")))
+            for item, r in failed:
+                attempts[item[0]] += 1
+                if attempts[item[0]] < 3:
+                    queue.append(item)
+                else:
+                    counts["failed (left pending)"] += 1
+            store_summaries(con, rows)
+            counts.update(row[1] for row in rows)
+            done += len(rows)
+            print(f"  {done:,}/{len(todo):,} summarized · ${cost:.2f} reported by CLI")
+    con.close()
+    cache.close()
+    print("summarize: " + ", ".join(f"{k} {v:,}" for k, v in sorted(counts.items())) + f"; CLI-reported cost ${cost:.2f}")
+
+
+# 4b. Message Batches API (--engine api) ------------------------------------------------------
+
+def build_request(custom_id, prompt, model, effort="low"):
     return {"custom_id": custom_id, "params": {
         "model": model, "max_tokens": 4096, "system": SUMMARY_SYSTEM,
-        "output_config": {"effort": "low", "format": {"type": "json_schema", "schema": SUMMARY_SCHEMA}},
+        "output_config": {"effort": effort, "format": {"type": "json_schema", "schema": SUMMARY_SCHEMA}},
         "messages": [{"role": "user", "content": prompt}]}}
 
 
@@ -499,20 +661,13 @@ def anthropic_client():
 def submit_summaries(paths, opts, client=None):
     con = open_topics(paths.topics_db)
     cache = open_cache(paths.cache_db)
-    pending = pending_summaries(con, opts.retry_failed)
-    if opts.limit:
-        pending = pending[:opts.limit]
-    requests = []
-    for members_hash, anon, topic_id, keywords in pending:
-        recs = topic_records(con, cache, anon, topic_id)
-        if recs:
-            requests.append(build_request(f"t-{members_hash}", summary_prompt(json.loads(keywords), recs), opts.model))
-    chars = sum(len(r["params"]["system"]) + len(r["params"]["messages"][0]["content"]) for r in requests)
-    print(f"summarize: {len(requests):,} topics to summarize, ≈{chars / 4 / 1e6:.1f}M input tokens ({opts.model}, Batches API)")
-    if opts.dry_run or not requests:
+    todo = pending_requests(con, cache, opts)
+    estimate(todo, "Batches API", opts.model)
+    if opts.dry_run or not todo:
         con.close()
         cache.close()
         return []
+    requests = [build_request(f"t-{h}", prompt, opts.model, opts.effort) for h, prompt, _ in todo]
     client = client or anthropic_client()
     batch_ids = []
     for i in range(0, len(requests), opts.batch_size):
@@ -532,10 +687,7 @@ def submit_summaries(paths, opts, client=None):
 def message_json(message):
     text = next((b.text for b in message.content if getattr(b, "type", None) == "text"), "")
     data = json.loads(text)
-    en, ko = (data.get("summary_en") or "").strip(), (data.get("summary_ko") or "").strip()
-    if not en or not ko:
-        raise ValueError("empty summary")
-    return en, ko
+    return data.get("summary_en"), data.get("summary_ko")
 
 
 def collect_summaries(paths, opts, client=None, wait=True, poll=60):
@@ -565,38 +717,34 @@ def collect_summaries(paths, opts, client=None, wait=True, poll=60):
         rows = []
         for result in client.messages.batches.results(batch_id):
             members_hash = result.custom_id[2:]
-            kind = result.result.type
-            if kind != "succeeded":
-                counts[kind] += 1  # errored / canceled / expired: left pending, resubmitted next run
+            if result.result.type != "succeeded":
+                counts[result.result.type] += 1  # errored / canceled / expired: left pending, resubmitted next run
                 continue
             message = result.result.message
             if message.stop_reason == "refusal":
-                rows.append((members_hash, "refused", None, None, model, None, now()))
-                counts["refused"] += 1
+                rows.append(summary_row(members_hash, "refused", model))
                 continue
             try:
                 en, ko = message_json(message)
             except (ValueError, json.JSONDecodeError) as e:
-                rows.append((members_hash, "invalid", None, None, model, str(e)[:200], now()))
-                counts["invalid"] += 1
+                rows.append(summary_row(members_hash, "invalid", model, detail=str(e)[:200]))
                 continue
             topic = con.execute("SELECT anon_id, topic_id FROM topics WHERE members_hash=? LIMIT 1", (members_hash,)).fetchone()
             titles = [r.get("title") or "" for r in topic_records(con, cache, *topic)] if topic else []
-            if repeats_title(en, titles) or repeats_title(ko, titles):
-                rows.append((members_hash, "rejected_title_overlap", None, None, model, en[:300], now()))
-                counts["rejected_title_overlap"] += 1
-                continue
-            rows.append((members_hash, "ok", en, ko, model, None, now()))
-            counts["ok"] += 1
+            rows.append(judge(members_hash, en, ko, titles, model))
+        store_summaries(con, rows)
+        counts.update(row[1] for row in rows)
         with con:
-            con.executemany("INSERT OR REPLACE INTO summaries VALUES (?,?,?,?,?,?,?)", rows)
             con.execute("UPDATE summary_batches SET collected=1 WHERE batch_id=?", (batch_id,))
     con.close()
     cache.close()
     print("summarize: collected " + ", ".join(f"{k} {v:,}" for k, v in sorted(counts.items())))
 
 
-def step_summarize(paths, opts, client=None):
+def step_summarize(paths, opts, client=None, runner=None):
+    if opts.engine == "cli":
+        summarize_cli(paths, opts, runner)
+        return
     submit_summaries(paths, opts, client)
     if not opts.dry_run:
         collect_summaries(paths, opts, client, wait=not opts.no_wait, poll=opts.poll)
@@ -717,7 +865,7 @@ def step_export(paths, opts):
                    "works": "identity_decision=keep; KOAD namesake_paper excluded; phd_year-5 ≤ year ≤ release year; all author positions",
                    "clustering": f"공유 참고문헌 코사인 가중 Louvain (공유 ≥{opts.min_shared}편, resolution {opts.resolution}); {opts.min_size}편 미만 군집은 '기타'로 묶음",
                    "labels": "c-TF-IDF top terms (English)",
-                   "summaries": f"Claude ({model[0] if model else '—'}) — 대표 논문 제목·초록에서 생성, 제목 5단어 이상 반복 시 제외",
+                   "summaries": f"Claude ({model[0] if model else '—'}) — 대표 논문 제목·초록·출판일에서 생성, 제목 전체 또는 연속 8단어 반복 시 제외",
                    "branching": "탄생기 논문 × 이전 시기 논문의 bibliographic coupling 최댓값",
                    "recip": "not_computed"},
         "semantic": semantic_block(vocab, term_vecs, ko2en), "researchers": researchers}
@@ -753,11 +901,19 @@ def parser():
     p.add_argument("--window", type=int, default=3, help="info-flow window width in years")
     p.add_argument("--null", type=int, default=200, help="info-flow permutations/bootstraps (-1 skips info flow)")
     p.add_argument("--force", action="store_true", help="recluster researchers whose input did not change")
+    p.add_argument("--engine", choices=["cli", "api"], default="cli",
+                   help="cli: `claude -p` with the logged-in Claude Code account; api: Message Batches API")
     p.add_argument("--model", default=DEFAULT_MODEL)
+    p.add_argument("--effort", default="low", choices=["low", "medium", "high", "xhigh", "max"])
+    p.add_argument("--claude-bin", default="claude")
+    p.add_argument("--cli-workers", type=int, default=4, help="parallel `claude -p` processes")
+    p.add_argument("--cli-timeout", type=int, default=600, help="seconds per CLI call")
+    p.add_argument("--max-wait", type=int, default=360, help="minutes to keep waiting out usage limits before stopping")
+    p.add_argument("--backoff", type=int, default=60, help="first wait in seconds after a fully failed wave")
     p.add_argument("--limit", type=int, default=0, help="summarize at most N topics (trial runs)")
     p.add_argument("--batch-size", type=int, default=10000)
     p.add_argument("--dry-run", action="store_true", help="count summary requests and tokens without calling Claude")
-    p.add_argument("--no-wait", action="store_true", help="submit and return; run 'collect' later")
+    p.add_argument("--no-wait", action="store_true", help="--engine api: submit and return; run 'collect' later")
     p.add_argument("--retry-failed", action="store_true", help="resubmit refused/rejected/invalid summaries")
     p.add_argument("--poll", type=int, default=60)
     p.add_argument("--dims", type=int, default=48)
