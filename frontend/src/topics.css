@@ -206,7 +206,9 @@
 
 /* Method note: plain text with hairline rules, no card. */
 .tp-method { margin: 28px 0 8px; padding: 18px 0 4px; border-top: 1px solid var(--v2-line); border-bottom: 1px solid var(--v2-line); }
-.tp-method h3 { margin: 0 0 10px; color: var(--v2-ink); font-size: 15px; font-weight: 700; }
+.tp-method { margin: 4px 0 24px; }
+.tp-method summary { cursor: pointer; margin: 0 0 10px; color: var(--v2-ink); font-size: 15px; font-weight: 700; list-style-position: outside; }
+.tp-method:not([open]) summary { margin-bottom: 0; }
 .tp-method ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; }
 .tp-method li, .tp-method p { color: var(--v2-body); font-size: 13.5px; line-height: 1.7; word-break: keep-all; }
 .tp-method li b, .tp-method p b { margin-right: 8px; color: var(--v2-ink); font-weight: 600; }

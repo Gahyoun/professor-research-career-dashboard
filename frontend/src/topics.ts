@@ -39,20 +39,27 @@ export type TopicIndex = {
   infoPath: string | null;
 };
 /** Decrypted in memory after unlock only; never part of the public index. */
-export type EncryptedPaperTitles = Record<string, { year: number; topic: number; title: string; venue: string | null; doi: string | null }[]>;
+export type PaperTitle = { year: number; topic: number; title: string; venue: string | null; doi: string | null };
+export type EncryptedPaperTitles = Record<string, PaperTitle[]>;
+
+/** One researcher's decrypted rows; DOIs other than https://doi.org/… are dropped (no javascript: links). */
+export function validateTitleRows(rows: unknown): PaperTitle[] {
+  if (!Array.isArray(rows)) throw new Error('Invalid title rows');
+  return rows.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
+    .filter(row => typeof row.title === 'string' && typeof row.year === 'number' && typeof row.topic === 'number')
+    .map(row => ({ year: row.year as number, topic: row.topic as number, title: row.title as string,
+      venue: typeof row.venue === 'string' ? row.venue : null, doi: typeof row.doi === 'string' && /^https:\/\/doi\.org\/10\.\S+$/.test(row.doi) ? row.doi : null }));
+}
 
 export function validatePaperTitles(raw: unknown): EncryptedPaperTitles {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Invalid title bundle');
   const out: EncryptedPaperTitles = {};
-  for (const [id, rows] of Object.entries(raw as Record<string, unknown>)) {
-    if (!Array.isArray(rows)) throw new Error('Invalid title bundle');
-    out[id] = rows.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === 'object')
-      .filter(row => typeof row.title === 'string' && typeof row.year === 'number' && typeof row.topic === 'number')
-      .map(row => ({ year: row.year as number, topic: row.topic as number, title: row.title as string,
-        venue: typeof row.venue === 'string' ? row.venue : null, doi: typeof row.doi === 'string' && /^https:\/\/doi\.org\//.test(row.doi) ? row.doi : null }));
-  }
+  for (const [id, rows] of Object.entries(raw as Record<string, unknown>)) out[id] = validateTitleRows(rows);
   return out;
 }
+
+/** "doi:10.1103/PhysRevE.…" for display next to a title. */
+export const doiText = (doi: string) => `doi:${doi.replace(/^https:\/\/doi\.org\//, '')}`;
 
 export const TOPIC_SCHEMA = 'kstem-topic-alluvial/1';
 export const TOPIC_PALETTE = ['#3366FF', '#12B5A6', '#F59E0B', '#E5484D', '#8E4EC6', '#0EA5E9', '#65A30D', '#D946EF', '#F97316', '#64748B'];
@@ -541,6 +548,39 @@ export function searchTopics(index: TopicIndex, query: string, minimum = 0.22): 
   }
   hits.sort((a, b) => b.score - a.score || b.topic.size - a.topic.size);
   return { hits, terms, expanded, method: q ? 'semantic' : 'tags' };
+}
+
+/** Curated groups (public/data/topics/curated.json): a query that names the group shows only its members. */
+export type CuratedGroup = { key: string; label: string; match: string[]; ids: string[] };
+
+export function normalizeCurated(raw: unknown): CuratedGroup[] {
+  const groups = (raw as { schema?: string; groups?: unknown })?.schema === 'kstem-topic-curated/1' ? (raw as { groups: unknown }).groups : null;
+  if (!Array.isArray(groups)) return [];
+  return groups.filter((g): g is Record<string, unknown> => Boolean(g) && typeof g === 'object').map(g => ({
+    key: String(g.key ?? ''), label: String(g.label ?? ''),
+    match: Array.isArray(g.match) ? g.match.map(m => String(m).normalize('NFKC').toLowerCase().trim()).filter(Boolean) : [],
+    ids: Array.isArray(g.ids) ? g.ids.map(String).filter(id => /^P-[A-Z2-7]{10}$/.test(id)) : [],
+  })).filter(g => g.key && g.match.length && g.ids.length);
+}
+
+export function curatedFor(groups: CuratedGroup[], query: string): CuratedGroup | null {
+  const q = query.normalize('NFKC').toLowerCase().replace(/["“”]/g, '').replace(/\s+/g, ' ').trim();
+  return q ? groups.find(g => g.match.includes(q)) || null : null;
+}
+
+/** Only the group's members. Each member keeps the topics the search matched; a member with no
+ *  matching topic contributes their largest non-Other topic, so every member appears once. */
+export function curatedSearch(index: TopicIndex, search: TopicSearch, group: CuratedGroup): TopicSearch {
+  const members = new Set(group.ids);
+  const hits = search.hits.filter(h => members.has(h.researcher.id));
+  const covered = new Set(hits.map(h => h.researcher.id));
+  for (const researcher of index.researchers) {
+    if (!members.has(researcher.id) || covered.has(researcher.id)) continue;
+    const topic = [...researcher.topics].filter(t => !/^other\b|기타/i.test(t.label)).sort((a, b) => b.size - a.size)[0];
+    if (topic) hits.push({ researcher, topic, score: 0, tagScore: 0, semanticScore: 0, matched: [] });
+  }
+  hits.sort((a, b) => b.score - a.score || b.topic.size - a.topic.size);
+  return { ...search, hits };
 }
 
 export function tagCloud(index: TopicIndex, limit = 24): { tag: string; count: number }[] {

@@ -113,3 +113,10 @@ body, .app { background: var(--v2-canvas); }
 #atlas-search-hint { margin-top: 6px; }
 .v2-btn-quiet { border: 0; background: none; padding: 6px 2px; font: inherit; font-size: 14px; color: var(--v2-primary, #256ef4); cursor: pointer; text-underline-offset: 4px; }
 .v2-btn-quiet:hover { text-decoration: underline; }
+
+/* Hypergraph: the researcher is chosen through the 연구자 찾기 search, not a long select. */
+.atlas-scope .atlas-scope-pick { max-width: none; display: flex; flex: 1; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; color: var(--v2-body, #464c53); font-size: 14px; }
+.atlas-scope-pick > span { color: var(--v2-muted, #6d7882); }
+.atlas-scope-pick strong { color: var(--v2-ink, #1e2124); font-size: 16px; }
+.atlas-scope-pick small { color: var(--v2-muted, #6d7882); font-size: 13px; }
+.atlas-scope-pick .v2-btn-quiet { margin-left: auto; }

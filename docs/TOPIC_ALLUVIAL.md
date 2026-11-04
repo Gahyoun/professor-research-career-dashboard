@@ -10,14 +10,14 @@
 | 토픽·키워드 검색 | 영문 질의, 한국어 질의는 용어집으로 영문 변환. 태그 일치(0.45)와 LSA 코사인(0.55)을 합산해 모든 연구자의 토픽을 순위화한다. |
 | 단일 연구자 | 토픽 레인 × 연도(또는 경력 시기). 띠 두께 = 논문 수, 점선 = 모토픽 분기, NEW = 독립 신규, 회색 호 = ABA 경로. |
 | 멀티 연구자 | 검색에 걸린 토픽을 **스택**(연구자별 레인) 또는 **오버랩**(연구자별 색 누적)으로 비교. |
-| 논문 제목 | `encrypted_titles.json`이 있으면 잠금 해제 후 툴팁에 제목·저널·DOI 표시. |
+| 논문 제목 | `titles/`가 있으면 잠금 해제 후 툴팁에 제목·저널·DOI 표시. 연구자를 열 때 그 연구자 파일만 받아 메모리에서 복호화. |
 
 멀티 뷰의 토픽은 연구자마다 따로 클러스터링한 결과다. 같은 질의에 걸린 토픽을 같은 연도축에 놓은 비교이며, 전원을 다시 클러스터링한 공통 토픽축(`pipeline/scripts/build_multi.py`)과는 다르다.
 
 ## 공개 범위
 
 - `public/data/topics/index.json`: 익명 ID, 분야, 현재 기관, 경력 시기 라벨, 토픽 이름·특징어(영문)·LSA 벡터, 논문별 `{year, topic, era, cited}`, ABA 쌍의 연도·토픽. **논문 제목·DOI·실명 없음** — `normalizeTopicIndex`가 제목 필드를 발견하면 로딩을 거부한다.
-- `public/data/topics/encrypted_titles.json`: `{anon_id: [{year, topic, title, venue, doi}]}`를 `encrypted_names.json`과 같은 방식(PBKDF2-SHA256 600,000회 → AES-256-GCM, AAD `topic-titles-v1`)으로 암호화.
+- `public/data/topics/titles/key.json` + `titles/<anon_id>.json`: 연구자별 `[{year, topic, title, venue, doi}]`를 AES-256-GCM으로 암호화. 키는 `NAMES_PASSWORD`에서 PBKDF2-SHA256 600,000회로 한 번 만들고(salt는 `key.json`), 파일마다 nonce가 따로이며 AAD `topic-titles-v2:<anon_id>`로 연구자에 묶인다. `key.json`의 `check`로 비밀번호를 확인한다. 만드는 법: `python3 -I backend/topics/encrypt_titles.py --manifest $W/manifest.txt --env-file <private>/names.env`.
 - `public/data/topics/info/<anon_id>.json`: 연구자별 분기·합류 정보량 블록. 색인의 `info_path`가 있으면 연구자를 고를 때만 불러온다.
 - `source: "demo"`인 색인은 화면에 "예시 데이터" 표시가 붙는다. 합성 예시(`backend/topics/make_demo_index.py`)는 검색 동작 테스트용으로 `tests/fixtures/topic_index_demo.json`에 남아 있다.
 - 토픽 특징어에는 페이지 상용구·소속(orcid, author, university, department, seoul …)과 사람 이름이 들어가지 않는다. OpenAlex 초록 중 스크랩된 랜딩 페이지·표지 설명문("in article number …, A, B and co-workers")·정정 공지("… et al.")는 라벨 텍스트에서 빼고, 로마자 한국 이름 음절로만 된 구와 비공개 이름 목록(`--exclude-terms`)에 있는 구는 특징어로 쓰지 않는다.
@@ -39,7 +39,7 @@ python3 -I backend/topics/export_public_index.py --manifest "$W/manifest.txt" --
 - 대상: identity_decision = keep, KOAD namesake 제외, article·review·letter·editorial, 출판연도 ≤ 2026(2026은 원본 snapshot까지).
 - 토픽: bibliographic coupling network에서 weighted Louvain. edge는 공통 참고문헌 c_ij ≥ 2, 가중치 w_ij = c_ij / √(|R_i||R_j|) (Salton cosine), resolution 1.05, seed 4. edge 없는 논문과 1편짜리 community는 "Other".
 - 경력 시기는 공개 `dashboard.json`의 career 구간이다. ABA 경로(피인용 수집)는 이 릴리스에서 계산하지 않았다(`method.recip = "not computed"`).
-- API 키는 `--env-file` 안에서만 읽고 출력·기록하지 않는다. `NAMES_PASSWORD`가 있을 때만 `encrypted_titles.json`을 쓴다.
+- API 키는 `--env-file` 안에서만 읽고 출력·기록하지 않는다. `NAMES_PASSWORD`가 있을 때만 `titles/`를 쓴다(또는 `encrypt_titles.py`로 따로 만든다).
 
 ### 연구자 한 명씩 (원본 파이프라인)
 

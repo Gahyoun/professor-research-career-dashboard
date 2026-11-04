@@ -2,14 +2,14 @@ import SankeyPage from './SankeyPage';
 import TemporalInstitutionsPage from './TemporalInstitutionsPage';
 import { loadDashboard } from './metadata';
 import { canonicalSchool, institutionDisplayName } from './schoolIdentity';
-import { decryptJson, decryptNameMap, type EncryptedNames } from './privacy';
+import { decryptNameMap, type EncryptedNames } from './privacy';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Stage, Career, YearPoint, Professor, Dashboard } from './types';
 import Constellation from './Constellation';
 import AtlasMark from './AtlasMark';
 import TopicsPage from './TopicsPage';
-import { validatePaperTitles, type EncryptedPaperTitles } from './topics';
+import { openTitleVault, type TitleVault } from './titleVault';
 
 type Filters = { subject: string; institution: string };
 
@@ -155,7 +155,7 @@ export default function App() {
   const authGeneration = useRef(0);
   useEffect(() => () => { authGeneration.current += 1; }, []);
   const [names, setNames] = useState<Record<string, string> | null>(null);
-  const [topicTitles, setTopicTitles] = useState<EncryptedPaperTitles | null>(null);
+  const [topicTitles, setTopicTitles] = useState<TitleVault | null>(null);
   const [message, setMessage] = useState('실명은 암호화되어 있습니다.');
   const [zoom, setZoom] = useState(100);
   const [contrast, setContrast] = useState(false);
@@ -202,10 +202,8 @@ export default function App() {
       if (!response.ok) throw new Error('Name bundle unavailable');
       const payload = await response.json() as EncryptedNames;
       const decrypted = await decryptNameMap(submittedPassword, payload);
-      // The topic title bundle is optional: absent until a real topic release ships.
-      let titles: EncryptedPaperTitles | null = null;
-      const topicResponse = await fetch(`${import.meta.env.BASE_URL}data/topics/encrypted_titles.json`).catch(() => null);
-      if (topicResponse?.ok) try { titles = validatePaperTitles(await decryptJson(submittedPassword, await topicResponse.json() as EncryptedNames)); } catch { titles = null; }
+      // Paper titles are optional: one key for the per-researcher title files, opened on demand.
+      const titles = await openTitleVault(submittedPassword, `${import.meta.env.BASE_URL}data/topics/titles/`);
       if (generation !== authGeneration.current) return;
       setNames(decrypted); setTopicTitles(titles); setMessage('실명과 그룹 쿼리가 이 기기의 메모리에서만 활성화되었습니다.');
     } catch { if (generation === authGeneration.current) setMessage('비밀번호가 맞지 않거나 실명 파일을 불러오지 못했습니다.'); }
@@ -242,7 +240,7 @@ export default function App() {
 
       <main id="main" tabIndex={-1} className={`container ${viewMode === 'constellation' || viewMode === 'sankey' || viewMode === 'institutions' || viewMode === 'topics' ? 'atlas-container' : ''}`}>
         {message !== '실명은 암호화되어 있습니다.' && <p className="atlas-auth-message" role="status">{message}</p>}
-        {viewMode === 'topics' ? <TopicsPage professors={dashboard.professors} names={names} titles={topicTitles} releaseYear={dashboard.meta.release_year} onOpenCareer={chooseProfessor}/> : viewMode === 'constellation' ?<Constellation initialSelectedId={graphSelectionId} professors={dashboard.professors} names={names} releaseYear={dashboard.meta.release_year} onSelect={chooseProfessor}/> : viewMode === 'institutions' ? <TemporalInstitutionsPage professors={dashboard.professors} releaseYear={dashboard.meta.release_year}/> : viewMode === 'sankey' ? <SankeyPage key={names ? 'unlocked' : 'locked'} professors={dashboard.professors} names={names} releaseYear={dashboard.meta.release_year} onSelect={chooseProfessor}/> : <>
+        {viewMode === 'topics' ? <TopicsPage key={topicTitles ? 'unlocked' : 'locked'} professors={dashboard.professors} names={names} titles={topicTitles} releaseYear={dashboard.meta.release_year} onOpenCareer={chooseProfessor}/> : viewMode === 'constellation' ?<Constellation initialSelectedId={graphSelectionId} professors={dashboard.professors} names={names} releaseYear={dashboard.meta.release_year} onSelect={chooseProfessor}/> : viewMode === 'institutions' ? <TemporalInstitutionsPage professors={dashboard.professors} releaseYear={dashboard.meta.release_year}/> : viewMode === 'sankey' ? <SankeyPage key={names ? 'unlocked' : 'locked'} professors={dashboard.professors} names={names} releaseYear={dashboard.meta.release_year} onSelect={chooseProfessor}/> : <>
 
         <section className="title-row"><div><span className="eyebrow">{dashboard.meta.release_year} DATA RELEASE</span><h1>교수 연구경력과 주저자 생산성</h1><p>박사과정부터 기관별 포닥·교수 임용까지의 경력과 필터링된 1저자·교신저자 논문을 확인합니다.</p></div><div className="display-settings"><label htmlFor="zoom">글자 크기</label><select id="zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))}><option value="90">90%</option><option value="100">100%</option><option value="110">110%</option><option value="130">130%</option><option value="150">150%</option></select><label className="contrast"><input type="checkbox" checked={contrast} onChange={e => setContrast(e.target.checked)}/> 선명한 화면</label></div></section>
 

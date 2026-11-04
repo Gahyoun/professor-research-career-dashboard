@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { normalizeInfoFlow as parseInfo, parseEraLabel, normalizeTopicIndex, layoutAlluvial, queryResearchers, orderedTopics, topicDepths, topicColors, eraOfYear, validatePaperTitles, bandTextWidth, fitBandText, TOPIC_SCHEMA } from '../work/test-dist/topics.js';
+import { normalizeInfoFlow as parseInfo, parseEraLabel, normalizeTopicIndex, layoutAlluvial, queryResearchers, orderedTopics, topicDepths, topicColors, eraOfYear, validatePaperTitles, validateTitleRows, doiText, normalizeCurated, curatedFor, curatedSearch, bandTextWidth, fitBandText, TOPIC_SCHEMA } from '../work/test-dist/topics.js';
 
 const researcher = (extra = {}) => ({
   id: 'P-AAAAAAAAAA', subject: 'physics', institution: 'Example University',
@@ -149,6 +149,8 @@ test('title bundle keeps only DOI links', () => {
   const titles = validatePaperTitles({ X: [{ year: 2006, topic: 0, title: 'A', doi: 'javascript:alert(1)' }, { year: 2007, topic: 0, title: 'B', doi: 'https://doi.org/10.1/x' }] });
   assert.equal(titles.X[0].doi, null);
   assert.equal(titles.X[1].doi, 'https://doi.org/10.1/x');
+  assert.equal(validateTitleRows([{ year: 2007, topic: 0, title: 'C', doi: 'https://doi.org/not-a-doi' }])[0].doi, null);
+  assert.equal(doiText('https://doi.org/10.1103/PhysRevE.1'), 'doi:10.1103/PhysRevE.1');
 });
 
 test('shipped topic index is valid and title-free', () => {
@@ -289,4 +291,19 @@ test('plural and singular English forms meet in topic search', () => {
   assert.equal(singular('gas'), 'gas');
   const index = demo();
   for (const q of ['battery', 'batteries', '배터리']) assert.match(searchTopics(index, q).hits[0]?.topic.label || '', /batter/i, q);
+});
+
+test('curated group: its keyword shows only members, each at least once', () => {
+  const groups = normalizeCurated({ schema: 'kstem-topic-curated/1', groups: [{ key: 'sp', label: 'Statistical physics', match: ['Statistical Physics', '통계물리'], ids: ['P-AAAAAAAAAA', 'P-BBBBBBBBBB', 'bad id'] }] });
+  assert.equal(groups[0].ids.length, 2);
+  assert.equal(curatedFor(groups, '  "statistical   physics" ')?.key, 'sp');
+  assert.equal(curatedFor(groups, '통계물리')?.key, 'sp');
+  assert.equal(curatedFor(groups, 'statistical'), null);
+  const topic = (id, label, size) => ({ id, label, size, birth_year: 2000, parent: null, tags: { en: [], ko: [] }, keywords: [] });
+  const person = (id, topics) => ({ id, topics, papers: [] });
+  const a = person('P-AAAAAAAAAA', [topic(0, 'Ising', 5)]), b = person('P-BBBBBBBBBB', [topic(0, 'Other · x', 9), topic(1, 'Lasers', 3)]), c = person('P-CCCCCCCCCC', [topic(0, 'Ising', 7)]);
+  const hit = (researcher, t, score) => ({ researcher, topic: t, score, tagScore: score, semanticScore: 0, matched: [] });
+  const found = { hits: [hit(c, c.topics[0], 0.9), hit(a, a.topics[0], 0.8)], terms: [], expanded: [], method: 'tags' };
+  const out = curatedSearch({ researchers: [a, b, c] }, found, groups[0]);
+  assert.deepEqual(out.hits.map(h => `${h.researcher.id}:${h.topic.label}`), ['P-AAAAAAAAAA:Ising', 'P-BBBBBBBBBB:Lasers']);
 });
