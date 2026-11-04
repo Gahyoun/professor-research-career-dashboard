@@ -36,7 +36,7 @@ python3 -I backend/topics/export_public_index.py --manifest "$W/manifest.txt" --
     --exclude-terms "$W/03_name_terms.txt" --coverage "2025년까지 … 2026년은 partial" --out-dir public/data/topics
 ```
 
-- 대상: identity_decision = keep, KOAD namesake 제외, article·review·letter·editorial, 출판연도 ≤ 2026(2026은 원본 snapshot까지).
+- 대상: 같은 교수·논문의 소스 `keep`과 KOAD `true_paper`가 모두 확인된 article·review·letter·editorial, 출판연도 ≤ 2026(2026은 원본 snapshot까지). 박사학위 연도를 아는 경우 `학위연도−5` 이전은 제외한다. 미심사 논문은 토픽 선택에도 들어가지 않는다. 별도 판정 DB는 select의 `--identity-decisions`로 지정한다.
 - 토픽: bibliographic coupling network에서 weighted Louvain. edge는 공통 참고문헌 c_ij ≥ 2, 가중치 w_ij = c_ij / √(|R_i||R_j|) (Salton cosine), resolution 1.05, seed 4. edge 없는 논문과 1편짜리 community는 "Other".
 - 경력 시기는 공개 `dashboard.json`의 career 구간이다. ABA 경로(피인용 수집)는 이 릴리스에서 계산하지 않았다(`method.recip = "not computed"`).
 - API 키는 `--env-file` 안에서만 읽고 출력·기록하지 않는다. `NAMES_PASSWORD`가 있을 때만 `titles/`를 쓴다(또는 `encrypt_titles.py`로 따로 만든다).
@@ -48,7 +48,7 @@ pip install -r backend/topics/pipeline/requirements.txt cryptography
 
 # 1) KOAD 판정을 파이프라인 입력으로 (대시보드와 같은 논문 집합)
 python3 backend/topics/koad_verdicts.py --koad-dir "$KOAD_RUN" \
-    --professor-uid "$PROFESSOR_UID" --out "$WORK/<slug>/verdicts.json"
+    --source-db "$SOURCE_DATABASE" --professor-uid "$PROFESSOR_UID" --out "$WORK/<slug>/verdicts.json"
 
 # 2) 수집 → 판별(어댑터) → 토픽 → 라벨 → 분기  (backend/topics/pipeline, 원본 run.sh와 같은 순서)
 python3 backend/topics/pipeline/scripts/fetch_works.py --name "..." --seed-title "..." --out "$WORK/<slug>/works.json"
@@ -65,6 +65,8 @@ NAMES_PASSWORD=... python3 backend/topics/export_public_index.py \
 ```
 
 `$WORK`는 비공개 경로다. `works.json`, `seeds.json`, `alluvial.json`에는 제목이 있으므로 저장소에 커밋하지 않는다.
+
+KOAD 어댑터도 판정 SQLite와 적용 후 소스 DB를 함께 확인한다. 기본 `--review source`는 `true_paper`이면서 소스가 `keep`인 검토 행을 유지한다. `drop`·`skip`은 그 집합을 더 좁히며, 호환 옵션 `keep`도 `namesake_paper`, 미심사, 소스 격리 행을 통과시키지 않는다. 같은 교수·논문에 상충하는 JSONL 판정이 있으면 중단한다.
 
 ## 이름·특징어와 검색 (영문 기준)
 

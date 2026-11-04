@@ -13,6 +13,12 @@ import sqlite3
 from collections import defaultdict
 from pathlib import Path
 
+from release_identity import (
+    IDENTITY_FILTER_VERSION, STRICT_IDENTITY_PREDICATE,
+    PublicationIdentityGate, decision_database_path, register_author_alias, alias_professor_uid,
+)
+from observed_careers import reconcile_observed_faculty, unique_evidence_unit
+
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -20,6 +26,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 parser = argparse.ArgumentParser(description='Build anonymized public dashboard assets.')
 parser.add_argument('--year', default=os.environ.get('RELEASE_YEAR', '2026'))
 parser.add_argument('--project-root', default=str(Path(__file__).resolve().parents[2]))
+parser.add_argument('--identity-decisions', type=Path, help='KOAD decisions for this private build source')
 parser.add_argument(
     '--reuse-encrypted-names', action='store_true',
     help='Reuse the existing encrypted name bundle for a filter-only rebuild',
@@ -148,9 +155,9 @@ koad_changed_work_count = con.execute(
 ).fetchone()[0] if koad_applied else 0
 
 # The web-copy DB preserves review rows by design. The public bibliographic
-# release is stricter: every work that KOAD labelled namesake_paper is excluded,
-# including review-confidence rows, before publication and career aggregation.
-decision_db_path = db_path.parent / 'identity_decisions.sqlite'
+# release requires both a positive work decision and kept source evidence. An
+# alias author ID or the absence of a namesake decision is never sufficient.
+decision_db_path = decision_database_path(db_path, cache, args.identity_decisions)
 koad_decisions_available = decision_db_path.exists()
 if koad_decisions_available:
     decision_uri = f'file:{decision_db_path.resolve()}?mode=ro&immutable=1'
@@ -163,14 +170,8 @@ if not koad_decisions_available:
         f'KOAD decision database is required for public release: {decision_db_path}'
     )
 
-strict_identity_predicate = """
-NOT EXISTS (
-  SELECT 1 FROM koad.work_decision kd
-  WHERE kd.professor_uid={alias}.professor_uid
-    AND kd.work_id={alias}.work_id
-    AND kd.decision='namesake_paper'
-)
-"""
+strict_identity_predicate = STRICT_IDENTITY_PREDICATE
+publication_identity = PublicationIdentityGate.from_connection(con)
 koad_namesake_work_count = con.execute(
     "SELECT COUNT(*) FROM koad.work_decision WHERE decision='namesake_paper'"
 ).fetchone()[0]
@@ -179,12 +180,6 @@ koad_namesake_removed_from_source_keep = con.execute('''
   FROM work_authorship_evidence w JOIN koad.work_decision kd USING(professor_uid,work_id)
   WHERE w.identity_decision='keep' AND kd.decision='namesake_paper'
 ''').fetchone()[0]
-blocked_work_ids_by_uid = defaultdict(set)
-for row in con.execute(
-    "SELECT professor_uid,work_id FROM koad.work_decision WHERE decision='namesake_paper'"
-):
-    blocked_work_ids_by_uid[row['professor_uid']].add(row['work_id'])
-
 for row in con.execute('''
   SELECT ia.raw_label,iu.display_name,ia.confidence
   FROM institution_aliases ia JOIN institution_units iu ON iu.unit_id=ia.unit_id
@@ -288,7 +283,25 @@ for row in con.execute('''
         'start_year': row['start_year'], 'end_year': row['end_year'],
         'confidence': row['confidence'], 'is_institution_successor': bool(row['is_institution_successor']),
         'evidence_basis': row['reasoning'], 'is_estimated': False,
+        '_institution_unit_id': row['institution_unit_id'],
+        '_explicit_verified': row['evidence_status'] in {'verified', 'official_profile', 'verified_cv', 'manually_verified'},
     })
+
+observed_faculty = defaultdict(list)
+if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='semester_snapshots'").fetchone():
+    columns = {row[1] for row in con.execute('PRAGMA table_info(semester_snapshots)')}
+    semester = 's.semester' if 'semester' in columns else 'NULL AS semester'
+    for snapshot in con.execute(f'''
+        SELECT s.professor_uid,s.term,s.year,{semester},s.institution_raw,s.institution_unit_id,
+               iu.display_name AS full_name
+        FROM semester_snapshots s JOIN institution_units iu ON iu.unit_id=s.institution_unit_id
+    '''):
+        institution = canonical_institution(snapshot['full_name'], snapshot['institution_raw'], current_profile=True)
+        if snapshot['institution_raw'] == 'Andong' or institution in {
+            'Andong National University', 'Gyeongguk National University', 'Gyeongguk National University (Andong Campus)',
+        }:
+            institution = 'Andong National University' if snapshot['year'] < 2025 else 'Gyeongguk National University (Andong Campus)'
+        observed_faculty[snapshot['professor_uid']].append({**dict(snapshot), 'institution': institution})
 
 same_phd_affiliations = defaultdict(list)
 for row in con.execute(f'''
@@ -365,7 +378,10 @@ def merge_nearby_career_segments(careers, max_missing_periods=2):
         previous = latest_by_key.get(key)
         previous_end = period_index(previous.get('end_period')) if previous else None
         current_start = period_index(item.get('start_period'))
-        if (previous is not None and previous_end is not None and current_start is not None
+        evidence_kind_differs = (previous is not None and (
+            (item['stage'] == 'faculty' and bool(previous.get('_explicit_verified')) != bool(item.get('_explicit_verified')))
+            or (item['stage'] == 'postdoc' and bool(previous.get('_publication_inferred_postdoc')) != bool(item.get('_publication_inferred_postdoc')))))
+        if (previous is not None and not evidence_kind_differs and previous_end is not None and current_start is not None
                 and current_start <= previous_end + max_missing_periods + 1):
             current_end = period_index(item.get('end_period'))
             if current_end is not None and current_end > previous_end:
@@ -377,6 +393,8 @@ def merge_nearby_career_segments(careers, max_missing_periods=2):
             previous['evidence_basis'] = '; '.join(dict.fromkeys(bases)) or None
             previous['is_estimated'] = bool(previous.get('is_estimated')) and bool(item.get('is_estimated'))
             previous['is_institution_successor'] = bool(previous.get('is_institution_successor')) or bool(item.get('is_institution_successor'))
+            if not previous.get('_institution_unit_id') and item.get('_institution_unit_id'):
+                previous['_institution_unit_id'] = item['_institution_unit_id']
             merge_count += 1
             continue
         merged.append(item)
@@ -514,6 +532,8 @@ for row in con.execute('''
                     'start_year': int(first['period'][:4]), 'end_year': int(last['period'][:4]),
                     'confidence': 'high', 'is_institution_successor': False,
                     'evidence_basis': '박사학위 이후 동일기관 저자소속 논문 증거', 'is_estimated': False,
+                    '_institution_unit_id': first['institution_unit_id'],
+                    '_publication_inferred_postdoc': True,
                 })
 
     current_faculty_start = min(faculty_starts) if faculty_starts else row['appointment_year']
@@ -550,6 +570,7 @@ for row in con.execute('''
             'start_year': int(distinct_periods[0][:4]), 'end_year': int(distinct_periods[-1][:4]),
             'confidence': 'high', 'is_institution_successor': False,
             'evidence_basis': '국내 대학 학과 소속 논문 2개 반기 이상·포닥 비중첩·현재 교수직 직전 이동 증거', 'is_estimated': False,
+            '_institution_unit_id': unique_evidence_unit(evidence_rows),
         })
 
     careers = split_gyeongguk_successor(careers)
@@ -568,6 +589,7 @@ for row in con.execute('''
                 'start_year': 2025, 'end_year': int(year), 'confidence': 'confirmed',
                 'is_institution_successor': True, 'is_estimated': False,
                 'evidence_basis': '2025-03 국립안동대학교·경북도립대학교 통합 출범 및 최신 명부 증거',
+                '_institution_unit_id': row['latest_institution_unit_id'],
             })
     current_full = canonical_institution(row['current_full_name'], row['latest_institution_raw'], current_profile=True)
     generic_current = row['current_full_name'] or row['latest_institution_raw']
@@ -575,6 +597,7 @@ for row in con.execute('''
         if career['stage'] == 'faculty' and career['institution'] == generic_current:
             career['institution'] = current_full
     careers, merged_count = merge_nearby_career_segments(careers)
+    careers = reconcile_observed_faculty(careers, observed_faculty.get(uid, []), int(year))
     merged_career_segment_count += merged_count
     careers.sort(key=lambda item: (item.get('start_year') or 9999, item.get('start_period') or '', item['stage'], item['institution']))
     for faculty_number, faculty in enumerate((item for item in careers if item['stage'] == 'faculty'), start=1):
@@ -594,19 +617,19 @@ for row in con.execute('''
 
 by_pid = {p['id']: p for p in professors}
 alias_author_to_uid = {}
+primary_author_owners = defaultdict(set)
+for uid, author_id in primary_author_by_uid.items():
+    primary_author_owners[author_id].add(uid)
 alias_path = cache / 'author_aliases.json'
 if alias_path.exists():
     for record in json.loads(alias_path.read_text()):
-        uid = source_to_uid.get(normalized_source_id(record.get('source_professor_id')))
+        uid = alias_professor_uid(record, uid_to_public, source_to_uid)
         if not uid:
             continue
         for author_id in record.get('openalex_ids', []):
             if author_id == primary_author_by_uid.get(uid):
                 continue
-            other = alias_author_to_uid.get(author_id)
-            if other and other != uid:
-                raise RuntimeError(f'OpenAlex alias collision: {author_id}')
-            alias_author_to_uid[author_id] = uid
+            register_author_alias(alias_author_to_uid, primary_author_owners, author_id, uid)
 
 year_agg = defaultdict(lambda: defaultdict(lambda: {
     'total': 0, 'first_author': 0, 'corresponding_author': 0,
@@ -660,6 +683,7 @@ for row in con.execute('''
         continue
     blocked_lead_works.add((row['professor_uid'], row['work_id']))
 
+alias_work_count = 0
 for row in con.execute(f'''
   SELECT w.professor_uid,w.openalex_id,w.work_id,w.publication_year,w.work_type
   FROM work_authorship_evidence w JOIN professors p USING(professor_uid)
@@ -675,12 +699,27 @@ for row in con.execute(f'''
     pid = uid_to_public.get(row['professor_uid'])
     if not pid:
         continue
-    add_role(pid, row['publication_year'], role)
+    added = add_role(pid, row['publication_year'], role)
+    if (added and row['professor_uid'] in alias_author_to_uid.get(row['openalex_id'], ())
+            and row['openalex_id'] != primary_author_by_uid.get(row['professor_uid'])):
+        alias_work_count += 1
 
-alias_work_count = 0
-for role in alias_roles:
-    uid = alias_author_to_uid.get(role.get('target_author_id'))
-    if not uid or not (role.get('author_position') == 'first' or role.get('is_corresponding')):
+excluded_alias_works = defaultdict(set)
+excluded_alias_roles = defaultdict(set)
+selected_source_authors = {
+    (row[0], row[1]): str(row[2] or '').rstrip('/').rsplit('/', 1)[-1]
+    for row in con.execute('SELECT professor_uid,work_id,openalex_id FROM work_authorship_evidence')
+}
+for role, uid in ((role, uid) for role in alias_roles
+                  for uid in sorted(alias_author_to_uid.get(role.get('target_author_id'), ()))):
+    exclusion_reason = publication_identity.exclusion_reason(uid, role.get('work_id'))
+    if exclusion_reason:
+        excluded_alias_works[exclusion_reason].add((uid, role.get('work_id')))
+    role_exclusion = None
+    if not exclusion_reason and selected_source_authors.get((uid, role.get('work_id'))) != str(role.get('target_author_id') or '').rstrip('/').rsplit('/', 1)[-1]:
+        role_exclusion = 'different_selected_author'
+        excluded_alias_roles[role_exclusion].add((uid, role.get('work_id')))
+    if not (role.get('author_position') == 'first' or role.get('is_corresponding')):
         continue
     if role.get('work_type') not in allowed_types or (role.get('source') or {}).get('type') != 'journal':
         continue
@@ -690,8 +729,11 @@ for role in alias_roles:
     alias_professor = by_pid.get(uid_to_public.get(uid))
     if alias_professor and alias_professor.get('phd_year') and int(publication_year) < int(alias_professor['phd_year']) - 5:
         continue
-    if role.get('work_id') in blocked_work_ids_by_uid.get(uid, set()):
-        blocked_lead_works.add((uid, role['work_id']))
+    if exclusion_reason:
+        if exclusion_reason == 'namesake_paper':
+            blocked_lead_works.add((uid, role['work_id']))
+        continue
+    if role_exclusion:
         continue
     alias_work_count += int(add_role(uid_to_public.get(uid), publication_year, role))
 
@@ -751,17 +793,33 @@ meta = {
     'impact_metric': 'OpenAlex source summary_stats.2yr_mean_citedness',
     'lead_definition': 'OpenAlex author_position=first OR is_corresponding=true',
     'identity_filter': (
-        'KOAD career-aware same-person filter; every namesake_paper decision is excluded '
+        'KOAD career-aware same-person filter; source keep and an explicit true_paper '
+        'decision for the same researcher and work are both required '
         'before bibliography, affiliation, career, yearly, and journal aggregation; '
         'publication_year>=phd_year-5 when PhD year is known'
     ),
-    'identity_filter_version': 'KOAD 1.1-strict-namesake-drop',
+    'identity_filter_version': IDENTITY_FILTER_VERSION,
+    'requires_positive_work_decision': True,
+    'koad_unclassified_source_keep_excluded': publication_identity.unclassified_kept_source_count,
     'identity_decisions_changed': koad_changed_work_count,
     'koad_namesake_work_count': koad_namesake_work_count,
     'koad_namesake_removed_from_source_keep': koad_namesake_removed_from_source_keep,
     'koad_namesake_lead_works_blocked': len(blocked_lead_works),
     'secondary_openalex_author_count': len(alias_author_to_uid),
+    'secondary_openalex_candidate_researcher_count': sum(map(len, alias_author_to_uid.values())),
+    'secondary_openalex_shared_profile_count': sum(
+        len(uids | primary_author_owners.get(author_id, set())) > 1
+        for author_id, uids in alias_author_to_uid.items()
+    ),
     'secondary_openalex_lead_work_count': alias_work_count,
+    'secondary_openalex_identity_excluded_work_count': sum(map(len, excluded_alias_works.values())),
+    'secondary_openalex_identity_exclusions': {
+        reason: len(pairs) for reason, pairs in sorted(excluded_alias_works.items())
+    },
+    'secondary_openalex_role_excluded_work_count': sum(map(len, excluded_alias_roles.values())),
+    'secondary_openalex_role_exclusions': {
+        reason: len(pairs) for reason, pairs in sorted(excluded_alias_roles.items())
+    },
     'bachelor_display_rule': 'institution only; no timeline estimate because leave/military and other gaps are unobserved',
     'doctoral_period_rule': 'phd_degree_year-5 through phd_degree_year, estimated',
     'pre_doctoral_hard_gate': 'works and affiliations earlier than phd_degree_year-5 are duplicate_drop_candidate',

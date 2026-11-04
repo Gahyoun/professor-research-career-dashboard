@@ -10,6 +10,7 @@ parser.add_argument('--year', required=True)
 parser.add_argument('--db', required=True)
 parser.add_argument('--project-root', default=str(Path(__file__).resolve().parents[2]))
 parser.add_argument('--author-aliases', help='Optional private JSON exported from profile workbooks')
+parser.add_argument('--identity-decisions', type=Path, help='KOAD decisions for this private build source')
 args = parser.parse_args()
 
 root = Path(args.project_root)
@@ -24,6 +25,8 @@ ids = [row[0] for row in con.execute(
 con.close()
 (cache / 'author_ids.json').write_text(json.dumps(ids))
 (cache / 'source_db_path.txt').write_text(str(Path(args.db).resolve()))
+decision_db = args.identity_decisions or Path(args.db).resolve().parent / 'identity_decisions.sqlite'
+(cache / 'identity_decisions_path.txt').write_text(str(decision_db.resolve()))
 if args.author_aliases:
     shutil.copy2(Path(args.author_aliases).resolve(), cache / 'author_aliases.json')
 print(json.dumps({'release_year': args.year, 'author_ids': len(ids), 'author_aliases': (cache / 'author_aliases.json').exists(), 'cache': str(cache)}))

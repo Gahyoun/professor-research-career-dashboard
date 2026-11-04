@@ -13,6 +13,9 @@ PREPARE_ARGS=(--year "$RELEASE_YEAR" --db "$PRIVATE_DB_PATH")
 if [[ -n "${AUTHOR_ALIASES_JSON:-}" ]]; then
   PREPARE_ARGS+=(--author-aliases "$AUTHOR_ALIASES_JSON")
 fi
+if [[ -n "${KOAD_DECISIONS_DB:-}" ]]; then
+  PREPARE_ARGS+=(--identity-decisions "$KOAD_DECISIONS_DB")
+fi
 python3 backend/scripts/prepare_release.py "${PREPARE_ARGS[@]}"
 RELEASE_YEAR="$RELEASE_YEAR" node backend/scripts/enrich_openalex_works.mjs
 if [[ -f "backend/cache/$RELEASE_YEAR/author_aliases.json" ]]; then

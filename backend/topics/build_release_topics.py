@@ -11,7 +11,7 @@ which must be outside the public repository (it holds titles, DOIs and raw work 
 
 Then export with export_public_index.py --manifest W/manifest.txt.
 
-Step 01 select   identity_decision=keep, KOAD namesake_paper excluded, journal types,
+Step 01 select   source keep and same-researcher/work KOAD true_paper required, journal types,
                  publication_year <= 2026 (2026 is the source snapshot and therefore partial).
 Step 02 fetch    OpenAlex id, referenced_works, abstract, keywords, topics, cited_by_count,
                  venue in 100-id batches; resumable shards; the API key is read from --env-file
@@ -30,6 +30,10 @@ from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from pathlib import Path
+
+# Resolve this trusted repository helper explicitly, also under Python -I.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
+from release_identity import IDENTITY_FILTER_VERSION, PublicationIdentityGate, decision_database_path
 
 JOURNAL_TYPES = ("article", "review", "letter", "editorial")
 MAX_YEAR = 2026
@@ -63,32 +67,41 @@ def cmd_select(a):
     work.mkdir(parents=True, exist_ok=True)
     db = source_db(priv)
     con = sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
-    koad = sqlite3.connect(f"file:{db.parent / 'identity_decisions.sqlite'}?mode=ro&immutable=1", uri=True)
-    namesake = {(u, w) for u, w in koad.execute("SELECT professor_uid, work_id FROM work_decision WHERE decision='namesake_paper'")}
+    decisions = decision_database_path(db, priv / 'backend/cache/2026', getattr(a, 'identity_decisions', None))
+    if not decisions.exists():
+        raise ValueError('KOAD decisions are required before selecting public topic works')
+    con.execute('ATTACH DATABASE ? AS koad', (f'file:{decisions.resolve()}?mode=ro&immutable=1',))
+    identity = PublicationIdentityGate.from_connection(con)
     kept, dropped, reasons = [], [], Counter()
-    rows = con.execute("SELECT professor_uid, work_id, publication_year, work_type, identity_decision, doi, title "
-                       "FROM work_authorship_evidence")
-    for uid, wid, year, wtype, decision, doi, title in rows:
-        reason = ("identity_not_keep" if decision != "keep" else
-                  "koad_namesake" if (uid, wid) in namesake else
-                  "non_journal_type" if wtype not in JOURNAL_TYPES else
-                  "no_year" if year is None else
-                  "after_2026" if year > MAX_YEAR else None)
+    rows = con.execute("SELECT w.professor_uid,w.work_id,w.publication_year,w.work_type,w.identity_decision,w.doi,w.title,p.phd_year "
+                       "FROM work_authorship_evidence w JOIN professors p USING(professor_uid)")
+    for uid, wid, year, wtype, decision, doi, title, phd_year in rows:
+        reason = 'identity_not_keep' if decision != 'keep' else identity.exclusion_reason(uid, wid)
+        if reason is None:
+            reason = ("non_journal_type" if wtype not in JOURNAL_TYPES else
+                      "no_year" if year is None else
+                      "after_2026" if year > MAX_YEAR else
+                      "before_phd_minus_five" if phd_year is not None and year < phd_year - 5 else None)
         rec = {"professor_uid": uid, "work_id": short(wid), "year": year, "type": wtype}
         if reason:
             reasons[reason] += 1
             dropped.append({**rec, "reason": reason})
         else:
             kept.append({**rec, "doi": doi or "", "title": title or ""})
-    for name, recs in (("01_selected.csv", kept), ("01_dropped.csv", dropped)):
+    con.close()
+    for name, recs, fields in (
+        ("01_selected.csv", kept, ['professor_uid', 'work_id', 'year', 'type', 'doi', 'title']),
+        ("01_dropped.csv", dropped, ['professor_uid', 'work_id', 'year', 'type', 'reason']),
+    ):
         with open(work / name, "w", newline="", encoding="utf-8") as fh:
-            w = csv.DictWriter(fh, fieldnames=list(recs[0]))
+            w = csv.DictWriter(fh, fieldnames=fields)
             w.writeheader()
             w.writerows(recs)
     ids = sorted({r["work_id"] for r in kept})
     (work / "01_work_ids.txt").write_text("\n".join(ids) + "\n")
     years = Counter(r["year"] for r in kept)
     log(work, "Step 01 select", [
+        f"identity filter {IDENTITY_FILTER_VERSION}",
         f"source rows {len(kept) + len(dropped):,}; kept {len(kept):,}; dropped {len(dropped):,}",
         "dropped by reason: " + ", ".join(f"{k} {v:,}" for k, v in reasons.most_common()),
         f"professors with works {len({r['professor_uid'] for r in kept}):,}; distinct works {len(ids):,}",
@@ -407,6 +420,7 @@ def main():
     s = sub.add_parser("select")
     s.add_argument("--private", required=True)
     s.add_argument("--work-dir", required=True)
+    s.add_argument("--identity-decisions", type=Path, help="KOAD decisions for this private build source")
     f = sub.add_parser("fetch")
     f.add_argument("--work-dir", required=True)
     f.add_argument("--cache", required=True)

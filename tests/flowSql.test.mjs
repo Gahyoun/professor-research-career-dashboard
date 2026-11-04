@@ -105,7 +105,11 @@ test('all shipped presets return validated IDs from the actual public SQLite rel
     assert.ok(attachResearchAreas(db, areas) > 3000);
     configureFlowSqlDatabase(db, 2026);
     const publicIds = db.exec('SELECT professor_id FROM professors')[0].values.map(row => row[0]);
-    const expectedCounts = [3937, 299, 199, 164, 31, 216];
+    // Recounted retained-work topics: six newly covered statistical-physics
+    // profiles minus one diluted from 1/5 to 1/6 yield 36. Three chemistry
+    // profiles cross 40% materials science (10/21, 61/152, 8/12), yielding 219.
+    // The four presets independent of these topic-share cohorts are unchanged.
+    const expectedCounts = [3937, 299, 199, 164, 36, 219];
     for (const [index, preset] of FLOW_SQL_PRESETS.entries()) {
       const result = runFlowSqlQuery(db, preset.sql, publicIds);
       assert.equal(result.ids.length, expectedCounts[index], preset.label);

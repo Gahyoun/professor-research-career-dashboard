@@ -154,11 +154,13 @@ test('the full release has no cross-field lifetime membership and preserves the 
       assert.ok(edge.memberEvidence.every(item => item.subject === subject));
     }
   }
-  // Release sentinel after applying the strict KOAD namesake decision set to
-  // every bibliographic input while recovering postdoc intervals only when a
-  // strictly retained work supplies institution-and-time continuity evidence.
+  // Refreshed retained-work evidence with the positive researcher/work gate
+  // resolves three doctoral department labels and adds a net three postdoc profiles.
+  // Inferred postdoc semesters overlapping same-unit faculty roster observations
+  // are removed before matching; the current cohort and total connectivity stay
+  // unchanged, and the final postdoc group count remains 1782.
   assert.deepEqual({ total: index.ids.length, connected, noEvidence, unmatched, counts }, {
     total: 3937, connected: 3299, noEvidence: 610, unmatched: 28,
-    counts: { doctoral: [801, 427], postdoc: [2130, 1782], first_faculty: [1, 0], current: [3241, 3240] },
+    counts: { doctoral: [804, 427], postdoc: [2133, 1782], first_faculty: [1, 0], current: [3241, 3240] },
   });
 });

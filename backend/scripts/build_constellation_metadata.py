@@ -19,6 +19,10 @@ import sqlite3
 import unicodedata
 from urllib.parse import urlparse
 
+from release_identity import (
+    IDENTITY_FILTER_VERSION, STRICT_IDENTITY_PREDICATE, decision_database_path,
+)
+
 COUNTRIES = {
     'korea': 'KR', 'south korea': 'KR', 'republic of korea': 'KR',
     'united states': 'US', 'usa': 'US', 'united kingdom': 'GB', 'uk': 'GB',
@@ -183,7 +187,10 @@ def run(args):
     public = {person['id']: person for person in dashboard['professors']}
     connection = sqlite3.connect(f'file:{source_db.resolve()}?mode=ro&immutable=1', uri=True)
     connection.row_factory = sqlite3.Row
-    decision_db = source_db.resolve().parent / 'identity_decisions.sqlite'
+    decision_db = decision_database_path(
+        source_db, private_root / 'backend' / 'cache' / args.year,
+        getattr(args, 'identity_decisions', None),
+    )
     if not decision_db.exists():
         raise ValueError(f'KOAD decision database is required for public metadata: {decision_db}')
     connection.execute(
@@ -247,18 +254,13 @@ def run(args):
     # Kept author-level source affiliations only. No raw strings, names, URLs,
     # OpenAlex identifiers, source work identifiers or plaintext name map is read.
     evidence = defaultdict(list)
-    for row in connection.execute('''
+    for row in connection.execute(f'''
         SELECT r.professor_uid,r.institution_unit_id,r.period,r.unit_label,
                COUNT(DISTINCT r.work_id) AS works
         FROM raw_affiliation_units r
         WHERE r.identity_decision='keep' AND r.unit_label IS NOT NULL
           AND r.institution_unit_id IS NOT NULL AND r.period IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM koad.work_decision kd
-            WHERE kd.professor_uid=r.professor_uid
-              AND kd.work_id=r.work_id
-              AND kd.decision='namesake_paper'
-          )
+          AND {STRICT_IDENTITY_PREDICATE.format(alias='r')}
         GROUP BY r.professor_uid,r.institution_unit_id,r.period,r.unit_label
     '''):
         if row['professor_uid'] not in uid_to_public or not re.fullmatch(r'\d{4}-H[12]', row['period']):
@@ -506,8 +508,8 @@ def run(args):
         'release_year': dashboard['meta']['release_year'],
         'public_data_sha256': hashlib.sha256(public_bytes).hexdigest(),
         'source': 'existing KOAD-filtered 2026 private build source mapped to existing anonymous IDs',
-        'identity_filter_version': 'KOAD 1.1-strict-namesake-drop',
-        'identity_filter_rule': 'all KOAD namesake_paper decisions are excluded before publication-affiliation department inference',
+        'identity_filter_version': IDENTITY_FILTER_VERSION,
+        'identity_filter_rule': 'same-researcher/work KOAD true_paper and source keep are required before publication-affiliation department inference; unclassified works are excluded',
         'country_rule': 'explicit degree country and unique exact institution alias; conflicts remain unknown',
         'department_rule': 'unique formal department from kept author affiliations at the same institutional unit and public career interval; any conflicting or unresolved formal labels excluded',
         'degree_department_verified': bool(counts['phd_department_verified']),
@@ -534,6 +536,7 @@ if __name__ == '__main__':
     parser.add_argument('--public-data', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--source-db', type=Path)
+    parser.add_argument('--identity-decisions', type=Path, help='KOAD decisions for this private build source')
     parser.add_argument('--anon-salt', type=Path)
     parser.add_argument('--verified-departments-db', type=Path, help='Optional private RISS/KISS second-verification overlay; never copied to public output.')
     parser.add_argument('--lifetime-evidence-json', type=Path, help='Optional private reviewed official profile/CV overlay; bound to public release hash and exact private identity/degree anchors.')

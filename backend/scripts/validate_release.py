@@ -7,6 +7,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from release_identity import IDENTITY_FILTER_VERSION
+
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -87,7 +89,7 @@ for pid in ('P-S4F4ZDO26D',):
     if profile != ('physics', 'Pusan National University'):
         continue
     rows = con.execute("SELECT institution,start_period,end_period FROM career_segments WHERE professor_id=? AND stage='faculty' ORDER BY start_period", (pid,)).fetchall()
-    mijin_ok = any(row[0] == 'Hanyang University' and row[2] == '2025-H1' for row in rows) and any(row[0] == 'Pusan National University' and row[1] == '2025-H2' for row in rows)
+    mijin_ok = any(row[0] == 'Hanyang University (ERICA Campus)' and row[2] == '2024-H2' for row in rows) and any(row[0] == 'Pusan National University' and row[1] == '2025-H1' for row in rows)
 
 sanghoon_ok = False
 for pid in ('P-XKPSPQXY7D',):
@@ -99,7 +101,8 @@ for pid in ('P-XKPSPQXY7D',):
     sanghoon_ok = wrong == 0 and expected == 2
 
 strict_namesake_ok = (
-    dashboard['meta'].get('identity_filter_version') == 'KOAD 1.1-strict-namesake-drop'
+    dashboard['meta'].get('identity_filter_version') == IDENTITY_FILTER_VERSION
+    and dashboard['meta'].get('requires_positive_work_decision') is True
     and dashboard['meta'].get('koad_namesake_work_count', 0) > 0
     and dashboard['meta'].get('koad_namesake_removed_from_source_keep', 0) > 0
     and dashboard['meta'].get('koad_namesake_lead_works_blocked', 0) > 0

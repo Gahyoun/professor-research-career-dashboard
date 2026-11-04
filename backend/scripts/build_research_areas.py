@@ -7,8 +7,8 @@ topic and its subfield/field/domain) and writes anonymous aggregate counts only:
   {"schema": ..., "domains": [name], "fields": [[name, domain_idx]], "subfields": [[name, field_idx]], "topics": [[name, subfield_idx]],
    "researchers": {"P-…": {"n": works, "f": [[idx, n]], "s": [[idx, n]], "t": [[idx, n]]}}}
 
-Works follow the public release's identity rules: source decision ``keep``, every KOAD
-``namesake_paper`` excluded, publication_year ≤ release year and ≥ phd_year − 5 when the
+Works follow the public release's identity rules: source decision ``keep`` and a
+same-person/work KOAD ``true_paper`` decision, publication_year ≤ release year and ≥ phd_year − 5 when the
 PhD year is known. All author positions count (the area describes the researcher's work,
 not lead authorship). No titles, DOIs, work IDs, raw professor IDs or OpenAlex IDs are written.
 """
@@ -21,6 +21,8 @@ import sqlite3
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from release_identity import IDENTITY_FILTER_VERSION, STRICT_IDENTITY_PREDICATE, decision_database_path
+
 SCHEMA = 'kstem-research-areas/2'
 TOP = {'f': 3, 's': 6, 't': 8}
 
@@ -32,14 +34,13 @@ def anon_id(salt, uid):
 
 def retained_rows(con, release_year):
     """(professor_uid, domain, field, subfield, topic) for works kept under the public identity rules."""
-    return con.execute('''
+    return con.execute(f'''
       SELECT w.professor_uid, w.domain_name, w.field_name, w.subfield_name, w.topic_name
       FROM work_authorship_evidence w JOIN professors p USING(professor_uid)
       WHERE w.identity_decision='keep' AND w.publication_year<=?
         AND (p.phd_year IS NULL OR w.publication_year>=p.phd_year-5)
         AND w.subfield_name IS NOT NULL AND w.subfield_name<>''
-        AND NOT EXISTS (SELECT 1 FROM koad.work_decision kd
-          WHERE kd.professor_uid=w.professor_uid AND kd.work_id=w.work_id AND kd.decision='namesake_paper')
+        AND {STRICT_IDENTITY_PREDICATE.format(alias='w')}
     ''', (int(release_year),))
 
 
@@ -82,10 +83,10 @@ def aggregate(rows, public_id, top=TOP):
     return {'domains': domains, 'fields': fields_out, 'subfields': subfields_out, 'topics': topics_out, 'researchers': researchers}
 
 
-def build(source_db, salt, public_ids, release_year):
+def build(source_db, salt, public_ids, release_year, identity_decisions=None):
     uri = f'file:{Path(source_db).resolve()}?mode=ro&immutable=1'
     con = sqlite3.connect(uri, uri=True)
-    decisions = Path(source_db).parent / 'identity_decisions.sqlite'
+    decisions = decision_database_path(source_db, explicit=identity_decisions)
     if not decisions.exists():
         raise SystemExit(f'KOAD decision database is required: {decisions}')
     con.execute('ATTACH DATABASE ? AS koad', (f'file:{decisions.resolve()}?mode=ro&immutable=1',))
@@ -101,7 +102,8 @@ def build(source_db, salt, public_ids, release_year):
     con.close()
     return {'schema': SCHEMA, 'release_year': int(release_year),
             'source': 'OpenAlex primary topic of each retained work (topic → subfield → field → domain)',
-            'method': {'works': 'identity_decision=keep; KOAD namesake_paper excluded; phd_year-5 ≤ year ≤ release year; all author positions',
+            'method': {'works': 'source keep and same-researcher/work KOAD true_paper required; phd_year-5 ≤ year ≤ release year; all author positions',
+                       'identity_filter_version': IDENTITY_FILTER_VERSION,
                        'top': TOP},
             **out}
 
@@ -109,13 +111,14 @@ def build(source_db, salt, public_ids, release_year):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--source-db', type=Path, required=True)
+    parser.add_argument('--identity-decisions', type=Path, help='KOAD decisions for this private build source')
     parser.add_argument('--anon-salt', type=Path, required=True)
     parser.add_argument('--dashboard', type=Path, default=Path('public/data/dashboard.json'))
     parser.add_argument('--output', type=Path, default=Path('public/data/research_areas.json'))
     args = parser.parse_args()
     dashboard = json.loads(args.dashboard.read_text())
     ids = {p['id'] for p in dashboard['professors']}
-    result = build(args.source_db, args.anon_salt.read_bytes(), ids, dashboard['meta']['release_year'])
+    result = build(args.source_db, args.anon_salt.read_bytes(), ids, dashboard['meta']['release_year'], args.identity_decisions)
     args.output.write_text(json.dumps(result, ensure_ascii=False, separators=(',', ':')))
     print(json.dumps({'researchers': len(result['researchers']), 'of': len(ids), 'fields': len(result['fields']),
                       'subfields': len(result['subfields']), 'topics': len(result['topics']),

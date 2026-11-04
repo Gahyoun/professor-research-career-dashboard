@@ -47,10 +47,12 @@ class ResearchAreaTests(unittest.TestCase):
                     ('uid-1', 'W3', 2013, 'drop', 'Physical Sciences', 'Physics and Astronomy', 'Optics', 'Lasers', 't', 'd'),        # source drop
                     ('uid-1', 'W4', 2014, 'keep', 'Physical Sciences', 'Physics and Astronomy', 'Optics', 'Lasers', 't', 'd'),        # KOAD namesake
                     ('uid-1', 'W5', 2030, 'keep', 'Physical Sciences', 'Physics and Astronomy', 'Optics', 'Lasers', 't', 'd'),        # after release
+                    ('uid-1', 'W6', 2014, 'keep', 'Physical Sciences', 'Physics and Astronomy', 'Optics', 'Lasers', 't', 'd'),        # no KOAD decision
                 ])
             with sqlite3.connect(Path(tmp) / 'identity_decisions.sqlite') as con:
                 con.execute('CREATE TABLE work_decision(professor_uid TEXT, work_id TEXT, decision TEXT)')
                 con.execute("INSERT INTO work_decision VALUES('uid-1','W4','namesake_paper')")
+                con.executemany('INSERT INTO work_decision VALUES(?,?,?)', [('uid-1', wid, 'true_paper') for wid in ('W1', 'W2', 'W3', 'W5')])
             salt = b'k' * 32
             pid = areas.anon_id(salt, 'uid-1')
             out = areas.build(db, salt, {pid}, 2026)
