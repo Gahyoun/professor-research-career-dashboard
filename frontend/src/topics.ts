@@ -283,13 +283,34 @@ export type AlluvialLayout = {
   dots: AlluvialDot[];
   branches: { from: number; to: number; d: string; sim: number }[];
   births: { topic: number; x: number; y: number; independent: boolean }[];
-  bands: { label: string; x: number; width: number; row: number }[];
+  /** ``width`` spans the era's years; ``extent`` is the room reserved for its label in that row; ``text`` is the label cut to fit. */
+  bands: { label: string; text: string; x: number; width: number; extent: number; row: number }[];
   bandRows: number;
   ticks: { x: number; label: string; major: boolean }[];
   arcs: { from: number; to: number; d: string }[];
   placed: number; unplaced: number;
 };
 export type LayoutOptions = { columnWidth?: number; unit?: number; left?: number; laneGap?: number; bandHeight?: number; compact?: boolean };
+
+/** Band label metrics at 11px / 600 (.tp-band text): Hangul and CJK ≈ 1em; other glyphs measure
+ *  ≈ 5.1px on average in the page font, so 5.6px leaves a margin for wide capitals. */
+const BAND_PAD = 8, BAND_GAP = 4, BAND_LABEL_MAX = 300, BAND_LABEL_MIN = 72;
+export function bandTextWidth(text: string): number {
+  let width = 0;
+  for (const ch of text) width += /[ᄀ-ᇿ⺀-鿿가-힯＀-￯]/.test(ch) ? 11 : 5.6;
+  return width;
+}
+/** ``text`` cut to ``max`` px with a trailing ellipsis; the full label stays in the band's <title>. */
+export function fitBandText(text: string, max: number): string {
+  if (bandTextWidth(text) <= max) return text;
+  let out = '', width = bandTextWidth('…');
+  for (const ch of text) {
+    const w = bandTextWidth(ch);
+    if (width + w > max) break;
+    out += ch; width += w;
+  }
+  return out.trim() ? `${out.trimEnd()}…` : '';
+}
 
 function smooth(points: [number, number][], reverse: boolean) {
   const seq = reverse ? [...points].reverse() : points;
@@ -315,17 +336,30 @@ export function layoutAlluvial(r: TopicResearcher, mode: AlluvialMode, options: 
   const x = (column: number) => left + (column + 0.5) * columnWidth;
 
   // Institution bands are a year-axis feature; the era axis already labels each column.
+  // Each band reserves its own width or BAND_LABEL_MIN, whichever is larger, when rows are packed,
+  // so a label never runs into the next band in its row. The label then takes the free room up to
+  // that next band (or the chart edge, at most BAND_LABEL_MAX) and is cut with an ellipsis past
+  // it; the full label stays in <title> and in the era chips above the chart.
   const bands: AlluvialLayout['bands'] = [];
   if (mode === 'year' && !compact && columns.length) {
     const last = first + columns.length - 1;
-    const rows: { start: number; end: number }[][] = [];
+    const right = left + columns.length * columnWidth + 24;
+    const rows: [number, number][][] = [];
     for (const era of r.eras) {
       const start = Math.max(first, era.start ?? first), end = Math.min(last, era.end ?? last);
       if (end < start) continue;
-      let row = rows.findIndex(items => items.every(item => end < item.start || start > item.end));
+      const bx = x(start - first) - columnWidth / 2 + 1, width = (end - start + 1) * columnWidth - 2;
+      const want = Math.max(width, Math.min(BAND_LABEL_MAX, bandTextWidth(era.label) + 2 * BAND_PAD, right - bx));
+      const reserve = Math.max(width, Math.min(want, BAND_LABEL_MIN));
+      let row = rows.findIndex(items => items.every(([s, e]) => bx + reserve + BAND_GAP <= s || bx >= e + BAND_GAP));
       if (row < 0) { row = rows.length; rows.push([]); }
-      rows[row].push({ start, end });
-      bands.push({ label: era.label, x: x(start - first) - columnWidth / 2 + 1, width: (end - start + 1) * columnWidth - 2, row });
+      rows[row].push([bx, bx + reserve]);
+      bands.push({ label: era.label, text: '', x: bx, width, extent: want, row });
+    }
+    for (const band of bands) {
+      const next = Math.min(...bands.filter(b => b.row === band.row && b.x > band.x).map(b => b.x - BAND_GAP));
+      band.extent = Math.max(band.width, Math.min(band.extent, next - band.x));
+      band.text = fitBandText(band.label, band.extent - 2 * BAND_PAD);
     }
   }
   const bandRows = bands.length ? Math.max(...bands.map(b => b.row)) + 1 : 0;

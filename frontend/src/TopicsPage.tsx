@@ -89,7 +89,7 @@ function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles, sv
     {!layout.lanes.length ? <p className="tp-empty">표시할 논문이 없습니다.</p> : <svg ref={svgRef} className="tp-chart" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-labelledby="tp-chart-title tp-chart-desc">
       <title id="tp-chart-title">{mode === 'year' ? '연도별' : '경력 시기별'} 연구 토픽 흐름</title>
       <desc id="tp-chart-desc">토픽 {layout.lanes.length}개, 논문 {layout.placed}편. 띠의 두께는 해당 {mode === 'year' ? '연도' : '시기'} 논문 수, 점선은 모토픽에서의 분기입니다. 레인은 모토픽 아래에 자식 토픽이 오는 tree 순서입니다.</desc>
-      {layout.bands.map((band, i) => <g key={i} className="tp-band"><rect x={band.x} y={12 + band.row * 28} width={band.width} height={24} rx="6" /><text x={band.x + 8} y={12 + band.row * 28 + 16}>{band.label}<title>{band.label}</title></text></g>)}
+      {layout.bands.map((band, i) => <g key={i} className="tp-band"><rect x={band.x} y={12 + band.row * 28} width={band.width} height={24} rx="6" /><text x={band.x + 8} y={12 + band.row * 28 + 16}>{band.text}<title>{band.label}</title></text></g>)}
       {layout.ticks.map((tick, i) => <g key={i} className={`tp-tick ${tick.major ? 'major' : ''}`}>
         <line x1={tick.x} x2={tick.x} y1={layout.top - 10} y2={layout.height - 8} />
         {mode === 'year' ? (tick.major && <text x={tick.x} y={layout.top - 16} textAnchor="middle">{tick.label}</text>)

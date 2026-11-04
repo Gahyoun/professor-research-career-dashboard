@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { normalizeInfoFlow as parseInfo, parseEraLabel, normalizeTopicIndex, layoutAlluvial, queryResearchers, orderedTopics, topicDepths, topicColors, eraOfYear, validatePaperTitles, TOPIC_SCHEMA } from '../work/test-dist/topics.js';
+import { normalizeInfoFlow as parseInfo, parseEraLabel, normalizeTopicIndex, layoutAlluvial, queryResearchers, orderedTopics, topicDepths, topicColors, eraOfYear, validatePaperTitles, bandTextWidth, fitBandText, TOPIC_SCHEMA } from '../work/test-dist/topics.js';
 
 const researcher = (extra = {}) => ({
   id: 'P-AAAAAAAAAA', subject: 'physics', institution: 'Example University',
@@ -88,6 +88,39 @@ test('year layout places every paper exactly once and branches downward from the
   assert.equal(years.columns.length, 2021 - 2006 + 1);
   assert.equal(years.arcs.length, 1);
   assert.ok(years.bands.length >= 3 && years.bandRows === 2, 'overlapping eras stack into a second band row');
+});
+
+test('long overlapping era labels get their own room in each band row', () => {
+  const eras = [
+    'Seoul National University · doctoral (2006-2010)',
+    'University of Waterloo · postdoc (2010-2011)',
+    'Government of the Republic of Korea · faculty (2011-2012)',
+    'Korea Electronics Technology Institute · researcher (2011-2013)',
+    'Seoul National University · postdoc (2014-2015)',
+    'Incheon National University · faculty (2016-)',
+  ];
+  const papers = Array.from({ length: 2025 - 2006 + 1 }, (_, i) => ({ year: 2006 + i, topic: 0, era: 0, cited: 0 }));
+  const r = normalizeTopicIndex(index([researcher({ eras, papers, recip: [],
+    topics: [{ id: 0, label: 'Ionic liquids', size: papers.length, birth_year: 2006, parent: null }] })])).researchers[0];
+  for (const columnWidth of [34, 44, 72]) {
+    const { bands, width } = layoutAlluvial(r, 'year', { columnWidth });
+    assert.equal(bands.length, eras.length);
+    for (const band of bands) {
+      assert.ok(band.extent >= band.width, 'label room covers the band');
+      assert.ok(band.x + band.extent <= width, 'label room stays inside the chart');
+      assert.ok(bandTextWidth(band.text) <= band.extent - 16 + 1e-9, `label fits its room: ${band.text}`);
+    }
+    const rows = new Map();
+    for (const band of bands) rows.set(band.row, [...(rows.get(band.row) || []), band]);
+    for (const row of rows.values()) {
+      row.sort((a, b) => a.x - b.x);
+      for (let i = 1; i < row.length; i++) assert.ok(row[i - 1].x + row[i - 1].extent <= row[i].x, `labels in one row do not overlap (${columnWidth}px)`);
+    }
+  }
+  assert.equal(fitBandText('Seoul National University', 1000), 'Seoul National University');
+  assert.ok(fitBandText('Government of the Republic of Korea', 80).endsWith('…'));
+  assert.ok(bandTextWidth(fitBandText('Government of the Republic of Korea', 80)) <= 80);
+  assert.ok(bandTextWidth('서울대학교') > bandTextWidth('Seoul'), 'Hangul counts wider than Latin');
 });
 
 test('era of year follows the latest containing era', () => {
