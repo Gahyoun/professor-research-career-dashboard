@@ -120,3 +120,4 @@ body, .app { background: var(--v2-canvas); }
 .atlas-scope-pick strong { color: var(--v2-ink, #1e2124); font-size: 16px; }
 .atlas-scope-pick small { color: var(--v2-muted, #6d7882); font-size: 13px; }
 .atlas-scope-pick .v2-btn-quiet { margin-left: auto; }
+.load-state-inline { margin: 48px 0; color: var(--v2-muted, #6d7882); font-size: 15px; }

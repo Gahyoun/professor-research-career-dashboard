@@ -1,15 +1,17 @@
-import SankeyPage from './SankeyPage';
-import TemporalInstitutionsPage from './TemporalInstitutionsPage';
 import { loadDashboard } from './metadata';
 import { canonicalSchool, institutionDisplayName } from './schoolIdentity';
 import { decryptNameMap, type EncryptedNames } from './privacy';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Stage, Career, YearPoint, Professor, Dashboard } from './types';
-import Constellation from './Constellation';
 import AtlasMark from './AtlasMark';
-import TopicsPage from './TopicsPage';
 import { openTitleVault, type TitleVault } from './titleVault';
+
+// Each page is its own chunk: the first screen downloads and parses only the page it shows.
+const SankeyPage = lazy(() => import('./SankeyPage'));
+const TemporalInstitutionsPage = lazy(() => import('./TemporalInstitutionsPage'));
+const Constellation = lazy(() => import('./Constellation'));
+const TopicsPage = lazy(() => import('./TopicsPage'));
 
 type Filters = { subject: string; institution: string };
 
@@ -240,6 +242,7 @@ export default function App() {
 
       <main id="main" tabIndex={-1} className={`container ${viewMode === 'constellation' || viewMode === 'sankey' || viewMode === 'institutions' || viewMode === 'topics' ? 'atlas-container' : ''}`}>
         {message !== '실명은 암호화되어 있습니다.' && <p className="atlas-auth-message" role="status">{message}</p>}
+        <Suspense fallback={<p className="load-state-inline" aria-live="polite">화면을 불러오고 있습니다.</p>}>
         {viewMode === 'topics' ? <TopicsPage key={topicTitles ? 'unlocked' : 'locked'} professors={dashboard.professors} names={names} titles={topicTitles} releaseYear={dashboard.meta.release_year} onOpenCareer={chooseProfessor}/> : viewMode === 'constellation' ?<Constellation initialSelectedId={graphSelectionId} professors={dashboard.professors} names={names} releaseYear={dashboard.meta.release_year} onSelect={chooseProfessor}/> : viewMode === 'institutions' ? <TemporalInstitutionsPage professors={dashboard.professors} releaseYear={dashboard.meta.release_year}/> : viewMode === 'sankey' ? <SankeyPage key={names ? 'unlocked' : 'locked'} professors={dashboard.professors} names={names} releaseYear={dashboard.meta.release_year} onSelect={chooseProfessor}/> : <>
 
         <section className="title-row"><div><span className="eyebrow">{dashboard.meta.release_year} DATA RELEASE</span><h1>교수 연구경력과 주저자 생산성</h1><p>박사과정부터 기관별 포닥·교수 임용까지의 경력과 필터링된 1저자·교신저자 논문을 확인합니다.</p></div><div className="display-settings"><label htmlFor="zoom">글자 크기</label><select id="zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))}><option value="90">90%</option><option value="100">100%</option><option value="110">110%</option><option value="130">130%</option><option value="150">150%</option></select><label className="contrast"><input type="checkbox" checked={contrast} onChange={e => setContrast(e.target.checked)}/> 선명한 화면</label></div></section>
@@ -278,6 +281,7 @@ export default function App() {
 
         <section className="download-panel"><div><h2>공개 DB와 SQL</h2><p>실명과 원본 식별자를 제거한 SQLite 및 재사용 가능한 조회문입니다.</p></div><div><a href={`${import.meta.env.BASE_URL}downloads/professor_dashboard_${dashboard.meta.release_year}.sqlite`} download>익명 SQLite</a><a href={`${import.meta.env.BASE_URL}downloads/schema_public.sql`} download>스키마 SQL</a><a href={`${import.meta.env.BASE_URL}downloads/queries_public.sql`} download>예제 쿼리</a></div></section>
         </>}
+        </Suspense>
       </main>
       <footer className="v2-footer"><div className="container"><span className="footer-brand">K–STEM Research Atlas</span><span>{dashboard.meta.release_year} 공개 릴리스 · 공개 화면에는 익명화·집계된 정보만 포함됩니다.</span><span>논문 메타데이터 OpenAlex (CC0) · 동명이인 판별 {dashboard.meta.identity_filter_version || 'KOAD'}</span></div></footer>
     </div>

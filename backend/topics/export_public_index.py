@@ -19,6 +19,7 @@ from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from info_flow import analyse, stable_seed  # noqa: E402
+from compact_index import compact_researcher  # noqa: E402
 from encrypt_titles import normalise_doi, write_title_vault  # noqa: E402
 from topic_semantics import build_lsa, ctfidf_terms, english_label, english_tags, load_glossary, semantic_block, topic_vectors  # noqa: E402
 
@@ -124,6 +125,8 @@ def main():
         for r in researchers:
             with open(os.path.join(info_dir, f"{r['id']}.json"), "w", encoding="utf-8") as fh:
                 json.dump(r.pop("info"), fh, ensure_ascii=False, separators=(",", ":"))
+    for r in researchers:
+        compact_researcher(r)
     out = {"schema": SCHEMA, "source": "release", "generated_at": str(date.today()),
            "method": {"disambiguation": dashboard["meta"].get("identity_filter_version", "KOAD"),
                       "clustering": "weighted Louvain on bibliographic coupling: w_ij = c_ij / sqrt(|R_i||R_j|) (Salton cosine), c_ij >= 2, resolution 1.05, seed 4", "labels": "c-TF-IDF top terms (English); curated English labels kept",

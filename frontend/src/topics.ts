@@ -89,6 +89,26 @@ function normalizeEra(raw: unknown): TopicEra {
   return { label, start: num(record.start) ?? parsed.start, end: num(record.end) ?? parsed.end };
 }
 
+const HANGUL = /[가-힣]/, MISC_LABEL = /^\s*(기타|other|misc)/i;
+/** Same rule as english_tags() in backend/topics/topic_semantics.py: English label pieces, then keywords, unique, at most 12.
+ *  The compact index leaves `tags` out wherever it equals this. */
+export function deriveTags(label: string | null, keywords: string[]): { ko: string[]; en: string[] } {
+  const pieces = !label || HANGUL.test(label) ? [] : label.split(/[·,/()]/).map(x => x.trim().toLowerCase()).filter(Boolean);
+  const en = [...pieces.filter(x => !MISC_LABEL.test(x)), ...keywords.map(k => k.toLowerCase())].filter(Boolean);
+  return { ko: [], en: [...new Set(en)].slice(0, 12) };
+}
+
+/** Compact layout: `paper_cols: {year: [], topic: [], era: [], cited: []}` → row objects. Only these four columns are allowed. */
+function paperRows(cols: unknown, id: string): Record<string, unknown>[] {
+  if (!cols || typeof cols !== 'object') return [];
+  const c = cols as Record<string, unknown>;
+  const extra = Object.keys(c).filter(k => !['year', 'topic', 'era', 'cited'].includes(k));
+  if (extra.length) throw new Error(`Public topic index for ${id} has unexpected paper columns: ${extra.join(', ')}`);
+  const col = (k: string) => Array.isArray(c[k]) ? c[k] as unknown[] : [];
+  const year = col('year'), topic = col('topic'), era = col('era'), cited = col('cited');
+  return year.map((y, i) => ({ year: y, topic: topic[i], era: era[i], cited: cited[i] }));
+}
+
 /** Validates the public index. Paper titles are rejected so a mistaken export cannot publish them. */
 export function normalizeTopicIndex(raw: unknown): TopicIndex {
   const root = (raw || {}) as Record<string, unknown>;
@@ -107,11 +127,11 @@ export function normalizeTopicIndex(raw: unknown): TopicIndex {
       return {
         id: num(t.id) ?? -1, label: str(t.label) || `T${String(t.id)}`, size: num(t.size) ?? 0, birth_year: num(t.birth_year),
         parent: parent && num(parent.from) !== null ? { from: num(parent.from)!, sim: num(parent.sim) ?? 0, from_year: num(parent.from_year), to_year: num(parent.to_year) } : null,
-        keywords: strings(t.keywords), tags: { ko: strings(tags.ko), en: strings(tags.en) }, vector,
+        keywords: strings(t.keywords), tags: t.tags ? { ko: strings(tags.ko), en: strings(tags.en) } : deriveTags(str(t.label), strings(t.keywords)), vector,
       };
     }).filter(t => t.id >= 0);
     const topicIds = new Set(topics.map(t => t.id));
-    const papers = (Array.isArray(r.papers) ? r.papers : []).map((value): TopicPaper | null => {
+    const papers = (Array.isArray(r.papers) ? r.papers : paperRows(r.paper_cols, id)).map((value): TopicPaper | null => {
       const p = (value || {}) as Record<string, unknown>;
       if ('title' in p || 'doi' in p) throw new Error(`Public topic index for ${id} contains paper titles`);
       const year = num(p.year), topic = num(p.topic);
@@ -281,12 +301,15 @@ function paperColumn(r: TopicResearcher, mode: AlluvialMode, paper: TopicPaper, 
   return paper.era ?? eraOfYear(r, paper.year);
 }
 
-export type LaneGeometry = { topic: TopicNode; color: string; y: number; height: number; mid: number; counts: number[]; depth: number };
+/** ``base`` is the lane's baseline: ribbons grow upward from it (one-sided, so thickness reads as count, not as a mirrored violin).
+ *  ``mid`` is the label anchor just above the baseline. */
+export type LaneGeometry = { topic: TopicNode; color: string; y: number; height: number; base: number; mid: number; counts: number[]; depth: number };
 export type AlluvialDot = { topic: number; column: number; x: number; y: number; r: number; count: number; cited: number };
 export type AlluvialLayout = {
   width: number; height: number; left: number; top: number; columnWidth: number;
   columns: AlluvialColumn[]; lanes: LaneGeometry[];
-  ribbons: { topic: number; d: string; color: string }[];
+  /** ``d`` is the faint area under the line, ``line`` the count line itself (open path, baseline to baseline). */
+  ribbons: { topic: number; d: string; line: string; color: string }[];
   dots: AlluvialDot[];
   branches: { from: number; to: number; d: string; sim: number }[];
   births: { topic: number; x: number; y: number; independent: boolean }[];
@@ -318,6 +341,15 @@ export function fitBandText(text: string, max: number): string {
   }
   return out.trim() ? `${out.trimEnd()}…` : '';
 }
+
+/** Line graph above a baseline: the count line runs from ``(x0, base)`` through ``points`` to ``(x1, base)``;
+ *  ``area`` closes it along the baseline for a faint fill. Nothing is drawn below the baseline. */
+function ridge(points: [number, number][], base: number, x0: number, x1: number) {
+  const line = smooth([[x0, base], ...points, [x1, base]], false);
+  return { line, area: `${line} Z` };
+}
+/** Height of the line above the baseline for n papers; years without papers sit on the baseline. */
+const lift = (n: number, unit: number) => n > 0 ? Math.max(1.5, n * unit) : 0;
 
 function smooth(points: [number, number][], reverse: boolean) {
   const seq = reverse ? [...points].reverse() : points;
@@ -388,7 +420,8 @@ export function layoutAlluvial(r: TopicResearcher, mode: AlluvialMode, options: 
     const peak = Math.max(0, ...laneCounts);
     if (!peak) continue;
     const height = Math.max(peak * unit, compact ? 2 : 12) + laneGap;
-    lanes.push({ topic, color: colors.get(topic.id)!, y: cursor, height, mid: cursor + height / 2, counts: laneCounts, depth: depths.get(topic.id) ?? 0 });
+    const base = cursor + height - laneGap / 2;
+    lanes.push({ topic, color: colors.get(topic.id)!, y: cursor, height, base, mid: base - 5, counts: laneCounts, depth: depths.get(topic.id) ?? 0 });
     cursor += height;
   }
 
@@ -398,15 +431,12 @@ export function layoutAlluvial(r: TopicResearcher, mode: AlluvialMode, options: 
     const active = lane.counts.flatMap((n, i) => n > 0 ? [i] : []);
     const a = active[0], b = active[active.length - 1];
     firstColumn.set(lane.topic.id, a);
-    // A one-pixel spine marks years without papers: the topic paused, it did not end.
-    const half = (n: number) => n > 0 ? Math.max(1, (n * unit) / 2) : 0.75;
-    const topEdge: [number, number][] = [[x(a) - columnWidth * 0.42, lane.mid - 0.5]];
-    const bottomEdge: [number, number][] = [[x(a) - columnWidth * 0.42, lane.mid + 0.5]];
-    for (let i = a; i <= b; i++) { topEdge.push([x(i), lane.mid - half(lane.counts[i])]); bottomEdge.push([x(i), lane.mid + half(lane.counts[i])]); }
-    topEdge.push([x(b) + columnWidth * 0.42, lane.mid - 0.5]); bottomEdge.push([x(b) + columnWidth * 0.42, lane.mid + 0.5]);
-    ribbons.push({ topic: lane.topic.id, color: lane.color, d: `${smooth(topEdge, false)} ${smooth(bottomEdge, true)} Z` });
-    for (const i of active) dots.push({ topic: lane.topic.id, column: i, x: x(i), y: lane.mid, r: compact ? 1 : Math.min(7, 2.5 + Math.sqrt(lane.counts[i]) * 1.6), count: lane.counts[i], cited: cited.get(lane.topic.id)![i] });
-    births.push({ topic: lane.topic.id, x: x(a) - columnWidth * 0.42, y: lane.mid, independent: !lane.topic.parent && !isOther(lane.topic) });
+    const top: [number, number][] = [];
+    for (let i = a; i <= b; i++) top.push([x(i), lane.base - lift(lane.counts[i], unit)]);
+    const shape = ridge(top, lane.base, x(a) - columnWidth * 0.42, x(b) + columnWidth * 0.42);
+    ribbons.push({ topic: lane.topic.id, color: lane.color, d: shape.area, line: shape.line });
+    for (const i of active) dots.push({ topic: lane.topic.id, column: i, x: x(i), y: lane.base, r: compact ? 1 : Math.min(7, 2.5 + Math.sqrt(lane.counts[i]) * 1.6), count: lane.counts[i], cited: cited.get(lane.topic.id)![i] });
+    births.push({ topic: lane.topic.id, x: x(a) - columnWidth * 0.42, y: lane.base, independent: !lane.topic.parent && !isOther(lane.topic) });
   }
 
   const laneOf = new Map(lanes.map(l => [l.topic.id, l]));
@@ -418,7 +448,7 @@ export function layoutAlluvial(r: TopicResearcher, mode: AlluvialMode, options: 
     let source = -1;
     for (let i = birth - 1; i >= 0; i--) if (parent.counts[i] > 0) { source = i; break; }
     if (source < 0) source = firstColumn.get(parent.topic.id)!;
-    const x1 = x(source), y1 = parent.mid, x2 = x(birth) - columnWidth * 0.42, y2 = lane.mid, mx = (x1 + x2) / 2;
+    const x1 = x(source), y1 = parent.base, x2 = x(birth) - columnWidth * 0.42, y2 = lane.base, mx = (x1 + x2) / 2;
     branches.push({ from: parent.topic.id, to: lane.topic.id, sim: lane.topic.parent!.sim, d: `M${x1.toFixed(1)},${y1.toFixed(1)} C${mx.toFixed(1)},${y1.toFixed(1)} ${mx.toFixed(1)},${y2.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}` });
   }
 
@@ -429,7 +459,7 @@ export function layoutAlluvial(r: TopicResearcher, mode: AlluvialMode, options: 
     const c2 = mode === 'year' ? pair.to_year - first : eraOfYear(r, pair.to_year);
     if (!from || !to || c1 === null || c2 === null || c1 < 0 || c2 >= columns.length) continue;
     const x1 = x(c1), x2 = x(c2), lift = Math.max(18, Math.abs(x2 - x1) * 0.28);
-    const y1 = from.mid, y2 = to.mid, peak = Math.min(y1, y2) - lift;
+    const y1 = from.base, y2 = to.base, peak = Math.min(y1, y2) - lift;
     arcs.push({ from: pair.from_topic, to: pair.to_topic, d: `M${x1.toFixed(1)},${y1.toFixed(1)} C${x1.toFixed(1)},${peak.toFixed(1)} ${x2.toFixed(1)},${peak.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)}` });
   }
 
@@ -596,7 +626,7 @@ export type MultiSeries = { key: string; label: string; sublabel: string; color:
 export type MultiMode = 'stack' | 'overlay';
 export type MultiLayout = {
   width: number; height: number; left: number; top: number; years: number[];
-  shapes: { key: string; d: string; color: string }[];
+  shapes: { key: string; d: string; line: string; color: string }[];
   lanes: { key: string; label: string; sublabel: string; color: string; mid: number; total: number }[];
   ticks: { x: number; label: string; major: boolean }[];
   totals: { x: number; y: number; n: number }[];
@@ -629,32 +659,29 @@ export function layoutMulti(series: MultiSeries[], mode: MultiMode, options: { c
     const unit = options.unit ?? 8, gap = 22;
     for (const s of series) {
       const peak = Math.max(...span.map(y => value(s, y)));
-      const h = Math.max(peak * unit, 10) + gap, mid = height + h / 2;
+      const h = Math.max(peak * unit, 10) + gap, base = height + h - gap / 2;
       const active = span.flatMap((y, i) => value(s, y) ? [i] : []);
       const a = active[0], b = active[active.length - 1];
-      const half = (n: number) => n ? Math.max(1, n * unit / 2) : 0.75;
-      const topEdge: [number, number][] = [[x(a) - columnWidth * .42, mid - .5]], bottomEdge: [number, number][] = [[x(a) - columnWidth * .42, mid + .5]];
-      for (let i = a; i <= b; i++) { topEdge.push([x(i), mid - half(value(s, span[i]))]); bottomEdge.push([x(i), mid + half(value(s, span[i]))]); }
-      topEdge.push([x(b) + columnWidth * .42, mid - .5]); bottomEdge.push([x(b) + columnWidth * .42, mid + .5]);
-      shapes.push({ key: s.key, color: s.color, d: `${smooth(topEdge, false)} ${smooth(bottomEdge, true)} Z` });
-      lanes.push({ key: s.key, label: s.label, sublabel: s.sublabel, color: s.color, mid, total: [...s.counts.values()].reduce((m, n) => m + n, 0) });
+      const top: [number, number][] = [];
+      for (let i = a; i <= b; i++) top.push([x(i), base - lift(value(s, span[i]), unit)]);
+      const shape = ridge(top, base, x(a) - columnWidth * .42, x(b) + columnWidth * .42);
+      shapes.push({ key: s.key, color: s.color, d: shape.area, line: shape.line });
+      lanes.push({ key: s.key, label: s.label, sublabel: s.sublabel, color: s.color, mid: base - 5, total: [...s.counts.values()].reduce((m, n) => m + n, 0) });
       height += h;
     }
   } else {
-    // Streamgraph with a centred baseline; layer order = series order.
+    // Overlaid line graph on one shared baseline (not stacked, not centred): each researcher's line is read
+    // against the same zero, so heights compare directly.
     const unit = options.unit ?? 10;
-    const totalsByYear = span.map(y => series.reduce((sum, s) => sum + value(s, y), 0));
-    const peak = Math.max(1, ...totalsByYear), mid = top + 12 + (peak * unit) / 2;
-    const base = totalsByYear.map(t => mid - (t * unit) / 2);
-    const cursor = [...base];
+    const peak = Math.max(1, ...series.flatMap(s => span.map(y => value(s, y)))), base = top + 12 + peak * unit;
     for (const s of series) {
-      const topEdge: [number, number][] = [], bottomEdge: [number, number][] = [];
-      span.forEach((y, i) => { const h = value(s, y) * unit; topEdge.push([x(i), cursor[i]]); bottomEdge.push([x(i), cursor[i] + h]); cursor[i] += h; });
-      shapes.push({ key: s.key, color: s.color, d: `${smooth(topEdge, false)} ${smooth(bottomEdge, true)} Z` });
-      lanes.push({ key: s.key, label: s.label, sublabel: s.sublabel, color: s.color, mid, total: [...s.counts.values()].reduce((m, n) => m + n, 0) });
+      const active = span.flatMap((y, i) => value(s, y) ? [i] : []);
+      const a = active[0], b = active[active.length - 1];
+      const shape = ridge(span.slice(a, b + 1).map((y, k) => [x(a + k), base - value(s, y) * unit] as [number, number]), base, x(a) - columnWidth * .42, x(b) + columnWidth * .42);
+      shapes.push({ key: s.key, color: s.color, d: shape.area, line: shape.line });
+      lanes.push({ key: s.key, label: s.label, sublabel: s.sublabel, color: s.color, mid: base - 5, total: [...s.counts.values()].reduce((m, n) => m + n, 0) });
     }
-    span.forEach((_, i) => { if (totalsByYear[i]) totals.push({ x: x(i), y: base[i] - 6, n: totalsByYear[i] }); });
-    height = mid + (peak * unit) / 2 + 12;
+    height = base + 12;
   }
   const ticks = span.map((y, i) => ({ x: x(i), label: String(y), major: i === 0 || i === span.length - 1 || y % 5 === 0 }));
   return { width: left + span.length * columnWidth + 24, height: height + 16, left, top, years: span, shapes, lanes, ticks, totals };
