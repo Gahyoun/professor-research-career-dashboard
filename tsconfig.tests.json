@@ -24,7 +24,8 @@
     "frontend/src/institutionStatistics.ts",
     "frontend/src/topics.ts",
     "frontend/src/researchAreas.ts",
-    "frontend/src/researcherQuery.ts"
+    "frontend/src/researcherQuery.ts",
+    "frontend/src/titleVault.ts"
   ],
   "exclude": [
     "frontend/src/constellation/layout.worker.ts"

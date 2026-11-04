@@ -1,0 +1,46 @@
+{
+ "schema": "kstem-topic-curated/1",
+ "note": "Curated researcher groups keyed to a topic query. Anonymous IDs only; names stay in encrypted_names.json.",
+ "groups": [
+  {
+   "key": "statphys",
+   "label": "Statistical physics",
+   "match": [
+    "statistical physics",
+    "statistical physicist",
+    "statistical mechanics",
+    "stat phys",
+    "statphys",
+    "통계물리",
+    "통계물리학",
+    "통계역학"
+   ],
+   "ids": [
+    "P-2KL7JYOULS",
+    "P-5CUYZYX2XS",
+    "P-5V23J3SP6U",
+    "P-7UXPSIBQMV",
+    "P-FXVA7IGFCS",
+    "P-GQ6OB3FYPS",
+    "P-JFYGOW2R2J",
+    "P-KDHTNXDPLF",
+    "P-KV6FCHN3YY",
+    "P-OK4RYJFO5U",
+    "P-OSUKYVJKKM",
+    "P-P3HA65UMQW",
+    "P-P5K2VFE7XT",
+    "P-PO6GGBTS4N",
+    "P-QAS5RHUDD5",
+    "P-QLYO5ZRKYZ",
+    "P-R2MTGRMHLC",
+    "P-RTGTECPADD",
+    "P-S4F4ZDO26D",
+    "P-TD6X7YYW7N",
+    "P-TK6YWT3VY3",
+    "P-VBROTHZH6D",
+    "P-XKPSPQXY7D",
+    "P-XW7KZ3SC35"
+   ]
+  }
+ ]
+}

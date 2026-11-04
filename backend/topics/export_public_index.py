@@ -8,22 +8,21 @@
 Each researcher directory holds the pipeline outputs (alluvial.json, seeds.json,
 optionally topics.json with human labels). The public index follows the dashboard's
 privacy rules (docs/SECURITY.md): anonymous ID only, no names, no paper titles or DOIs.
-Titles, venues and DOIs go to ``encrypted_titles.json`` (PBKDF2-SHA256 600k → AES-256-GCM,
-same scheme as encrypted_names.json) when ``NAMES_PASSWORD`` is set, so the page can show
-them after unlock. Topic names, keywords and tags are English (c-TF-IDF; a curated label is
+Titles, venues and DOIs go to per-researcher ciphertext files under ``titles/`` (one
+PBKDF2-SHA256 600k key, AES-256-GCM per file; see encrypt_titles.py) when ``NAMES_PASSWORD``
+is set, so the page can show them after unlock. Topic names, keywords and tags are English (c-TF-IDF; a curated label is
 kept only when it is English), with one shared LSA space, via topic_semantics.py. Topic merge/diverge measures (info_flow.py) are computed here from
 reference lists and only the aggregated topic×topic masses are published.
 """
-import argparse, base64, hashlib, json, os, secrets, sys
+import argparse, json, os, sys
 from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from info_flow import analyse, stable_seed  # noqa: E402
+from encrypt_titles import normalise_doi, write_title_vault  # noqa: E402
 from topic_semantics import build_lsa, ctfidf_terms, english_label, english_tags, load_glossary, semantic_block, topic_vectors  # noqa: E402
 
 SCHEMA = "kstem-topic-alluvial/1"
-ITERATIONS = 600_000
-AAD = b"topic-titles-v1"
 
 
 def text_of(work):
@@ -43,16 +42,6 @@ def text_of(work):
     parts += [t.get("display_name", "") for t in (work.get("topics") or [])[:3]]
     parts += [k.get("display_name", "") for k in (work.get("keywords") or [])[:8]]
     return " ".join(p for p in parts if p)
-
-
-def encrypt(payload, password):
-    salt, nonce = secrets.token_bytes(16), secrets.token_bytes(12)
-    key = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, ITERATIONS, 32)
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    ct = AESGCM(key).encrypt(nonce, json.dumps(payload, ensure_ascii=False).encode(), AAD)
-    b64 = lambda b: base64.b64encode(b).decode()
-    return {"version": 1, "kdf": "PBKDF2-SHA256", "iterations": ITERATIONS, "salt": b64(salt),
-            "nonce": b64(nonce), "aad": b64(AAD), "ciphertext": b64(ct)}
 
 
 def main():
@@ -147,8 +136,7 @@ def main():
         json.dump(out, fh, ensure_ascii=False, separators=(",", ":"))
     password = os.environ.get(a.password_env)
     if password:
-        with open(os.path.join(a.out_dir, "encrypted_titles.json"), "w", encoding="utf-8") as fh:
-            json.dump(encrypt(titles, password), fh)
+        write_title_vault({k: [{**row, "doi": normalise_doi(row["doi"])} for row in rows] for k, rows in titles.items()}, password, a.out_dir)
     print(f"index.json: {len(researchers)} researchers, {len(texts)} papers, LSA {term_vecs.shape[1]}d × {len(vocab)} terms;"
           f" titles {'encrypted' if password else 'NOT written (set ' + a.password_env + ')'}")
 
