@@ -35,6 +35,8 @@ export type TopicSemantic = { dims: number; terms: Map<string, Float32Array>; gl
 export type TopicIndex = {
   schema: string; source: 'demo' | 'release'; generated_at: string;
   method: Record<string, string>; researchers: TopicResearcher[]; semantic: TopicSemantic | null;
+  /** Directory (relative to the index) holding <id>.json info-flow blocks when they are not inline. */
+  infoPath: string | null;
 };
 /** Decrypted in memory after unlock only; never part of the public index. */
 export type EncryptedPaperTitles = Record<string, { year: number; topic: number; title: string; venue: string | null; doi: string | null }[]>;
@@ -126,6 +128,7 @@ export function normalizeTopicIndex(raw: unknown): TopicIndex {
     schema: TOPIC_SCHEMA, source: root.source === 'release' ? 'release' : 'demo', generated_at: str(root.generated_at) || '',
     method: Object.fromEntries(Object.entries((root.method || {}) as Record<string, unknown>).filter(([, v]) => typeof v === 'string')) as Record<string, string>,
     researchers, semantic: normalizeSemantic(root.semantic),
+    infoPath: typeof root.info_path === 'string' && /^[a-z0-9_-]+$/i.test(root.info_path) ? root.info_path : null,
   };
 }
 
@@ -206,15 +209,44 @@ function normalizeSemantic(raw: unknown): TopicSemantic | null {
 export type AlluvialMode = 'year' | 'era';
 export type AlluvialColumn = { key: string; label: string; start: number | null; end: number | null };
 
-/** Topic lanes ordered by birth, then size: earlier topics stay on top so branches flow downward. */
+const byBirth = (a: TopicNode, b: TopicNode) => (a.birth_year ?? 9999) - (b.birth_year ?? 9999) || b.size - a.size || a.id - b.id;
+const isOther = (t: TopicNode) => /^\s*(기타|other)\b/i.test(t.label);
+
+/** Depth of each topic in the parent tree (roots 0); cycles and missing parents count as roots. */
+export function topicDepths(r: TopicResearcher): Map<number, number> {
+  const ids = new Set(r.topics.map(t => t.id));
+  const children = new Map<number, TopicNode[]>();
+  const roots: TopicNode[] = [];
+  for (const t of r.topics) {
+    const from = t.parent?.from;
+    if (from === undefined || from === t.id || !ids.has(from) || isOther(t)) roots.push(t);
+    else children.set(from, [...(children.get(from) || []), t]);
+  }
+  const depth = new Map<number, number>();
+  const walk = (t: TopicNode, d: number) => {
+    if (depth.has(t.id)) return;
+    depth.set(t.id, d);
+    for (const c of (children.get(t.id) || []).sort(byBirth)) walk(c, d + 1);
+  };
+  for (const t of roots.sort(byBirth)) walk(t, 0);
+  for (const t of [...r.topics].sort(byBirth)) walk(t, 0);   // parent cycles: start a new root
+  return depth;
+}
+
+/** Topic lanes in time-axis tree order: roots (no parent) by birth year then size, each child
+ *  depth-first directly under its parent with siblings by birth year; "Other" last. */
 export function orderedTopics(r: TopicResearcher): TopicNode[] {
-  return [...r.topics].sort((a, b) => (a.birth_year ?? 9999) - (b.birth_year ?? 9999) || b.size - a.size || a.id - b.id);
+  const order = [...topicDepths(r).keys()];
+  const byId = new Map(r.topics.map(t => [t.id, t]));
+  const topics = order.map(id => byId.get(id)!);
+  return [...topics.filter(t => !isOther(t)), ...topics.filter(isOther)];
 }
 
 export function topicColors(r: TopicResearcher): Map<number, string> {
   const colors = new Map<number, string>();
   let next = 0;
-  for (const topic of orderedTopics(r)) colors.set(topic.id, /기타|other/i.test(topic.label) ? OTHER_COLOR : TOPIC_PALETTE[next++ % TOPIC_PALETTE.length]);
+  // Birth order, not lane order: a topic keeps its colour when the tree layout moves its lane.
+  for (const topic of [...r.topics].sort(byBirth)) colors.set(topic.id, /기타|other/i.test(topic.label) ? OTHER_COLOR : TOPIC_PALETTE[next++ % TOPIC_PALETTE.length]);
   return colors;
 }
 
@@ -242,7 +274,7 @@ function paperColumn(r: TopicResearcher, mode: AlluvialMode, paper: TopicPaper, 
   return paper.era ?? eraOfYear(r, paper.year);
 }
 
-export type LaneGeometry = { topic: TopicNode; color: string; y: number; height: number; mid: number; counts: number[] };
+export type LaneGeometry = { topic: TopicNode; color: string; y: number; height: number; mid: number; counts: number[]; depth: number };
 export type AlluvialDot = { topic: number; column: number; x: number; y: number; r: number; count: number; cited: number };
 export type AlluvialLayout = {
   width: number; height: number; left: number; top: number; columnWidth: number;
@@ -279,6 +311,7 @@ export function layoutAlluvial(r: TopicResearcher, mode: AlluvialMode, options: 
   const first = yearRange(r)?.[0] ?? 0;
   const colors = topicColors(r);
   const topics = orderedTopics(r);
+  const depths = topicDepths(r);
   const x = (column: number) => left + (column + 0.5) * columnWidth;
 
   // Institution bands are a year-axis feature; the era axis already labels each column.
@@ -314,7 +347,7 @@ export function layoutAlluvial(r: TopicResearcher, mode: AlluvialMode, options: 
     const peak = Math.max(0, ...laneCounts);
     if (!peak) continue;
     const height = Math.max(peak * unit, compact ? 2 : 12) + laneGap;
-    lanes.push({ topic, color: colors.get(topic.id)!, y: cursor, height, mid: cursor + height / 2, counts: laneCounts });
+    lanes.push({ topic, color: colors.get(topic.id)!, y: cursor, height, mid: cursor + height / 2, counts: laneCounts, depth: depths.get(topic.id) ?? 0 });
     cursor += height;
   }
 
@@ -332,7 +365,7 @@ export function layoutAlluvial(r: TopicResearcher, mode: AlluvialMode, options: 
     topEdge.push([x(b) + columnWidth * 0.42, lane.mid - 0.5]); bottomEdge.push([x(b) + columnWidth * 0.42, lane.mid + 0.5]);
     ribbons.push({ topic: lane.topic.id, color: lane.color, d: `${smooth(topEdge, false)} ${smooth(bottomEdge, true)} Z` });
     for (const i of active) dots.push({ topic: lane.topic.id, column: i, x: x(i), y: lane.mid, r: compact ? 1 : Math.min(7, 2.5 + Math.sqrt(lane.counts[i]) * 1.6), count: lane.counts[i], cited: cited.get(lane.topic.id)![i] });
-    births.push({ topic: lane.topic.id, x: x(a) - columnWidth * 0.42, y: lane.mid, independent: !lane.topic.parent });
+    births.push({ topic: lane.topic.id, x: x(a) - columnWidth * 0.42, y: lane.mid, independent: !lane.topic.parent && !isOther(lane.topic) });
   }
 
   const laneOf = new Map(lanes.map(l => [l.topic.id, l]));

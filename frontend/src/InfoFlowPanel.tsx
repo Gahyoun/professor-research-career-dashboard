@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { conditionalEntropies, topicColors, type InfoKey, type InfoTransition, type TopicResearcher } from './topics';
+import { conditionalEntropies, normalizeInfoFlow, topicColors, type InfoFlow, type InfoKey, type InfoTransition, type TopicResearcher } from './topics';
 
 type Scale = 'bits' | 'norm';
 type Series = { key: InfoKey | 'nmi'; label: string; color: string };
@@ -36,8 +36,18 @@ function useWidth<T extends HTMLElement>() {
   return [ref, width] as const;
 }
 
-export default function InfoFlowPanel({ researcher }: { researcher: TopicResearcher }) {
-  const info = researcher.info;
+/** ``infoUrl``: per-researcher info-flow file, fetched when the index does not carry the block inline. */
+export default function InfoFlowPanel({ researcher, infoUrl }: { researcher: TopicResearcher; infoUrl?: string }) {
+  const [loaded, setLoaded] = useState<InfoFlow | null>(null);
+  useEffect(() => {
+    if (researcher.info || !infoUrl) return;
+    let live = true;
+    fetch(infoUrl).then(r => r.ok ? r.json() : null)
+      .then(raw => { if (live && raw) setLoaded(normalizeInfoFlow(raw, new Set(researcher.topics.map(t => t.id)))); })
+      .catch(() => undefined);
+    return () => { live = false; };
+  }, [researcher, infoUrl]);
+  const info = researcher.info || loaded;
   const [scale, setScale] = useState<Scale>('bits');
   const [picked, setPicked] = useState<number | null>(null);
   const [box, width] = useWidth<HTMLDivElement>();

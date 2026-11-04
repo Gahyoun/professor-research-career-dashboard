@@ -30,7 +30,9 @@ def text_of(work):
     """Title + abstract + OpenAlex topics/keywords when seeds.json carries them (no API calls)."""
     parts = [work.get("title") or ""]
     inv = work.get("abstract_inverted_index") or {}
-    if inv:
+    if work.get("abstract"):
+        parts.append(work["abstract"])
+    elif inv:
         n = max((p for ps in inv.values() for p in ps), default=-1) + 1
         words = [""] * n
         for word, ps in inv.items():
@@ -55,18 +57,28 @@ def encrypt(payload, password):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--researcher", action="append", required=True, help="DIR=ANON_ID")
+    p.add_argument("--researcher", action="append", default=[], help="DIR=ANON_ID")
+    p.add_argument("--manifest", help="file with one DIR=ANON_ID per line (large releases)")
     p.add_argument("--dashboard", default="public/data/dashboard.json")
     p.add_argument("--out-dir", default="public/data/topics")
     p.add_argument("--dims", type=int, default=48)
     p.add_argument("--password-env", default="NAMES_PASSWORD")
     p.add_argument("--window", type=int, default=3, help="info-flow window width in years")
     p.add_argument("--null", type=int, default=200)
+    p.add_argument("--split-info", action="store_true",
+                   help="write each researcher's info-flow block to <out-dir>/info/<id>.json (loaded on demand)")
+    p.add_argument("--exclude-terms", help="private file, one phrase per line, never used as a topic term (names)")
+    p.add_argument("--coverage", default=None, help="one-line note on the year coverage shown on the page")
     a = p.parse_args()
+    if a.manifest:
+        a.researcher += [line.strip() for line in open(a.manifest, encoding="utf-8") if line.strip()]
+    if not a.researcher:
+        p.error("give --researcher or --manifest")
 
     dashboard = json.load(open(a.dashboard, encoding="utf-8"))
     public = {x["id"]: x for x in dashboard["professors"]}
     _, ko2en = load_glossary()  # query-side Korean → English map only
+    exclude = frozenset(x.strip() for x in open(a.exclude_terms, encoding="utf-8") if x.strip()) if a.exclude_terms else frozenset()
     researchers, titles, texts, owners = [], {}, [], []
     for spec in a.researcher:
         folder, anon = spec.rsplit("=", 1)
@@ -106,7 +118,7 @@ def main():
             if owner == ri:
                 docs.setdefault(tid, []).append(texts[row])
                 members.setdefault(tid, []).append(row)
-        keywords, vectors = ctfidf_terms(docs, n_terms=8), topic_vectors(doc_vecs, members)
+        keywords, vectors = ctfidf_terms(docs, n_terms=8, exclude=exclude), topic_vectors(doc_vecs, members)
         for t in r["topics"]:
             t["keywords"] = keywords.get(t["id"], [])
             t["label"] = english_label(t["keywords"], curated=t["label"])
@@ -114,10 +126,22 @@ def main():
             t["vector"] = vectors.get(t["id"])
 
     os.makedirs(a.out_dir, exist_ok=True)
+    if a.split_info:
+        info_dir = os.path.join(a.out_dir, "info")
+        os.makedirs(info_dir, exist_ok=True)
+        for old_file in os.listdir(info_dir):
+            if old_file.endswith(".json"):
+                os.remove(os.path.join(info_dir, old_file))
+        for r in researchers:
+            with open(os.path.join(info_dir, f"{r['id']}.json"), "w", encoding="utf-8") as fh:
+                json.dump(r.pop("info"), fh, ensure_ascii=False, separators=(",", ":"))
     out = {"schema": SCHEMA, "source": "release", "generated_at": str(date.today()),
            "method": {"disambiguation": dashboard["meta"].get("identity_filter_version", "KOAD"),
-                      "clustering": "공유 참고문헌 코사인 가중 Louvain", "labels": "c-TF-IDF top terms (English); curated English labels kept",
-                      "branching": "탄생기 논문 × 이전 시기 논문의 bibliographic coupling 최댓값"},
+                      "clustering": "weighted Louvain on bibliographic coupling: w_ij = c_ij / sqrt(|R_i||R_j|) (Salton cosine), c_ij >= 2, resolution 1.05, seed 4", "labels": "c-TF-IDF top terms (English); curated English labels kept",
+                      "branching": "탄생기 논문 × 이전 시기 논문의 bibliographic coupling 최댓값",
+                      **({"coverage": a.coverage} if a.coverage else {}),
+                      **({"recip": "not computed"} if not any(r["recip"] for r in researchers) else {})},
+           **({"info_path": "info"} if a.split_info else {}),
            "semantic": semantic_block(vocab, term_vecs, ko2en), "researchers": researchers}
     with open(os.path.join(a.out_dir, "index.json"), "w", encoding="utf-8") as fh:
         json.dump(out, fh, ensure_ascii=False, separators=(",", ":"))
