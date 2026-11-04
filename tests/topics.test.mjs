@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { normalizeInfoFlow as parseInfo, parseEraLabel, normalizeTopicIndex, layoutAlluvial, queryResearchers, orderedTopics, topicDepths, topicColors, eraOfYear, validatePaperTitles, validateTitleRows, doiText, normalizeCurated, curatedFor, curatedSearch, bandTextWidth, fitBandText, TOPIC_SCHEMA } from '../work/test-dist/topics.js';
+import { normalizeInfoFlow as parseInfo, parseEraLabel, normalizeTopicIndex, layoutAlluvial, queryResearchers, orderedTopics, topicDepths, topicColors, eraOfYear, validatePaperTitles, validateTitleRows, doiText, normalizeCurated, curatedFor, curatedSearch, bandTextWidth, fitBandText, deriveTags, TOPIC_SCHEMA } from '../work/test-dist/topics.js';
 
 const researcher = (extra = {}) => ({
   id: 'P-AAAAAAAAAA', subject: 'physics', institution: 'Example University',
@@ -32,6 +32,20 @@ test('public index rejects paper titles and unknown schema', () => {
   assert.throws(() => normalizeTopicIndex({ schema: 'x', researchers: [] }));
   const leaky = researcher({ papers: [{ year: 2006, topic: 0, cited: 1, title: 'secret' }] });
   assert.throws(() => normalizeTopicIndex(index([leaky])), /titles/);
+});
+
+test('compact paper columns and derived tags read the same as row objects', () => {
+  const rows = researcher();
+  rows.topics[1] = { ...rows.topics[1], label: 'Mesoscale · Other things', keywords: ['Community Detection', 'mesoscale'], tags: { ko: [], en: ['mesoscale', 'community detection'] } };
+  const cols = { ...rows, papers: undefined, topics: rows.topics.map(t => ({ ...t, tags: undefined })),
+    paper_cols: Object.fromEntries(['year', 'topic', 'era', 'cited'].map(k => [k, rows.papers.map(p => p[k])])) };
+  delete cols.papers;
+  cols.topics.forEach(t => delete t.tags);
+  const a = normalizeTopicIndex(index([rows])).researchers[0], b = normalizeTopicIndex(index([cols])).researchers[0];
+  assert.deepEqual(b.papers, a.papers);
+  assert.deepEqual(b.topics[1].tags, a.topics[1].tags);
+  assert.deepEqual(deriveTags('네트워크 구조', ['Hub']), { ko: [], en: ['hub'] });
+  assert.throws(() => normalizeTopicIndex(index([{ ...cols, paper_cols: { ...cols.paper_cols, title: ['secret'] } }])), /unexpected paper columns/);
 });
 
 test('normalized index keeps only papers whose topic exists', () => {
@@ -166,7 +180,8 @@ test('shipped release index is anonymous: dashboard ids only, no titles, DOIs or
   const ids = new Set(JSON.parse(readFileSync('public/data/dashboard.json', 'utf8')).professors.map(p => p.id));
   for (const r of raw.researchers) {
     assert.ok(ids.has(r.id), r.id);
-    for (const p of r.papers) assert.deepEqual(Object.keys(p).filter(k => !['year', 'topic', 'era', 'cited'].includes(k)), []);
+    const keys = r.paper_cols ? Object.keys(r.paper_cols) : (r.papers || []).flatMap(p => Object.keys(p));
+    assert.deepEqual(keys.filter(k => !['year', 'topic', 'era', 'cited'].includes(k)), []);
   }
   const text = readFileSync('public/data/topics/index.json', 'utf8');
   assert.doesNotMatch(text, /openalex\.org|doi\.org|"W\d{6,}"|"title"|orcid/i);
@@ -224,7 +239,24 @@ test('multi layout keeps every selected paper in stack and overlay modes', () =>
     assert.equal(layout.shapes.length, series.length);
     assert.equal(layout.lanes.reduce((sum, l) => sum + l.total, 0), papers);
   }
-  assert.equal(layoutMulti(series, 'overlay').totals.reduce((s, t) => s + t.n, 0), papers);
+  assert.deepEqual(layoutMulti(series, 'overlay').totals, []);
+});
+
+const pathYs = d => [...d.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map(m => Number(m[2]));
+
+test('topic counts are drawn as lines above a baseline, never mirrored below it', () => {
+  const r = normalizeTopicIndex(index([researcher()])).researchers[0];
+  const layout = layoutAlluvial(r, 'year');
+  for (const lane of layout.lanes) {
+    const ribbon = layout.ribbons.find(x => x.topic === lane.topic.id);
+    assert.ok(pathYs(ribbon.line).every(y => y <= lane.base + 1e-6), lane.topic.label);
+    assert.ok(pathYs(ribbon.line).some(y => y < lane.base - 1), lane.topic.label);
+  }
+  const series = seriesFromHits(searchTopics(demo(), 'network').hits.slice(0, 5), id => id);
+  for (const mode of ['stack', 'overlay']) {
+    const multi = layoutMulti(series, mode);
+    multi.shapes.forEach((shape, i) => assert.ok(pathYs(shape.line).every(y => y <= multi.lanes[i].mid + 5 + 1e-6), mode));
+  }
 });
 
 import { normalizeInfoFlow, conditionalEntropies } from '../work/test-dist/topics.js';

@@ -54,5 +54,23 @@ class AbstractCleaning(unittest.TestCase):
         self.assertEqual([build.era_index(eras, y) for y in (1998, 2005, 2011, 2020)], [0, 1, 1, 2])
 
 
+
+@unittest.skipIf(semantics is None, 'numpy / scikit-learn not installed')
+class CompactIndex(unittest.TestCase):
+    def test_columns_and_derivable_tags(self):
+        import sys
+        sys.path.insert(0, str(ROOT))
+        compact = load('compact_index')
+        t1 = {"id": 0, "label": "Spin glass · Other", "keywords": ["Replica", "spin glass"]}
+        t1["tags"] = semantics.english_tags(t1["label"], t1["keywords"])
+        t2 = {"id": 1, "label": "x", "keywords": [], "tags": {"en": ["hand made"], "ko": []}}
+        r = compact.compact_researcher({"topics": [t1, t2], "papers": [
+            {"year": 2010, "topic": 0, "era": 1, "cited": 3}, {"year": 2004, "topic": 1, "era": None}]})
+        self.assertNotIn("papers", r)
+        self.assertEqual(r["paper_cols"], {"year": [2004, 2010], "topic": [1, 0], "era": [None, 1], "cited": [0, 3]})
+        self.assertNotIn("tags", r["topics"][0])
+        self.assertEqual(r["topics"][1]["tags"]["en"], ["hand made"])
+
+
 if __name__ == '__main__':
     unittest.main()

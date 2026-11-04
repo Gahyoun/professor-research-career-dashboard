@@ -33,7 +33,7 @@ const institutionName = (value: string | null) => value ? (/[가-힣]/.test(valu
 function Thumbnail({ researcher }: { researcher: TopicResearcher }) {
   const layout = useMemo(() => layoutAlluvial(researcher, 'year', { compact: true, columnWidth: 7 }), [researcher]);
   return <svg className="tp-thumb" viewBox={`0 0 ${layout.width} ${Math.max(layout.height, 24)}`} preserveAspectRatio="none" aria-hidden="true">
-    {layout.ribbons.map(r => <path key={r.topic} d={r.d} fill={r.color} fillOpacity=".55" />)}
+    {layout.ribbons.map(r => <path key={r.topic} d={r.line} fill="none" stroke={r.color} strokeWidth="1.2" vectorEffect="non-scaling-stroke" />)}
   </svg>;
 }
 
@@ -89,7 +89,7 @@ function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles, un
   return <div className="tp-chart-scroll" ref={wrap} onMouseLeave={clear}>
     {!layout.lanes.length ? <p className="tp-empty">표시할 논문이 없습니다.</p> : <svg ref={svgRef} className="tp-chart" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-labelledby="tp-chart-title tp-chart-desc">
       <title id="tp-chart-title">{mode === 'year' ? '연도별' : '경력 시기별'} 연구 토픽 흐름</title>
-      <desc id="tp-chart-desc">토픽 {layout.lanes.length}개, 논문 {layout.placed}편. 띠의 두께는 해당 {mode === 'year' ? '연도' : '시기'} 논문 수, 점선은 모토픽에서의 분기입니다. 레인은 모토픽 아래에 자식 토픽이 오는 tree 순서입니다.</desc>
+      <desc id="tp-chart-desc">토픽 {layout.lanes.length}개, 논문 {layout.placed}편. 기준선 위 선의 높이는 해당 {mode === 'year' ? '연도' : '시기'} 논문 수, 점선은 모토픽에서의 분기입니다. 레인은 모토픽 아래에 자식 토픽이 오는 tree 순서입니다.</desc>
       {layout.bands.map((band, i) => <g key={i} className="tp-band"><rect x={band.x} y={12 + band.row * 28} width={band.width} height={24} rx="6" /><text x={band.x + 8} y={12 + band.row * 28 + 16}>{band.text}<title>{band.label}</title></text></g>)}
       {layout.ticks.map((tick, i) => <g key={i} className={`tp-tick ${tick.major ? 'major' : ''}`}>
         <line x1={tick.x} x2={tick.x} y1={layout.top - 10} y2={layout.height - 8} />
@@ -118,7 +118,7 @@ function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles, un
         })()}
         <text x={layout.left - 14} y={lane.mid + 4} textAnchor="end" className="tp-lane-n">{lane.counts.reduce((a, b) => a + b, 0)}</text>
       </g>)}
-      {layout.ribbons.map(r => <path key={r.topic} d={r.d} className={`tp-ribbon ${dim(r.topic) ? 'is-dim' : ''} ${focus === r.topic ? 'is-focus' : ''}`} fill={r.color} stroke={r.color} />)}
+      {layout.ribbons.map(r => <g key={r.topic} className={`tp-ribbon ${dim(r.topic) ? 'is-dim' : ''} ${focus === r.topic ? 'is-focus' : ''}`}><path className="tp-area" d={r.d} fill={r.color} /><path className="tp-line" d={r.line} stroke={r.color} /></g>)}
       {layout.branches.map(b => <path key={`${b.from}-${b.to}`} d={b.d} className={`tp-branch ${dim(b.to) && dim(b.from) ? 'is-dim' : ''}`} stroke={shown.get(b.to)?.color}><title>{`${shown.get(b.from)?.topic.label} → ${shown.get(b.to)?.topic.label} · coupling ${b.sim}`}</title></path>)}
       {showArcs && layout.arcs.map((arc, i) => <path key={i} d={arc.d} className={`tp-arc ${dim(arc.to) && dim(arc.from) ? 'is-dim' : ''}`} />)}
       {layout.births.filter(b => b.independent).map(b => <g key={b.topic} className={`tp-new ${dim(b.topic) ? 'is-dim' : ''}`}><rect x={b.x - 30} y={b.y - 8} width={26} height={16} rx="8" /><text x={b.x - 17} y={b.y + 3.5} textAnchor="middle">NEW</text></g>)}
@@ -147,14 +147,13 @@ function MultiChart({ hits, mode, labelFor }: { hits: TopicHit[]; mode: MultiMod
   const layout = useMemo(() => layoutMulti(series, mode, { columnWidth }), [series, mode, columnWidth]);
   const [focus, setFocus] = useState<string | null>(null);
   return <>
-    <div className="tp-chart-scroll" ref={ref}>{!layout.shapes.length ? <p className="tp-empty">선택한 토픽에 논문이 없습니다.</p> : <svg className="tp-chart" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-label={`토픽 검색 결과 ${layout.lanes.length}명의 연도별 논문 수 (${mode === 'stack' ? '연구자별 레인' : '연구자별 색 누적'})`}>
+    <div className="tp-chart-scroll" ref={ref}>{!layout.shapes.length ? <p className="tp-empty">선택한 토픽에 논문이 없습니다.</p> : <svg className="tp-chart" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-label={`토픽 검색 결과 ${layout.lanes.length}명의 연도별 논문 수 (${mode === 'stack' ? '연구자별 레인' : '연구자별 선 겹쳐 보기'})`}>
       {layout.ticks.map((t, i) => <g key={i} className={`tp-tick ${t.major ? 'major' : ''}`}><line x1={t.x} x2={t.x} y1={layout.top - 8} y2={layout.height - 8} />{t.major && <text x={t.x} y={layout.top - 14} textAnchor="middle">{t.label}</text>}</g>)}
-      {layout.shapes.map(shape => <path key={shape.key} d={shape.d} fill={shape.color} stroke={shape.color} className={`tp-ribbon ${focus && focus !== shape.key ? 'is-dim' : ''} ${focus === shape.key ? 'is-focus' : ''}`} onMouseEnter={() => setFocus(shape.key)} onMouseLeave={() => setFocus(null)}><title>{layout.lanes.find(l => l.key === shape.key)?.label}</title></path>)}
+      {layout.shapes.map(shape => <g key={shape.key} className={`tp-ribbon ${focus && focus !== shape.key ? 'is-dim' : ''} ${focus === shape.key ? 'is-focus' : ''}`} onMouseEnter={() => setFocus(shape.key)} onMouseLeave={() => setFocus(null)}><title>{layout.lanes.find(l => l.key === shape.key)?.label}</title>{mode === 'stack' && <path className="tp-area" d={shape.d} fill={shape.color} />}<path className="tp-line" d={shape.line} stroke={shape.color} /></g>)}
       {mode === 'stack' && layout.lanes.map(lane => <g key={lane.key} className={`tp-lane-label ${focus && focus !== lane.key ? 'is-dim' : ''}`} onMouseEnter={() => setFocus(lane.key)} onMouseLeave={() => setFocus(null)}>
         <rect x={12} y={lane.mid - 5} width={10} height={10} rx="3" fill={lane.color} />
         <text x={30} y={lane.mid + 4}>{lane.label.length > 18 ? `${lane.label.slice(0, 17)}…` : lane.label}<title>{`${lane.label} — ${lane.sublabel}`}</title></text>
         <text x={layout.left - 14} y={lane.mid + 4} textAnchor="end" className="tp-lane-n">{lane.total}</text></g>)}
-      {mode === 'overlay' && layout.totals.map((t, i) => <text key={i} x={t.x} y={t.y} textAnchor="middle" className="tp-total">{t.n}</text>)}
     </svg>}</div>
     <ul className="tp-legend">{layout.lanes.map(lane => <li key={lane.key} className={focus && focus !== lane.key ? 'is-dim' : ''} onMouseEnter={() => setFocus(lane.key)} onMouseLeave={() => setFocus(null)}><i style={{ background: lane.color }} /><b>{lane.label}</b><span>{lane.sublabel}</span><em>{lane.total}편</em></li>)}</ul>
   </>;
@@ -202,7 +201,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
   // Exports name the researcher by alias or anonymous ID only; decrypted names stay on screen.
   const chartMeta = (r: TopicResearcher): FigureMeta => ({
     title: `연구 토픽 흐름 · ${r.alias || r.id}`,
-    subtitle: `${mode === 'year' ? '연도별' : '경력 시기별'} · 띠 두께 = 논문 수 · 점선 = 모토픽에서의 분기${showArcs && hasRecip ? ' · ABA 경로 표시' : ''}`,
+    subtitle: `${mode === 'year' ? '연도별' : '경력 시기별'} · 기준선 위 선 높이 = 논문 수 · 점선 = 모토픽에서의 분기${showArcs && hasRecip ? ' · ABA 경로 표시' : ''}`,
     note: `K–STEM Research Atlas · ${releaseYear} 공개 자료 · 토픽 = 공유 참고문헌 weighted Louvain 군집, 이름 = c-TF-IDF 특징어 · ${figureDate()} 내보냄`,
     filename: `kstem-topic-flow-${r.id}-${mode}-${figureDate()}`,
   });
@@ -372,7 +371,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
           <button type="button" className={multiMode === 'stack' ? 'is-on' : ''} aria-pressed={multiMode === 'stack'} onClick={() => setMultiMode('stack')}>스택</button>
           <button type="button" className={multiMode === 'overlay' ? 'is-on' : ''} aria-pressed={multiMode === 'overlay'} onClick={() => setMultiMode('overlay')}>오버랩</button></div></div></div>
       {subjectHits.length ? <>
-        <section className="tp-chart-card"><div className="tp-chart-bar"><div><h3>연도별 논문 수 · {multiMode === 'stack' ? '연구자별 레인' : '연구자별 색 누적'}</h3><p>각 연구자의 토픽은 따로 클러스터링한 결과입니다. 같은 질의에 걸린 토픽을 같은 연도축에 놓은 비교이며, 공통 토픽 축이 아닙니다.</p></div></div>
+        <section className="tp-chart-card"><div className="tp-chart-bar"><div><h3>연도별 논문 수 · {multiMode === 'stack' ? '연구자별 레인' : '연구자별 선 겹쳐 보기'}</h3><p>각 연구자의 토픽은 따로 클러스터링한 결과입니다. 같은 질의에 걸린 토픽을 같은 연도축에 놓은 비교이며, 공통 토픽 축이 아닙니다.</p></div></div>
           <MultiChart hits={chosenHits} mode={multiMode} labelFor={labelForStable} /></section>
         <div className="tp-panel"><h3>일치한 토픽 <small>{group ? `${group.label} · ${new Set(shownHits.map(h => h.researcher.id)).size}명` : '상위 12개 중 선택'}</small></h3><ol className="tp-hits">{shownHits.map(hit => { const key = `${hit.researcher.id}:${hit.topic.id}`; return <li key={key}>
           <label><input type="checkbox" checked={!excluded.has(key)} onChange={() => setExcluded(prev => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; })} />
@@ -403,7 +402,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
         </div>
         <section className="tp-chart-card" aria-label="토픽 흐름 다이어그램">
           <div className="tp-chart-bar">
-            <div><h3>토픽 흐름</h3><p>띠 두께 = {mode === 'year' ? '그 해' : '그 시기'} 논문 수 · 점선 = 모토픽에서의 분기 · 가는 선 = 논문 없는 해</p></div>
+            <div><h3>토픽 흐름</h3><p>기준선 위 선 높이 = {mode === 'year' ? '그 해' : '그 시기'} 논문 수 · 점선 = 모토픽에서의 분기 · 기준선에 붙은 구간 = 논문 없는 해</p></div>
             <div className="tp-controls">
               <div className="v2-seg" role="group" aria-label="시간 단위">
                 <button type="button" className={mode === 'year' ? 'is-on' : ''} aria-pressed={mode === 'year'} onClick={() => setMode('year')}>연도</button>

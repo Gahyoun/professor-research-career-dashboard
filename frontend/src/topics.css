@@ -82,8 +82,12 @@
 .tp-tick .tp-tick-sub { fill: #9aa0aa; font-size: 10px; }
 .tp-lane-label text { fill: var(--v2-ink); font-size: 12.5px; font-weight: 600; }
 .tp-lane-label .tp-lane-n { fill: var(--v2-muted); font-weight: 500; font-variant-numeric: tabular-nums; }
-.tp-ribbon { fill-opacity: .3; stroke-opacity: .55; stroke-width: 1; transition: fill-opacity .15s, stroke-opacity .15s; }
-.tp-ribbon.is-focus { fill-opacity: .5; stroke-opacity: .9; }
+/* Line graph above each lane's baseline: the line carries the count, the area under it is only a faint wash. */
+.tp-ribbon { transition: opacity .15s; }
+.tp-ribbon .tp-area { fill-opacity: .1; stroke: none; }
+.tp-ribbon .tp-line { fill: none; stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; }
+.tp-ribbon.is-focus .tp-area { fill-opacity: .2; }
+.tp-ribbon.is-focus .tp-line { stroke-width: 2.4; }
 .tp-tree { fill: none; stroke: var(--v2-line); stroke-width: 1; transition: opacity .15s; }
 .tp-branch { fill: none; stroke-width: 1.6; stroke-dasharray: 3 4; opacity: .85; transition: opacity .15s; }
 .tp-arc { fill: none; stroke: #8b93a1; stroke-width: 1; stroke-dasharray: 1 3; stroke-linecap: round; opacity: .7; transition: opacity .15s; }
@@ -92,7 +96,7 @@
 .tp-dot { fill: #fff; stroke-width: 2; cursor: pointer; transition: opacity .15s; }
 .tp-dot:hover, .tp-dot:focus-visible { stroke-width: 3; outline: none; }
 .tp-chart .is-dim { opacity: .14; }
-.tp-ribbon.is-dim { fill-opacity: .06; stroke-opacity: .12; opacity: 1; }
+.tp-ribbon.is-dim { opacity: .18; }
 .tp-lane-label { cursor: default; transition: opacity .15s; }
 .tp-tip { position: absolute; z-index: 5; width: 280px; transform: translate(-50%, calc(-100% - 12px)); padding: 12px 14px; border: 1px solid var(--v2-line); border-radius: 12px; background: rgb(255 255 255 / 96%); box-shadow: var(--v2-shadow-pop); pointer-events: none; font-size: 12px; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
 .tp-tip.is-pinned { pointer-events: auto; }
