@@ -153,9 +153,9 @@ function MultiChart({ hits, mode, labelFor }: { hits: TopicHit[]; mode: MultiMod
       {mode === 'stack' && layout.lanes.map(lane => <g key={lane.key} className={`tp-lane-label ${focus && focus !== lane.key ? 'is-dim' : ''}`} onMouseEnter={() => setFocus(lane.key)} onMouseLeave={() => setFocus(null)}>
         <rect x={12} y={lane.mid - 5} width={10} height={10} rx="3" fill={lane.color} />
         <text x={30} y={lane.mid + 4}>{lane.label.length > 18 ? `${lane.label.slice(0, 17)}…` : lane.label}<title>{`${lane.label} — ${lane.sublabel}`}</title></text>
-        <text x={layout.left - 14} y={lane.mid + 4} textAnchor="end" className="tp-lane-n">{lane.total}</text></g>)}
+        <text x={layout.left - 14} y={lane.mid + 4} textAnchor="end" className="tp-lane-n">{lane.total} / {lane.all}</text></g>)}
     </svg>}</div>
-    <ul className="tp-legend">{layout.lanes.map(lane => <li key={lane.key} className={focus && focus !== lane.key ? 'is-dim' : ''} onMouseEnter={() => setFocus(lane.key)} onMouseLeave={() => setFocus(null)}><i style={{ background: lane.color }} /><b>{lane.label}</b><span>{lane.sublabel}</span><em>{lane.total}편</em></li>)}</ul>
+    <ul className="tp-legend">{layout.lanes.map(lane => <li key={lane.key} className={focus && focus !== lane.key ? 'is-dim' : ''} onMouseEnter={() => setFocus(lane.key)} onMouseLeave={() => setFocus(null)}><i style={{ background: lane.color }} /><b>{lane.label}</b><span>{lane.sublabel}</span><em title="일치 토픽 논문 / 전체 논문">{lane.total} / {lane.all}편</em></li>)}</ul>
   </>;
 }
 
@@ -371,7 +371,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
           <button type="button" className={multiMode === 'stack' ? 'is-on' : ''} aria-pressed={multiMode === 'stack'} onClick={() => setMultiMode('stack')}>스택</button>
           <button type="button" className={multiMode === 'overlay' ? 'is-on' : ''} aria-pressed={multiMode === 'overlay'} onClick={() => setMultiMode('overlay')}>오버랩</button></div></div></div>
       {subjectHits.length ? <>
-        <section className="tp-chart-card"><div className="tp-chart-bar"><div><h3>연도별 논문 수 · {multiMode === 'stack' ? '연구자별 레인' : '연구자별 선 겹쳐 보기'}</h3><p>각 연구자의 토픽은 따로 클러스터링한 결과입니다. 같은 질의에 걸린 토픽을 같은 연도축에 놓은 비교이며, 공통 토픽 축이 아닙니다.</p></div></div>
+        <section className="tp-chart-card"><div className="tp-chart-bar"><div><h3>연도별 논문 수 · {multiMode === 'stack' ? '연구자별 레인' : '연구자별 선 겹쳐 보기'}</h3><p>각 연구자의 토픽은 따로 클러스터링한 결과입니다. 같은 질의에 걸린 토픽을 같은 연도축에 놓은 비교이며, 공통 토픽 축이 아닙니다. 편수 표기 = 일치 토픽 논문 / 전체 논문.</p></div></div>
           <MultiChart hits={chosenHits} mode={multiMode} labelFor={labelForStable} /></section>
         <div className="tp-panel"><h3>일치한 토픽 <small>{group ? `${group.label} · ${new Set(shownHits.map(h => h.researcher.id)).size}명` : '상위 12개 중 선택'}</small></h3><ol className="tp-hits">{shownHits.map(hit => { const key = `${hit.researcher.id}:${hit.topic.id}`; return <li key={key}>
           <label><input type="checkbox" checked={!excluded.has(key)} onChange={() => setExcluded(prev => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; })} />
