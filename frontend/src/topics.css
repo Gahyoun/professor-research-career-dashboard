@@ -205,3 +205,17 @@
   .tp-info-stats, .tp-info-plot { padding-left: 16px; padding-right: 16px; }
 }
 .tp-lane-label .tp-lane-sub { fill: var(--v2-muted); font-size: 11px; font-weight: 500; }
+
+.tp-papers h3 small { margin-left: 8px; color: var(--v2-muted); font-size: 12px; font-weight: 500; }
+.tp-paper-group { border-top: 1px solid var(--v2-line-soft); }
+.tp-paper-group summary { display: flex; align-items: center; gap: 8px; padding: 10px 0; cursor: pointer; font-weight: 600; color: var(--v2-ink); }
+.tp-paper-group summary i { width: 9px; height: 9px; border-radius: 3px; flex: none; }
+.tp-paper-group summary small { margin-left: auto; color: var(--v2-muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+.tp-paper-group ol { margin: 0 0 12px; padding: 0; list-style: none; display: grid; gap: 8px; }
+.tp-paper-group li { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; font-size: 13.5px; line-height: 1.45; }
+.tp-paper-year { color: var(--v2-muted); font-variant-numeric: tabular-nums; }
+.tp-paper-body { min-width: 0; overflow-wrap: anywhere; }
+.tp-paper-body a { color: var(--v2-ink); text-decoration: underline; text-decoration-color: var(--v2-line); text-underline-offset: 2px; }
+.tp-paper-body small { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 2px; color: var(--v2-muted); font-size: 12px; }
+.tp-paper-body em { font-style: normal; }
+.tp-paper-body code { font-size: 11.5px; }

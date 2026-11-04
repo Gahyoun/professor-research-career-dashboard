@@ -167,6 +167,31 @@ function TopicTable({ researcher, focus, setFocus }: { researcher: TopicResearch
   </table></div>;
 }
 
+/** Paper titles, journals and DOIs by topic — decrypted in memory after unlock, never in exports. */
+function PaperList({ researcher, rows, state }: { researcher: TopicResearcher; rows: EncryptedPaperTitles[string] | null; state: 'locked' | 'loading' | 'missing' | 'ready' }) {
+  const colors = topicColors(researcher);
+  const byTopic = new Map<number, EncryptedPaperTitles[string]>();
+  for (const row of rows || []) byTopic.set(row.topic, [...(byTopic.get(row.topic) || []), row]);
+  return <section className="tp-panel tp-papers" aria-labelledby="tp-papers-title">
+    <h3 id="tp-papers-title">논문 목록{state === 'ready' && <small>{n(rows!.length)}편 · 잠금 해제 중에만 이 기기 메모리에서 표시</small>}</h3>
+    {state === 'locked' && <p className="tp-muted">상단에서 실명 비밀번호로 잠금을 해제하면 토픽별 논문 제목·저널·DOI를 볼 수 있습니다.</p>}
+    {state === 'loading' && <p className="tp-muted" aria-live="polite">논문 제목을 복호화하는 중입니다.</p>}
+    {state === 'missing' && <p className="tp-muted">이 연구자의 논문 제목 파일이 없거나 복호화하지 못했습니다.</p>}
+    {state === 'ready' && orderedTopics(researcher).map(topic => {
+      const list = [...(byTopic.get(topic.id) || [])].sort((a, b) => b.year - a.year || a.title.localeCompare(b.title));
+      if (!list.length) return null;
+      return <details key={topic.id} className="tp-paper-group" open={list.length <= 6}>
+        <summary><i style={{ background: colors.get(topic.id) }} />{topic.label}<small>{list.length}편</small></summary>
+        <ol>{list.map((paper, i) => <li key={i}>
+          <span className="tp-paper-year">{paper.year}</span>
+          <span className="tp-paper-body">{paper.doi ? <a href={paper.doi} target="_blank" rel="noreferrer">{paper.title}</a> : paper.title}
+            <small>{paper.venue && <em>{paper.venue}</em>}{paper.doi && <code>{paper.doi.replace('https://doi.org/', 'doi:')}</code>}</small></span>
+        </li>)}</ol>
+      </details>;
+    })}
+  </section>;
+}
+
 export default function TopicsPage({ professors, names, titles, releaseYear, onOpenCareer }: Props) {
   const [index, setIndex] = useState<TopicIndex | null>(null);
   const areas = useResearchAreas();
@@ -395,6 +420,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
         {detailPending ? <p className="tp-muted" aria-live="polite">분기·합류 정보량과 토픽 요약을 불러오는 중입니다.</p>
           : detail === 'error' ? <p className="tp-muted" role="alert">분기·합류 정보량과 토픽 요약을 불러오지 못했습니다.</p>
           : <InfoFlowPanel key={researcher.id} researcher={researcher} />}
+        <PaperList researcher={researcher} rows={researcherTitles} state={!titles ? 'locked' : !paperTitles || paperTitles.id !== researcher.id ? 'loading' : researcherTitles ? 'ready' : 'missing'} />
         <ResearchAreaTree profile={areas?.profiles.get(researcher.id)} title="OpenAlex 연구분야 계층" />
         <section className="tp-split">
           <div className="tp-panel"><h3>토픽과 분기</h3><TopicTable researcher={researcher} focus={focus} setFocus={setFocus} /></div>
