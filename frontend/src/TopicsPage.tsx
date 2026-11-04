@@ -88,22 +88,32 @@ function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles, sv
   return <div className="tp-chart-scroll" ref={wrap} onMouseLeave={clear}>
     {!layout.lanes.length ? <p className="tp-empty">표시할 논문이 없습니다.</p> : <svg ref={svgRef} className="tp-chart" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-labelledby="tp-chart-title tp-chart-desc">
       <title id="tp-chart-title">{mode === 'year' ? '연도별' : '경력 시기별'} 연구 토픽 흐름</title>
-      <desc id="tp-chart-desc">토픽 {layout.lanes.length}개, 논문 {layout.placed}편. 띠의 두께는 해당 {mode === 'year' ? '연도' : '시기'} 논문 수, 점선은 모토픽에서의 분기입니다.</desc>
+      <desc id="tp-chart-desc">토픽 {layout.lanes.length}개, 논문 {layout.placed}편. 띠의 두께는 해당 {mode === 'year' ? '연도' : '시기'} 논문 수, 점선은 모토픽에서의 분기입니다. 레인은 모토픽 아래에 자식 토픽이 오는 tree 순서입니다.</desc>
       {layout.bands.map((band, i) => <g key={i} className="tp-band"><rect x={band.x} y={12 + band.row * 28} width={band.width} height={24} rx="6" /><text x={band.x + 8} y={12 + band.row * 28 + 16}>{band.label}<title>{band.label}</title></text></g>)}
       {layout.ticks.map((tick, i) => <g key={i} className={`tp-tick ${tick.major ? 'major' : ''}`}>
         <line x1={tick.x} x2={tick.x} y1={layout.top - 10} y2={layout.height - 8} />
         {mode === 'year' ? (tick.major && <text x={tick.x} y={layout.top - 16} textAnchor="middle">{tick.label}</text>)
           : <text x={tick.x} y={layout.top - 26} textAnchor="middle"><tspan x={tick.x}>{tick.label.replace(/\s*\(.*\)\s*$/, '').slice(0, 14)}</tspan><tspan x={tick.x} dy="15" className="tp-tick-sub">{tick.label.match(/\(([^)]*)\)\s*$/)?.[1] || ''}</tspan></text>}
       </g>)}
+      {layout.lanes.map(lane => {
+        // Tree elbow in the label column: parent swatch → child swatch, one indent step per depth.
+        const parent = lane.depth > 0 && lane.topic.parent ? shown.get(lane.topic.parent.from) : null;
+        if (!parent) return null;
+        const px = 17 + Math.min(parent.depth, 4) * 10, cx = 12 + Math.min(lane.depth, 4) * 10;
+        return <path key={`tree-${lane.topic.id}`} className={`tp-tree ${dim(lane.topic.id) && dim(parent.topic.id) ? 'is-dim' : ''}`} d={`M${px},${(parent.mid + 6).toFixed(1)} V${lane.mid.toFixed(1)} H${cx - 2}`} />;
+      })}
       {layout.lanes.map(lane => <g key={lane.topic.id} className={`tp-lane-label ${dim(lane.topic.id) ? 'is-dim' : ''}`} onMouseEnter={() => !pinned && setFocus(lane.topic.id)} onMouseLeave={clear}>
-        <rect x={12} y={lane.mid - 5} width={10} height={10} rx="3" fill={lane.color} />
         {(() => {
-          // English c-TF-IDF names: leading term on the first line, the rest below.
+          // English c-TF-IDF names: leading term on the first line, the rest below; child lanes indent.
+          const indent = Math.min(lane.depth, 4) * 10, cut = Math.round(indent / 7);
           const [head, ...rest] = lane.topic.label.split(' · ');
           const clip = (s: string, n: number) => s.length > n ? `${s.slice(0, n - 1)}…` : s;
-          return rest.length
-            ? <text x={30} y={lane.mid - 2}>{clip(head, 22)}<tspan x={30} dy="14" className="tp-lane-sub">{clip(rest.join(' · '), 28)}</tspan><title>{lane.topic.label}</title></text>
-            : <text x={30} y={lane.mid + 4}>{clip(head, 22)}<title>{lane.topic.label}</title></text>;
+          return <>
+            <rect x={12 + indent} y={lane.mid - 5} width={10} height={10} rx="3" fill={lane.color} />
+            {rest.length
+              ? <text x={30 + indent} y={lane.mid - 2}>{clip(head, 22 - cut)}<tspan x={30 + indent} dy="14" className="tp-lane-sub">{clip(rest.join(' · '), 28 - cut)}</tspan><title>{lane.topic.label}</title></text>
+              : <text x={30 + indent} y={lane.mid + 4}>{clip(head, 22 - cut)}<title>{lane.topic.label}</title></text>}
+          </>;
         })()}
         <text x={layout.left - 14} y={lane.mid + 4} textAnchor="end" className="tp-lane-n">{lane.counts.reduce((a, b) => a + b, 0)}</text>
       </g>)}
@@ -147,6 +157,23 @@ function MultiChart({ hits, mode, labelFor }: { hits: TopicHit[]; mode: MultiMod
   </>;
 }
 
+/** Clustering method, stated as implemented in backend/topics/build_release_topics.py and export_public_index.py. */
+function MethodNote({ coverage }: { coverage?: string }) {
+  return <section className="tp-method" aria-labelledby="tp-method-title">
+    <h3 id="tp-method-title">방법 — 논문 클러스터링</h3>
+    <ol>
+      <li><b>대상 논문</b>연구자별 공개 기준 논문입니다. identity_decision = keep이고 KOAD namesake로 판정된 논문은 제외하며, article·review·letter·editorial만 씁니다. {coverage || '2026년은 원본 DB snapshot 시점까지만 포함한 partial입니다.'}</li>
+      <li><b>Bibliographic coupling network</b>노드는 한 연구자의 논문입니다. 두 논문 i, j가 OpenAlex referenced_works에서 공통 참고문헌을 c<sub>ij</sub>개 가지면, c<sub>ij</sub> ≥ 2인 쌍만 edge로 남깁니다.</li>
+      <li><b>가중치</b>w<sub>ij</sub> = c<sub>ij</sub> / √(|R<sub>i</sub>| · |R<sub>j</sub>|) (Salton cosine). R<sub>i</sub>는 논문 i의 참고문헌 집합입니다. 참고문헌이 많은 리뷰 논문이 연결을 독점하지 않도록 정규화합니다.</li>
+      <li><b>Weighted Louvain</b>weighted modularity Q = (1/2m) Σ<sub>ij</sub> [w<sub>ij</sub> − γ k<sub>i</sub>k<sub>j</sub> / 2m] δ(c<sub>i</sub>, c<sub>j</sub>)를 최대화합니다. k<sub>i</sub> = Σ<sub>j</sub> w<sub>ij</sub> (strength), m = Σ w<sub>ij</sub> / 2, resolution γ = 1.05, seed 4 (networkx louvain_communities, weight = w).</li>
+      <li><b>Other</b>coupling edge가 없는 논문과 1편짜리 community는 하나의 Other 토픽으로 묶습니다. 참고문헌 정보가 없는 논문도 여기에 들어갑니다.</li>
+      <li><b>라벨</b>연구자마다 토픽 하나를 문서 하나로 보고 c-TF-IDF를 계산합니다. 단어는 제목, 초록, OpenAlex keywords와 topics에서 가져옵니다. 그 연구자 토픽의 60% 이상에 나오는 단어는 버리고, 상위 용어 3개를 영문 그대로 이름으로 씁니다.</li>
+      <li><b>시계열 tree</b>토픽의 출현 연도는 가장 이른 논문 연도입니다. 출현한 경력 시기의 논문과, 그보다 앞선 경력 시기에 있는 다른 토픽 논문 사이의 coupling cosine이 가장 큰 쌍을 찾고, 그 논문의 토픽을 모토픽(parent)으로 둡니다. 앞선 시기가 없거나 cosine이 0이면 독립 신규입니다. 레인은 독립 신규 토픽을 출현 연도·크기 순으로 놓고, 자식 토픽을 모토픽 바로 아래에 depth-first로 둡니다.</li>
+    </ol>
+    <p><b>한계</b>결과는 공통 참고문헌에만 의존합니다. OpenAlex에 참고문헌이 없는 논문(국내 학술지·오래된 논문에 많음)은 Other로 갑니다. Louvain 분할은 seed와 γ에 따라 달라질 수 있습니다.</p>
+  </section>;
+}
+
 function TopicTable({ researcher, focus, setFocus }: { researcher: TopicResearcher; focus: number | null; setFocus: (t: number | null) => void }) {
   const colors = topicColors(researcher);
   const byId = new Map(researcher.topics.map(t => [t.id, t]));
@@ -171,8 +198,8 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
   // Exports name the researcher by alias or anonymous ID only; decrypted names stay on screen.
   const chartMeta = (r: TopicResearcher): FigureMeta => ({
     title: `연구 토픽 흐름 · ${r.alias || r.id}`,
-    subtitle: `${mode === 'year' ? '연도별' : '경력 시기별'} · 띠 두께 = 논문 수 · 점선 = 모토픽에서의 분기${showArcs ? ' · ABA 경로 표시' : ''}`,
-    note: `K–STEM Research Atlas · ${releaseYear} 공개 자료 · 토픽 = 공유 참고문헌 Louvain 군집, 이름 = c-TF-IDF 특징어 · ${figureDate()} 내보냄`,
+    subtitle: `${mode === 'year' ? '연도별' : '경력 시기별'} · 띠 두께 = 논문 수 · 점선 = 모토픽에서의 분기${showArcs && hasRecip ? ' · ABA 경로 표시' : ''}`,
+    note: `K–STEM Research Atlas · ${releaseYear} 공개 자료 · 토픽 = 공유 참고문헌 weighted Louvain 군집, 이름 = c-TF-IDF 특징어 · ${figureDate()} 내보냄`,
     filename: `kstem-topic-flow-${r.id}-${mode}-${figureDate()}`,
   });
   const [error, setError] = useState('');
@@ -183,6 +210,8 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
   const [selection, setSelectionState] = useState<Selection>(readSelection);
   const [mode, setMode] = useState<AlluvialMode>('year');
   const [showArcs, setShowArcs] = useState(true);
+  // ABA paths need citing-paper fetches; a release may skip them (method.recip = "not computed").
+  const hasRecip = index?.method.recip !== 'not computed';
   const [focus, setFocus] = useState<number | null>(null);
   const [searchMode, setSearchMode] = useState<'people' | 'topic'>(() => readSelection().kind === 'topic' ? 'topic' : 'people');
   const [topicQuery, setTopicQuery] = useState(() => { const sel = readSelection(); return sel.kind === 'topic' ? sel.q : ''; });
@@ -265,6 +294,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
       </div>
     </header>
     {index.source === 'demo' && <p className="tp-demo" role="note"><b>예시 데이터</b>현재 화면의 토픽 흐름은 화면 검토용 합성 데이터입니다(ID DEMO-…). 실제 연구자·기관·논문이 아니며, 공개 릴리스로 교체되면 이 표시가 사라집니다.</p>}
+    {index.method.coverage && <p className="tp-note" role="note">{index.method.coverage}</p>}
 
     <div className="tp-mode v2-seg" role="group" aria-label="검색 대상">
       <button type="button" className={searchMode === 'people' ? 'is-on' : ''} aria-pressed={searchMode === 'people'} onClick={() => setSearchMode('people')}>연구자 · 기관</button>
@@ -342,7 +372,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
           <div className="v2-stat"><span>논문</span><strong>{n(researcher.papers.length)}</strong><small>{researcher.counts?.source_works ? `원본 ${n(researcher.counts.source_works)}건에서 판별` : '판별 후 고유 논문'}</small></div>
           <div className="v2-stat"><span>토픽</span><strong>{researcher.topics.length}</strong><small>독립 신규 {independent} · 분기 {researcher.topics.length - independent}</small></div>
           <div className="v2-stat"><span>활동 기간</span><strong>{range[1] - range[0] + 1}<em>년</em></strong><small>{range[0]} – {range[1]}</small></div>
-          <div className="v2-stat"><span>ABA 경로</span><strong>{researcher.recip.length}</strong><small>피인용 상위 표본</small></div>
+          {hasRecip && <div className="v2-stat"><span>ABA 경로</span><strong>{researcher.recip.length}</strong><small>피인용 상위 표본</small></div>}
         </div>
         <section className="tp-chart-card" aria-label="토픽 흐름 다이어그램">
           <div className="tp-chart-bar">
@@ -352,21 +382,22 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
                 <button type="button" className={mode === 'year' ? 'is-on' : ''} aria-pressed={mode === 'year'} onClick={() => setMode('year')}>연도</button>
                 <button type="button" className={mode === 'era' ? 'is-on' : ''} aria-pressed={mode === 'era'} onClick={() => setMode('era')}>경력 시기</button>
               </div>
-              <label className="v2-switch"><input type="checkbox" checked={showArcs} onChange={e => setShowArcs(e.target.checked)} /><span />ABA 경로</label>
+              {hasRecip && <label className="v2-switch"><input type="checkbox" checked={showArcs} onChange={e => setShowArcs(e.target.checked)} /><span />ABA 경로</label>}
               <button type="button" className="v2-btn-quiet" onClick={() => chartSvg.current && printSvgAsPdf(chartSvg.current, chartMeta(researcher))}>PDF 저장</button>
               <button type="button" className="v2-btn-quiet" onClick={() => chartSvg.current && downloadSvg(chartSvg.current, chartMeta(researcher).filename)}>SVG 저장</button>
             </div>
           </div>
-          <AlluvialChart researcher={researcher} mode={mode} showArcs={showArcs} focus={focus} setFocus={setFocus} titles={titles?.[researcher.id] || null} svgRef={chartSvg} />
+          <AlluvialChart researcher={researcher} mode={mode} showArcs={showArcs && hasRecip} focus={focus} setFocus={setFocus} titles={titles?.[researcher.id] || null} svgRef={chartSvg} />
         </section>
-        <InfoFlowPanel key={researcher.id} researcher={researcher} />
+        <MethodNote coverage={index.method.coverage} />
+        <InfoFlowPanel key={researcher.id} researcher={researcher} infoUrl={index.infoPath ? `${import.meta.env.BASE_URL}data/topics/${index.infoPath}/${researcher.id}.json` : undefined} />
         <ResearchAreaTree profile={areas?.profiles.get(researcher.id)} title="OpenAlex 연구분야 계층" />
         <section className="tp-split">
           <div className="tp-panel"><h3>토픽과 분기</h3><TopicTable researcher={researcher} focus={focus} setFocus={setFocus} /></div>
           <div className="tp-panel tp-notes"><h3>읽는 법과 한계</h3><ul>
-            <li><b>토픽</b> 공유 참고문헌 양을 코사인 정규화한 가중 Louvain 군집입니다. 라벨은 c-TF-IDF 자동 라벨을 사람이 고친 해석입니다.</li>
+            <li><b>토픽</b> 공유 참고문헌 수를 Salton cosine으로 정규화한 weighted Louvain 군집입니다. 라벨은 c-TF-IDF 영문 용어입니다.</li>
             <li><b>분기</b> 새 토픽의 탄생기 논문과 그 이전 논문 사이 coupling 최댓값으로 모토픽을 정합니다. 연결이 없으면 독립 신규로 표시합니다.</li>
-            <li><b>ABA 경로</b> 본인이 저자가 아닌 논문이 초기 논문을 인용하고 후기 논문이 그것을 다시 인용한 경우입니다. 피인용 상위 표본이며 전수가 아닙니다.</li>
+            {hasRecip && <li><b>ABA 경로</b> 본인이 저자가 아닌 논문이 초기 논문을 인용하고 후기 논문이 그것을 다시 인용한 경우입니다. 피인용 상위 표본이며 전수가 아닙니다.</li>}
             <li><b>동명이인</b> KOAD 경력 연속성 판별을 통과한 논문만 씁니다. 국내 학회지·단행본·학위논문은 OpenAlex 수록이 불균일합니다.</li>
             {researcher.fetched_at && <li><b>수집일</b> {researcher.fetched_at}</li>}
           </ul></div>

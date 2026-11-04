@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseEraLabel, normalizeTopicIndex, layoutAlluvial, queryResearchers, orderedTopics, eraOfYear, validatePaperTitles, TOPIC_SCHEMA } from '../work/test-dist/topics.js';
+import { normalizeInfoFlow as parseInfo, parseEraLabel, normalizeTopicIndex, layoutAlluvial, queryResearchers, orderedTopics, topicDepths, topicColors, eraOfYear, validatePaperTitles, TOPIC_SCHEMA } from '../work/test-dist/topics.js';
 
 const researcher = (extra = {}) => ({
   id: 'P-AAAAAAAAAA', subject: 'physics', institution: 'Example University',
@@ -41,6 +41,34 @@ test('normalized index keeps only papers whose topic exists', () => {
   assert.equal(r.papers.length, 8);
   assert.equal(r.eras[1].start, 2011);
   assert.deepEqual(orderedTopics(r).map(t => t.id), [0, 1, 2]);
+});
+
+test('lanes follow the time-axis tree: children under their parent, Other last, colours by birth', () => {
+  const p = (from) => ({ from, sim: 0.1, from_year: 2008, to_year: 2012 });
+  const raw = researcher({
+    topics: [
+      { id: 0, label: 'Other · misc', size: 9, birth_year: 2004, parent: null },
+      { id: 1, label: 'Root A', size: 5, birth_year: 2006, parent: null },
+      { id: 2, label: 'Root B', size: 6, birth_year: 2008, parent: null },
+      { id: 3, label: 'Child of A', size: 2, birth_year: 2014, parent: p(1) },
+      { id: 4, label: 'Grandchild', size: 1, birth_year: 2016, parent: p(3) },
+      { id: 5, label: 'Early child of A', size: 2, birth_year: 2010, parent: p(1) },
+      { id: 6, label: 'Loop X', size: 1, birth_year: 2018, parent: p(7) },
+      { id: 7, label: 'Loop Y', size: 1, birth_year: 2019, parent: p(6) },
+    ],
+    papers: [0, 1, 2, 3, 4, 5, 6, 7].map(topic => ({ year: 2004 + topic * 2, topic, era: 0, cited: 0 })),
+    recip: [],
+  });
+  const r = normalizeTopicIndex(index([raw])).researchers[0];
+  assert.deepEqual(orderedTopics(r).map(t => t.id), [1, 5, 3, 4, 2, 6, 7, 0]);
+  const depth = topicDepths(r);
+  assert.deepEqual([1, 5, 3, 4, 2, 6, 7].map(id => depth.get(id)), [0, 1, 1, 2, 0, 0, 1]);
+  const layout = layoutAlluvial(r, 'year');
+  assert.deepEqual(layout.lanes.map(l => l.depth), [0, 1, 1, 2, 0, 0, 1, 0]);
+  assert.equal(layout.branches.length, 5);
+  assert.ok(!layout.births.find(b => b.topic === 0).independent);   // Other is a residual bucket, not a new topic
+  const colors = topicColors(r);
+  assert.equal(colors.get(1), topicColors(normalizeTopicIndex(index([{ ...raw, topics: raw.topics.map(t => ({ ...t, parent: null })) }])).researchers[0]).get(1));
 });
 
 test('year layout places every paper exactly once and branches downward from the parent', () => {
@@ -97,12 +125,36 @@ test('shipped topic index is valid and title-free', () => {
   for (const r of parsed.researchers) assert.equal(layoutAlluvial(r, 'year').unplaced, 0);
 });
 
+test('shipped release index is anonymous: dashboard ids only, no titles, DOIs or work ids', () => {
+  const raw = JSON.parse(readFileSync('public/data/topics/index.json', 'utf8'));
+  if (raw.source !== 'release') return;
+  const ids = new Set(JSON.parse(readFileSync('public/data/dashboard.json', 'utf8')).professors.map(p => p.id));
+  for (const r of raw.researchers) {
+    assert.ok(ids.has(r.id), r.id);
+    for (const p of r.papers) assert.deepEqual(Object.keys(p).filter(k => !['year', 'topic', 'era', 'cited'].includes(k)), []);
+  }
+  const text = readFileSync('public/data/topics/index.json', 'utf8');
+  assert.doesNotMatch(text, /openalex\.org|doi\.org|"W\d{6,}"|"title"|orcid/i);
+});
+
+test('split info-flow files exist for every shipped researcher and parse', () => {
+  const index = shipped();
+  if (!index.infoPath) return;
+  for (const r of index.researchers) {
+    const info = parseInfo(JSON.parse(readFileSync(`public/data/topics/${index.infoPath}/${r.id}.json`, 'utf8')), new Set(r.topics.map(t => t.id)));
+    assert.ok(info, r.id);
+    for (const t of info.transitions) assert.ok(t.measures.diverge.value >= 0 && t.measures.merge.value >= 0 && t.measures.continuity.value >= 0, r.id);
+  }
+});
+
 import { searchTopics, expandTerms, tokenizeQuery, layoutMulti, seriesFromHits, tagCloud } from '../work/test-dist/topics.js';
 
 const shipped = () => normalizeTopicIndex(JSON.parse(readFileSync('public/data/topics/index.json', 'utf8')));
+// Search behaviour is pinned to the synthetic demo index; the shipped index is checked for invariants only.
+const demo = () => normalizeTopicIndex(JSON.parse(readFileSync('tests/fixtures/topic_index_demo.json', 'utf8')));
 
 test('korean query expands through the glossary and ranks the matching topic first', () => {
-  const index = shipped();
+  const index = demo();
   assert.deepEqual(tokenizeQuery('동기화, 전력망!'), ['동기화', '전력망']);
   assert.ok(expandTerms(['동기화'], index.semantic).includes('synchronization'));
   const ko = searchTopics(index, '동기화');
@@ -114,19 +166,21 @@ test('korean query expands through the glossary and ranks the matching topic fir
 });
 
 test('topic names and features are English only — no translated labels or tags', () => {
-  const index = shipped();
-  for (const r of index.researchers) for (const t of r.topics) {
-    assert.doesNotMatch(t.label, /[가-힣]/, t.label);
-    assert.equal(t.tags.ko.length, 0, t.label);
-    assert.ok(t.tags.en.length > 0 && t.keywords.length > 0, t.label);
-    for (const tag of [...t.tags.en, ...t.keywords]) assert.doesNotMatch(tag, /[가-힣]/);
+  for (const index of [demo(), shipped()]) {
+    for (const r of index.researchers) for (const t of r.topics) {
+      assert.ok(t.label.length > 0);
+      assert.doesNotMatch(t.label, /[가-힣]/, t.label);
+      assert.equal(t.tags.ko.length, 0, t.label);
+      for (const tag of [...t.tags.en, ...t.keywords]) assert.doesNotMatch(tag, /[가-힣]/);
+    }
+    const cloud = tagCloud(index);
+    assert.ok(cloud.length > 0 && cloud.every(c => c.count >= 1 && !/[가-힣]/.test(c.tag)));
   }
-  const cloud = tagCloud(index);
-  assert.ok(cloud.length > 0 && cloud.every(c => c.count >= 1 && !/[가-힣]/.test(c.tag)));
+  for (const r of demo().researchers) for (const t of r.topics) assert.ok(t.tags.en.length > 0 && t.keywords.length > 0, t.label);
 });
 
 test('multi layout keeps every selected paper in stack and overlay modes', () => {
-  const index = shipped();
+  const index = demo();
   const hits = searchTopics(index, 'network').hits.slice(0, 5);
   const series = seriesFromHits(hits, id => id);
   const papers = series.reduce((sum, s) => sum + [...s.counts.values()].reduce((a, b) => a + b, 0), 0);
@@ -172,10 +226,10 @@ test('per-topic branching and merging entropies from flows', () => {
   assert.ok(Math.abs(merging['1'].bits - (-(1 / 3) * Math.log2(1 / 3) - (2 / 3) * Math.log2(2 / 3))) < 1e-12);
 });
 
-test('shipped demo index carries info-flow measures for every researcher', () => {
-  for (const r of shipped().researchers) {
-    assert.ok(r.info && r.info.transitions.length > 0, r.id);
-    for (const t of r.info.transitions) {
+test('info-flow measures are non-negative and normalised forms stay within [0, 1]', () => {
+  for (const r of demo().researchers) assert.ok(r.info && r.info.transitions.length > 0, r.id);
+  for (const r of [...demo().researchers, ...shipped().researchers]) {
+    for (const t of r.info?.transitions || []) {
       const { diverge, merge, continuity } = t.measures;
       assert.ok(diverge.value >= 0 && merge.value >= 0 && continuity.value >= 0);
       if (t.measures.diverge_norm) assert.ok(t.measures.diverge_norm.value <= 1);
@@ -184,13 +238,13 @@ test('shipped demo index carries info-flow measures for every researcher', () =>
 });
 
 test('a Korean query reaches English phrase tags through the glossary', () => {
-  const hits = searchTopics(shipped(), '단일세포').hits.slice(0, 2);
+  const hits = searchTopics(demo(), '단일세포').hits.slice(0, 2);
   assert.equal(hits.length, 2);
   for (const h of hits) assert.ok(h.topic.tags.en.some(t => t.split(' ').includes('single-cell')), h.topic.label);
 });
 
 test('glossary expansion uses the exact Korean entry before substrings', () => {
-  assert.ok(!expandTerms(['유전자'], shipped().semantic).includes('electron'));   // 전자 ⊂ 유전자
+  assert.ok(!expandTerms(['유전자'], demo().semantic).includes('electron'));   // 전자 ⊂ 유전자
 });
 
 import { singular } from '../work/test-dist/topics.js';
@@ -200,6 +254,6 @@ test('plural and singular English forms meet in topic search', () => {
   assert.equal(singular('random matrices'), 'random matrice');            // both sides fold the same way
   assert.equal(singular('analysis'), 'analysis');
   assert.equal(singular('gas'), 'gas');
-  const index = shipped();
+  const index = demo();
   for (const q of ['battery', 'batteries', '배터리']) assert.match(searchTopics(index, q).hits[0]?.topic.label || '', /batter/i, q);
 });
