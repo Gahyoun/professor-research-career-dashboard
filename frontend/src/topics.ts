@@ -622,12 +622,13 @@ export function tagCloud(index: TopicIndex, limit = 24): { tag: string; count: n
 // ── Multi-researcher view: stack (lane per person) or overlay (streams per person) ──
 
 export const PERSON_PALETTE = ['#256ef4', '#e5484d', '#12a150', '#f59e0b', '#8e4ec6', '#0ea5e9', '#d946ef', '#65a30d', '#f97316', '#475569'];
-export type MultiSeries = { key: string; label: string; sublabel: string; color: string; counts: Map<number, number> };
+/** `counts`: papers in the matched topics per year; `all`: every paper of the researcher (matched or not). */
+export type MultiSeries = { key: string; label: string; sublabel: string; color: string; counts: Map<number, number>; all: number };
 export type MultiMode = 'stack' | 'overlay';
 export type MultiLayout = {
   width: number; height: number; left: number; top: number; years: number[];
   shapes: { key: string; d: string; line: string; color: string }[];
-  lanes: { key: string; label: string; sublabel: string; color: string; mid: number; total: number }[];
+  lanes: { key: string; label: string; sublabel: string; color: string; mid: number; total: number; all: number }[];
   ticks: { x: number; label: string; major: boolean }[];
   totals: { x: number; y: number; n: number }[];
 };
@@ -642,7 +643,7 @@ export function seriesFromHits(hits: TopicHit[], labelFor: (id: string) => strin
   return [...byResearcher.values()].map(({ researcher, topics }, i) => {
     const counts = new Map<number, number>();
     for (const p of researcher.papers) if (topics.has(p.topic)) counts.set(p.year, (counts.get(p.year) || 0) + 1);
-    return { key: researcher.id, label: labelFor(researcher.id), sublabel: researcher.topics.filter(t => topics.has(t.id)).map(t => t.label).join(' · '), color: PERSON_PALETTE[i % PERSON_PALETTE.length], counts };
+    return { key: researcher.id, label: labelFor(researcher.id), sublabel: researcher.topics.filter(t => topics.has(t.id)).map(t => t.label).join(' · '), color: PERSON_PALETTE[i % PERSON_PALETTE.length], counts, all: researcher.papers.length };
   }).filter(s => s.counts.size);
 }
 
@@ -666,7 +667,7 @@ export function layoutMulti(series: MultiSeries[], mode: MultiMode, options: { c
       for (let i = a; i <= b; i++) top.push([x(i), base - lift(value(s, span[i]), unit)]);
       const shape = ridge(top, base, x(a) - columnWidth * .42, x(b) + columnWidth * .42);
       shapes.push({ key: s.key, color: s.color, d: shape.area, line: shape.line });
-      lanes.push({ key: s.key, label: s.label, sublabel: s.sublabel, color: s.color, mid: base - 5, total: [...s.counts.values()].reduce((m, n) => m + n, 0) });
+      lanes.push({ key: s.key, label: s.label, sublabel: s.sublabel, color: s.color, mid: base - 5, total: [...s.counts.values()].reduce((m, n) => m + n, 0), all: s.all });
       height += h;
     }
   } else {
@@ -679,7 +680,7 @@ export function layoutMulti(series: MultiSeries[], mode: MultiMode, options: { c
       const a = active[0], b = active[active.length - 1];
       const shape = ridge(span.slice(a, b + 1).map((y, k) => [x(a + k), base - value(s, y) * unit] as [number, number]), base, x(a) - columnWidth * .42, x(b) + columnWidth * .42);
       shapes.push({ key: s.key, color: s.color, d: shape.area, line: shape.line });
-      lanes.push({ key: s.key, label: s.label, sublabel: s.sublabel, color: s.color, mid: base - 5, total: [...s.counts.values()].reduce((m, n) => m + n, 0) });
+      lanes.push({ key: s.key, label: s.label, sublabel: s.sublabel, color: s.color, mid: base - 5, total: [...s.counts.values()].reduce((m, n) => m + n, 0), all: s.all });
     }
     height = base + 12;
   }

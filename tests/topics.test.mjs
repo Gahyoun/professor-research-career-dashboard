@@ -242,6 +242,16 @@ test('multi layout keeps every selected paper in stack and overlay modes', () =>
   assert.deepEqual(layoutMulti(series, 'overlay').totals, []);
 });
 
+test('multi lanes report matched-topic papers out of all papers', () => {
+  const index = demo();
+  const series = seriesFromHits(searchTopics(index, 'network').hits.slice(0, 5), id => id);
+  const byId = new Map(index.researchers.map(r => [r.id, r]));
+  for (const mode of ['stack', 'overlay']) for (const lane of layoutMulti(series, mode).lanes) {
+    assert.equal(lane.all, byId.get(lane.key).papers.length);
+    assert.ok(lane.total > 0 && lane.total <= lane.all, lane.key);
+  }
+});
+
 const pathYs = d => [...d.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map(m => Number(m[2]));
 
 test('topic counts are drawn as lines above a baseline, never mirrored below it', () => {
