@@ -1,6 +1,6 @@
 {
   "release_year": 2026,
-  "public_data_sha256": "d7d7d30940766ea3f660eedf6f20a5ebb1395a6697d9f014d9f997ab12cabc53",
+  "public_data_sha256": "67e01e98024edc48f621a7debb538a25b867cadad41745acaf5bb95f28ebe4d7",
   "source": "existing KOAD-filtered 2026 private build source mapped to existing anonymous IDs",
   "identity_filter_version": "KOAD 1.2-positive-work-decision",
   "identity_filter_rule": "same-researcher/work KOAD true_paper and source keep are required before publication-affiliation department inference; unclassified works are excluded",
@@ -15,12 +15,12 @@
   "private_fields_exported": false,
   "counts": {
     "bachelor_country_known": 2855,
-    "career_country_known": 11357,
-    "career_department_inferred": 3108,
+    "career_country_known": 11358,
+    "career_department_inferred": 3109,
     "career_department_verified": 2,
-    "career_domestic": 8214,
-    "career_domestic_department_inferred": 2311,
-    "career_segments": 12335,
+    "career_domestic": 8215,
+    "career_domestic_department_inferred": 2312,
+    "career_segments": 12337,
     "current_department_inferred": 2516,
     "current_department_verified": 3,
     "current_positions": 3937,
@@ -41,6 +41,9 @@
     "researchers": 3937,
     "verified_faculty_intervals": 6
   },
-  "metadata_sha256": "1b802c6a22828aa89eec6d183d68f5767e903a317e7126aa1acdd4ed3784ae81",
-  "rebound_after_patch": "2026-11-05 manual_verified_patch: lead-output fields only; career and department metadata not recomputed"
+  "metadata_sha256": "0b8a33f18fcb0054a84e787367bcaedab0f726c2299208a6c3d29b03e9ebd2f5",
+  "rebound_after_patch": [
+    "2026-11-05 manual_verified_patch (lead output) and manual_career_patch (2 evidence-backed pre-faculty segments with their career units)",
+    "2026-11-05 manual_namesake_patch: lead-output fields only"
+  ]
 }

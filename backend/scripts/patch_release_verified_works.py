@@ -195,7 +195,7 @@ EMPTY = {'total': 0, 'first_author': 0, 'corresponding_author': 0, 'impact_low':
          'impact_high': 0, 'impact_unknown': 0, 'impact_sum': 0.0, 'impact_known': 0, 'article_citations': 0}
 
 
-def add_lead_works(prof, roles, release_year):
+def add_lead_works(prof, roles, release_year, sign=1):
     """roles: [{year, author_position, is_corresponding, source{id,display_name,type}, cited_by_count, impact}].
     Merges into the published yearly/journals of prof (dict), rebuilding the year axis as
     build_release.py does. Returns the number of works added."""
@@ -208,24 +208,30 @@ def add_lead_works(prof, roles, release_year):
                               'impact_known': known,
                               'impact_sum': (y['mean_journal_2yr_citedness'] or 0.0) * known}
     journals = {j['journal']: {'n': j['lead_work_count'], 'm': j['openalex_2yr_mean_citedness']} for j in prof.get('journals') or []}
-    for r in roles:
+    for r in roles:          # sign=-1 removes works (namesake patch); counts never go below zero
         a = agg.setdefault(int(r['year']), dict(EMPTY))
-        a['total'] += 1
-        a['first_author'] += int(r['author_position'] == 'first')
-        a['corresponding_author'] += int(bool(r['is_corresponding']))
-        a[f"impact_{impact_band(r['impact'])}"] += 1
+        a['total'] += sign
+        a['first_author'] += sign * int(r['author_position'] == 'first')
+        a['corresponding_author'] += sign * int(bool(r['is_corresponding']))
+        a[f"impact_{impact_band(r['impact'])}"] += sign
         if r['impact'] is not None:
-            a['impact_sum'] += r['impact']
-            a['impact_known'] += 1
-        a['article_citations'] += int(r.get('cited_by_count') or 0)
+            a['impact_sum'] += sign * r['impact']
+            a['impact_known'] += sign
+        a['article_citations'] = max(0, a['article_citations'] + sign * int(r.get('cited_by_count') or 0))
+        if min(a[k] for k in ('total', 'first_author', 'corresponding_author', 'impact_known')) < 0:
+            raise ValueError(f"removing a work not counted in {r['year']}")
         name = r['source'].get('display_name') or r['source'].get('id')
         if name:
             j = journals.setdefault(name, {'n': 0, 'm': None})
-            j['n'] += 1
-            if j['m'] is None and r['impact'] is not None:
+            j['n'] += sign
+            if j['m'] is None and r['impact'] is not None and sign > 0:
                 j['m'] = round(r['impact'], 3)
+            if j['n'] <= 0:
+                del journals[name]
+    agg = {y: v for y, v in agg.items() if v['total'] > 0}
     if not agg:
-        return 0
+        prof['yearly'], prof['lead_work_count'], prof['journals'] = [], 0, []
+        return len(roles)
     doctoral = [c['start_year'] for c in prof['career'] if c['stage'] == 'doctoral' and c.get('start_year')]
     start = min([min(agg)] + doctoral)
     prof['yearly'] = []
@@ -245,7 +251,7 @@ def add_lead_works(prof, roles, release_year):
 
 
 # ---------------------------------------------------------------- research areas
-def add_areas(areas, pid, works):
+def add_areas(areas, pid, works, sign=1):
     names = {k: {(row[0] if isinstance(row, list) else row): i for i, row in enumerate(areas[k])}
              for k in ('domains', 'fields', 'subfields', 'topics')}
 
@@ -266,10 +272,10 @@ def add_areas(areas, pid, works):
         s = idx('subfields', (pt.get('subfield') or {}).get('display_name'), f)
         t = idx('topics', pt.get('display_name'), s)
         for k, i in (('f', f), ('s', s), ('t', t)):
-            counts[k][i] = counts[k].get(i, 0) + 1
-        r['n'] += 1
+            counts[k][i] = max(0, counts[k].get(i, 0) + sign)
+        r['n'] = max(0, r['n'] + sign)
     for k in ('f', 's', 't'):
-        r[k] = sorted(([i, n] for i, n in counts[k].items()), key=lambda x: (-x[1], x[0]))
+        r[k] = sorted(([i, n] for i, n in counts[k].items() if n > 0), key=lambda x: (-x[1], x[0]))
 
 
 def rebind_constellation(root, patch):
@@ -279,8 +285,11 @@ def rebind_constellation(root, patch):
     path = root / 'public' / 'data' / 'constellation_metadata.manifest.json'
     manifest = json.loads(path.read_text())
     manifest['public_data_sha256'] = hashlib.sha256((root / 'public' / 'data' / 'dashboard.json').read_bytes()).hexdigest()
-    manifest['rebound_after_patch'] = (f"{patch['date']} manual_verified_patch: lead-output fields only; "
-                                       "career and department metadata not recomputed")
+    note = patch.get('note') or (f"{patch['date']} manual_verified_patch: lead-output fields only; "
+                                 "career and department metadata not recomputed")
+    notes = manifest.get('rebound_after_patch') or []
+    notes = [notes] if isinstance(notes, str) else notes
+    manifest['rebound_after_patch'] = notes + ([note] if note not in notes else [])
     path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
 
 
@@ -291,6 +300,8 @@ def main():
     p.add_argument('--public-ids', required=True, help='JSON {professor_uid: P-…}')
     p.add_argument('--year', default='2026')
     p.add_argument('--dry-run', action='store_true')
+    p.add_argument('--refresh-topics', action='store_true',
+                   help='rebuild the topic entries of the listed researchers even without new works (after a career patch)')
     a = p.parse_args()
     key, password = os.environ.get('OPENALEX_API_KEY'), os.environ.get('NAMES_PASSWORD')
     if not key or not password:
@@ -374,7 +385,7 @@ def main():
                               'is_corresponding': mine[0].get('is_corresponding'), 'source': src,
                               'cited_by_count': w.get('cited_by_count'), 'source_id': src.get('id')})
         rep.update({'new_papers': len(new), 'new_lead_works': len(roles), 'not_added': dict(why)})
-        if not new:
+        if not new and not a.refresh_topics:
             continue
 
         # 3. topics
@@ -429,6 +440,9 @@ def main():
             (topics_dir / 'info' / f'{pid}.json').write_text(json.dumps(info, ensure_ascii=False, separators=(',', ':')))
             write_titles(topics_dir, aes, aad, pid, private)
 
+        if not new:          # --refresh-topics only (e.g. after a career patch changed the eras)
+            continue
+
         # 4. lead output
         srcs = oa.sources([r['source_id'] for r in roles])
         for r in roles:
@@ -448,7 +462,11 @@ def main():
     if a.dry_run:
         return
     if not added_papers:
-        print('nothing to add (already published); no file written')
+        if a.refresh_topics:
+            (topics_dir / 'index.json').write_text(json.dumps(index, ensure_ascii=False, separators=(',', ':')))
+            print('topics refreshed for the listed researchers')
+        else:
+            print('nothing to add (already published); no file written')
         return
 
     patch = {'date': str(date.today()), 'researchers': sum(1 for r in report['researchers'].values() if r.get('new_papers')),

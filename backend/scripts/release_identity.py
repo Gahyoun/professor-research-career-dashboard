@@ -3,7 +3,7 @@
 An author alias identifies a candidate person, not every paper in that profile.
 This gate does not change KOAD classifications or the private source database.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import sqlite3
 from pathlib import Path
 
@@ -34,16 +34,29 @@ EXISTS (
     AND identity_source.identity_decision='keep'
     AND identity_koad.decision='true_paper'
 )
+AND NOT EXISTS (
+  SELECT 1 FROM temp.career_inconsistent career_rule
+  WHERE career_rule.professor_uid={alias}.professor_uid AND career_rule.work_id={alias}.work_id
+)
 """
+# temp.career_inconsistent is created by career_consistency.prepare(connection) (called by
+# PublicationIdentityGate.from_connection and by every builder that uses this predicate).
 
 
 @dataclass
 class PublicationIdentityGate:
     decisions: dict[tuple[str, str], str]
     kept_source_pairs: set[tuple[str, str]]
+    career_inconsistent: dict = field(default_factory=dict)
 
     @classmethod
     def from_connection(cls, connection: sqlite3.Connection):
+        from career_consistency import prepare
+        prepare(connection)
+        career_inconsistent = {
+            (row[0], row[1]): row[2]
+            for row in connection.execute('SELECT professor_uid,work_id,reason FROM temp.career_inconsistent')
+        }
         decisions = {
             (row[0], row[1]): row[2]
             for row in connection.execute(
@@ -57,7 +70,7 @@ class PublicationIdentityGate:
                 "WHERE identity_decision='keep'"
             )
         }
-        return cls(decisions, kept_source_pairs)
+        return cls(decisions, kept_source_pairs, career_inconsistent)
 
     def exclusion_reason(self, professor_uid, work_id):
         pair = (professor_uid, work_id)
@@ -68,7 +81,7 @@ class PublicationIdentityGate:
             return 'namesake_paper' if decision == 'namesake_paper' else 'unresolved_koad_decision'
         if pair not in self.kept_source_pairs:
             return 'missing_kept_source_evidence'
-        return None
+        return self.career_inconsistent.get(pair)
 
     @property
     def unclassified_kept_source_count(self):

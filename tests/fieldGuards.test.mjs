@@ -158,9 +158,10 @@ test('the full release has no cross-field lifetime membership and preserves the 
   // resolves three doctoral department labels and adds a net three postdoc profiles.
   // Inferred postdoc semesters overlapping same-unit faculty roster observations
   // are removed before matching; the current cohort and total connectivity stay
-  // unchanged, and the final postdoc group count remains 1782.
+  // unchanged, and the final postdoc group count remains 1782. The 2026-11-05 career patch adds
+  // two evidence-backed postdoc segments to one researcher who had none: 2133 -> 2134 profiles.
   assert.deepEqual({ total: index.ids.length, connected, noEvidence, unmatched, counts }, {
     total: 3937, connected: 3299, noEvidence: 610, unmatched: 28,
-    counts: { doctoral: [804, 427], postdoc: [2133, 1782], first_faculty: [1, 0], current: [3241, 3240] },
+    counts: { doctoral: [804, 427], postdoc: [2134, 1782], first_faculty: [1, 0], current: [3241, 3240] },
   });
 });

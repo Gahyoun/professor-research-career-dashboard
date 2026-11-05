@@ -22,6 +22,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from release_identity import IDENTITY_FILTER_VERSION, STRICT_IDENTITY_PREDICATE, decision_database_path
+from career_consistency import prepare as prepare_career_rule  # noqa: E402
 
 SCHEMA = 'kstem-research-areas/2'
 TOP = {'f': 3, 's': 6, 't': 8}
@@ -90,6 +91,7 @@ def build(source_db, salt, public_ids, release_year, identity_decisions=None):
     if not decisions.exists():
         raise SystemExit(f'KOAD decision database is required: {decisions}')
     con.execute('ATTACH DATABASE ? AS koad', (f'file:{decisions.resolve()}?mode=ro&immutable=1',))
+    prepare_career_rule(con)   # temp.career_inconsistent used by STRICT_IDENTITY_PREDICATE
     cache = {}
 
     def public_id(uid):
