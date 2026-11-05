@@ -4,8 +4,46 @@
 놓고** 커뮤니티를 찾는다. 같은 비교를 depth 1, 2, 3에서 반복해 커뮤니티가 얼마나 바뀌는지
 잰다. 참고문헌(refs)과 피인용(cites) 두 채널은 따로 돌리고 섞지 않는다.
 
+## 현재 결정 (2026-11-05): depth 1, 위아래, 고정 seed Louvain
+
+depth 2·3은 규모 대비 이득이 작다고 보고 쓰지 않는다. 쓰는 것은 **참고문헌(위) + 피인용(아래)
+depth 1** 하나다. 전체 교수 논문을 한 망에 놓고 **Louvain을 seed 고정으로 한 번** 돌린다.
+
+```bash
+DB=professor_affiliation_timeline_through_2026.sqlite
+S=backend/topics/depth
+# 위: 대시보드 토픽 빌드가 이미 받아 둔 참고문헌을 재사용하고, 빠진 것만 API로 받는다
+python3 -I $S/citation_layers.py import-cache --db $DB --channel refs --cache <build_release_topics --cache 경로>
+python3 -I $S/citation_layers.py fetch --db $DB --channel refs --layer 1 --env-file ~/.openalex.env
+# 아래: 출판 후 3년 안의 피인용. 창이 덜 닫힌 최근 논문도 지금까지의 피인용으로 포함한다
+python3 -I $S/citation_layers.py fetch --db $DB --channel cites --layer 1 --include-open-windows --env-file ~/.openalex.env
+# 분할
+python3 -I $S/faculty_louvain.py --db $DB --out runs/louvain                    # 위+아래
+python3 -I $S/faculty_louvain.py --db $DB --out runs/louvain_refs --channels refs   # 비교용
+```
+
+`faculty_louvain.py` 는 대시보드의 연구자별 규칙(`build_release_topics.py`)을 전체 교수에 한 번
+적용한다. 규칙은 공유 이웃 c_ij ≥ 2, 가중치 Salton 코사인 c_ij/√(|N_i||N_j|), Louvain
+resolution 1.05, seed 4다. 이웃 N은 참고문헌과 피인용의 합집합이다. 같은 논문이라도 "인용한
+논문"과 "인용해 준 논문"은 다른 특징으로 둔다. Louvain은 igraph multilevel(C 구현)로 돌린다.
+seed는 python-igraph가 쓰는 Python `random` 에 고정하고, 같은 seed로 두 번 돌려 결과가 같은지
+`summary.json` 의 `rerun_identical` 에 기록한다. `--backend networkx` 는 대시보드와 같은
+구현이지만 전수에서는 느리다.
+
+- **인계서 §4와의 관계.** 저장은 두 채널을 그대로 분리한다(`cd_refs`, `cd_citers`). 합치는 것은
+  분할 단계뿐이다. 공유 이웃 중 각 채널의 비중과 한 채널만으로 생긴 링크 수를 `summary.json` 에
+  남긴다. 위·아래 분할과 `--channels refs` 분할을 같이 보면 피인용이 바꾼 부분이 드러난다.
+- **고정 seed는 하나의 답일 뿐이다.** `--stability-seeds` 로 다른 seed와의 AMI를 함께 적는다.
+- **최근 논문은 아래 이웃이 적다.** 노출 기간이 짧기 때문이다. 코사인이 크기를 정규화하지만,
+  최근 논문의 소속 커뮤니티는 주로 참고문헌이 정한다.
+- 합성 데이터 3만 편(참고문헌만)에서 8초, 0.2 GB였다. 실데이터는 고전 허브 때문에 링크가 훨씬
+  많을 수 있다. 메모리가 모자라면 `--chunk` 를 줄인다.
+
+아래 depth 비교 도구(`depth_sweep.py`)는 depth를 다시 검토할 때를 위해 남겨 둔다.
+
 | 파일 | 역할 |
 | --- | --- |
+| `faculty_louvain.py` | 위+아래 depth 1, 전체 교수 고정 seed Louvain |
 | `citation_layers.py` | OpenAlex 층별 수집기. 재개 가능. `refs` layer 1이 인계서의 T1이다 |
 | `depth_sweep.py` | `run`: 한 채널에서 깊이 비교 / `compare`: 두 채널의 교차 비교 |
 | `cdcommon.py` | id 정규화, 저장 스키마 |

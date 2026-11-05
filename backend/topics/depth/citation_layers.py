@@ -15,6 +15,7 @@ The two channels go to separate tables (cd_refs, cd_citers) and are never mixed.
   python3 -I citation_layers.py plan   --db MAIN.sqlite --channel refs --layer 1
   python3 -I citation_layers.py fetch  --db MAIN.sqlite --channel refs --layer 1 --env-file .env
   python3 -I citation_layers.py status --db MAIN.sqlite --channel refs
+  python3 -I citation_layers.py import-cache --db MAIN.sqlite --channel refs --cache TOPICS_CACHE
 
 --store puts the collected tables in a separate SQLite file (default: the main DB itself).
 The API key is read from $OPENALEX_API_KEY or OPENALEX_API_KEY=… in --env-file and is never
@@ -420,10 +421,39 @@ def cmd_status(a):
               f"{a.last_complete_year}): {row[0]:,} of {len(focal):,}")
 
 
+def cmd_import_cache(a):
+    """Reuse the reference lists build_release_topics.py already fetched (its --cache:
+    b*.jsonl.gz lines {"id": "W…", "refs": [...], "cited": n}) as refs layer 1, so T1 only
+    has to fetch what that cache lacks. Only works in the focal set are imported."""
+    import gzip
+    _, store, focal, _, _, note = setup(a)
+    files = sorted(Path(a.cache).glob("b*.jsonl.gz"))
+    if not files:
+        sys.exit(f"no b*.jsonl.gz in {a.cache}")
+    got, skipped = {}, 0
+    for f in files:
+        with gzip.open(f, "rt", encoding="utf-8") as fh:
+            for line in fh:
+                w = json.loads(line)
+                n = wid(w.get("id"))
+                if n in focal:
+                    got[n] = (None, [r for r in map(wid, w.get("refs") or []) if r], w.get("cited"))
+                else:
+                    skipped += 1
+    already = {r[0] for r in store.execute("SELECT work FROM cd_log WHERE channel = 'refs'")}
+    todo = {k: v for k, v in got.items() if k not in already}
+    write_refs(store, [(k, 0, None) for k in todo], todo, [])
+    print(f"cache {len(files):,} files: {len(got):,} focal works with reference lists "
+          f"({len(todo):,} new, {len(got) - len(todo):,} already logged); {skipped:,} non-focal lines skipped; "
+          f"focal works still without refs: {len(focal) - len(already | set(got)):,}")
+    if note:
+        print("!", note)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("plan", "fetch", "status"):
+    for name in ("plan", "fetch", "status", "import-cache"):
         q = sub.add_parser(name)
         q.add_argument("--db", required=True, help="main SQLite (work_authorship_evidence)")
         q.add_argument("--store", help="SQLite for collected tables (default: --db)")
@@ -432,7 +462,11 @@ def main(argv=None):
         q.add_argument("--window", type=int, default=3, help="cites: years after focal publication")
         q.add_argument("--last-complete-year", type=int, default=2025,
                        help="cites: last calendar year OpenAlex holds completely")
-        if name != "status":
+        q.add_argument("--include-open-windows", action="store_true",
+                       help="cites: also works whose window has not closed (citers so far, up to year + W)")
+        if name == "import-cache":
+            q.add_argument("--cache", required=True, help="build_release_topics.py --cache directory")
+        if name in ("plan", "fetch"):
             q.add_argument("--layer", type=int, required=True)
             q.add_argument("--batch", type=int, help="ids per request (refs 100, cites 50)")
         if name == "plan":
@@ -446,7 +480,9 @@ def main(argv=None):
     a = p.parse_args(argv)
     if getattr(a, "layer", 1) < 1:
         p.error("--layer starts at 1")
-    {"plan": cmd_plan, "fetch": cmd_fetch, "status": cmd_status}[a.cmd](a)
+    if a.include_open_windows:
+        a.last_complete_year = 10 ** 4
+    {"plan": cmd_plan, "fetch": cmd_fetch, "status": cmd_status, "import-cache": cmd_import_cache}[a.cmd](a)
     for con in OPEN:
         con.close()
     OPEN.clear()

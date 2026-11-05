@@ -4,6 +4,7 @@ A synthetic citation world with planted fields is served by a local fake OpenAle
 with citation_layers.py, and analysed with depth_sweep.py.
 """
 import contextlib
+import csv
 import io
 import json
 import os
@@ -27,6 +28,7 @@ try:
     import scipy.sparse as sp  # noqa: F401
     import sklearn  # noqa: F401
     import depth_sweep as ds  # noqa: E402
+    import faculty_louvain as fl  # noqa: E402
     HAVE_SCI = True
 except ImportError:
     HAVE_SCI = False
@@ -390,6 +392,86 @@ class SweepEndToEnd(unittest.TestCase):
         cmp = json.loads((Path(out) / "compare.json").read_text())
         self.assertGreater(cmp["common_works"], 50)
         self.assertIn("K4_d1 vs K4_d1", cmp["ami"])
+
+
+@unittest.skipUnless(HAVE_SCI, "scipy/scikit-learn not installed")
+class FacultyLouvainTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.db = str(Path(cls.tmp.name) / "main.sqlite")
+        cls.world = make_world()
+        write_main_db(cls.db, cls.world)
+        with serve(FakeOpenAlex(cls.world)) as base:
+            collect(cls.db, base, "refs", [1])
+            collect(cls.db, base, "cites", [1], ["--include-open-windows", "--batch", "25"])
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def run_fl(self, name, *extra):
+        out = Path(self.tmp.name) / name
+        quiet(fl.main, ["--db", self.db, "--out", str(out), "--stability-seeds", "1,2",
+                        "--labels-sql", "SELECT work_id, subfield_id FROM work_authorship_evidence", *extra])
+        rows = list(csv.DictReader(open(out / "work_communities.csv")))
+        return json.loads((out / "summary.json").read_text()), rows, out
+
+    def test_open_windows_cover_every_focal_work(self):
+        con = sqlite3.connect(self.db)
+        focal = {w for _, w in self.world["links"]}
+        logged = {r[0] for r in con.execute("SELECT work FROM cd_log WHERE channel='cites'")}
+        self.assertEqual(logged, focal)
+        late = [w for w in focal if self.world["focal"][w] + 3 > 2025]
+        self.assertTrue(late)                                      # recent works included too
+
+    def test_both_directions_fixed_seed(self):
+        s, rows, out = self.run_fl("both")
+        self.assertTrue(s["rerun_identical"])
+        self.assertAlmostEqual(sum(s["shared_neighbour_share_by_channel"].values()), 1.0, places=5)
+        self.assertEqual(set(s["shared_neighbour_share_by_channel"]), {"refs", "cites"})
+        from sklearn.metrics import adjusted_mutual_info_score as ami
+        field = [self.world["field"][int(r["work_id"][1:])] for r in rows if r["community"] != "-1"]
+        com = [int(r["community"]) for r in rows if r["community"] != "-1"]
+        self.assertGreater(ami(field, com), 0.8)                   # planted fields recovered
+        s2, rows2, _ = self.run_fl("both_again")
+        self.assertEqual([r["community"] for r in rows], [r["community"] for r in rows2])   # same seed, same file
+        self.assertIn("전체 교수 Louvain", (out / "report.md").read_text())
+        self.assertTrue((out / "professor_communities.csv").read_text().startswith("professor_uid,community,n_works"))
+
+    def test_single_channel_and_networkx_backend(self):
+        s, rows, _ = self.run_fl("refs_only", "--channels", "refs", "--backend", "networkx")
+        self.assertEqual(list(s["shared_neighbour_share_by_channel"]), ["refs"])
+        self.assertGreater(s["communities"], 1)
+
+    def test_refuses_uncollected_channel(self):
+        db = str(Path(self.tmp.name) / "empty.sqlite")
+        write_main_db(db, self.world)
+        cdcommon.open_store(db)[0].close()
+        with self.assertRaises(SystemExit):
+            quiet(fl.main, ["--db", db, "--out", str(Path(self.tmp.name) / "x")])
+
+
+class ImportCacheTests(unittest.TestCase):
+    def test_topics_cache_becomes_refs_layer_1(self):
+        import gzip
+        with tempfile.TemporaryDirectory() as tmp:
+            db = str(Path(tmp) / "main.sqlite")
+            world = make_world(per_field=20, profs_per_field=2)
+            write_main_db(db, world)
+            focal = sorted({w for _, w in world["links"]})
+            cache = Path(tmp) / "cache"
+            cache.mkdir()
+            with gzip.open(cache / "b00000.jsonl.gz", "wt") as fh:
+                for w in focal[:-3] + [123]:                       # 3 focal missing, 1 non-focal
+                    fh.write(json.dumps({"id": f"W{w}", "refs": [f"W{r}" for r in world["refs"].get(w, [])], "cited": 1}) + "\n")
+            out = quiet(cl.main, ["import-cache", "--db", db, "--channel", "refs", "--cache", str(cache)])
+            self.assertIn("focal works still without refs: 3", out)
+            con = sqlite3.connect(db)
+            self.assertEqual(con.execute("SELECT COUNT(*) FROM cd_log WHERE channel='refs' AND layer=1").fetchone()[0], len(focal) - 3)
+            with serve(FakeOpenAlex(world)) as base:
+                out = quiet(cl.main, ["fetch", "--db", db, "--channel", "refs", "--layer", "1", "--no-key", "--api-base", base])
+            self.assertIn("3 pending nodes", out)
 
 
 if __name__ == "__main__":
