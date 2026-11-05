@@ -54,10 +54,16 @@ AUDIT = '''CREATE TABLE IF NOT EXISTS manual_work_verification_audit(
   previous_value TEXT, new_value TEXT NOT NULL, source_json TEXT NOT NULL, recorded_at TEXT NOT NULL)'''
 
 
+def read_json(path):
+    path = Path(path)
+    raw = gzip.open(path, 'rt', encoding='utf-8').read() if path.suffix == '.gz' else path.read_text(encoding='utf-8')
+    return json.loads(raw)
+
+
 def load_rejected(path):
     """Optional per spec: "rejected_works": [{"work_id", "note"}] — works a person confirmed to be a
     namesake's; their KOAD decision becomes namesake_paper (audited)."""
-    data = json.loads(Path(path).read_text(encoding='utf-8'))
+    data = read_json(path)
     specs = data if isinstance(data, list) else [data]
     return [{'uid': s['professor_uid'], 'work_id': entity_id(w['work_id'], 'W'), 'source': s.get('source'), 'note': w.get('note')}
             for s in specs for w in s.get('rejected_works') or []]
@@ -66,7 +72,7 @@ def load_rejected(path):
 def load_verified(path):
     """One researcher spec ({professor_uid, source, works}) or a list of them -> flat items
     [{uid, work_id, author_id, source}]. A spec may hold only rejected_works."""
-    data = json.loads(Path(path).read_text(encoding='utf-8'))
+    data = read_json(path)
     specs = data if isinstance(data, list) else [data]
     items, seen = [], set()
     for spec in specs:

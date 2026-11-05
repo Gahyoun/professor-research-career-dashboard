@@ -160,8 +160,10 @@ test('the full release has no cross-field lifetime membership and preserves the 
   // are removed before matching; the current cohort and total connectivity stay
   // unchanged, and the final postdoc group count remains 1782. The 2026-11-05 career patch adds
   // two evidence-backed postdoc segments to one researcher who had none: 2133 -> 2134 profiles.
+  // The automatic career augmentation (62 postdoc segments from >= 2 published works at an
+  // institution between the PhD and the first faculty role) adds 41 postdoc profiles (2175).
   assert.deepEqual({ total: index.ids.length, connected, noEvidence, unmatched, counts }, {
-    total: 3937, connected: 3299, noEvidence: 610, unmatched: 28,
-    counts: { doctoral: [804, 427], postdoc: [2134, 1782], first_faculty: [1, 0], current: [3241, 3240] },
+    total: 3937, connected: 3321, noEvidence: 577, unmatched: 39,
+    counts: { doctoral: [804, 427], postdoc: [2175, 1811], first_faculty: [1, 0], current: [3241, 3240] },
   });
 });
