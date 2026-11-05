@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 from release_identity import (
     IDENTITY_FILTER_VERSION, STRICT_IDENTITY_PREDICATE, decision_database_path,
 )
+from career_consistency import prepare as prepare_career_rule  # noqa: E402
 
 COUNTRIES = {
     'korea': 'KR', 'south korea': 'KR', 'republic of korea': 'KR',
@@ -201,6 +202,7 @@ def run(args):
         "SELECT 1 FROM koad.sqlite_master WHERE type='table' AND name='work_decision'"
     ).fetchone():
         raise ValueError('KOAD work decisions are unavailable; no output written.')
+    prepare_career_rule(connection)   # temp.career_inconsistent used by STRICT_IDENTITY_PREDICATE
 
     def anonymous_id(uid):
         digest = hmac.new(salt, uid.encode(), hashlib.sha256).digest()
