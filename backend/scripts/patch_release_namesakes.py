@@ -86,8 +86,10 @@ def main():
             works.append({'id': wid, 'institutions': [i.get('display_name') for i in mine[0].get('institutions') or []],
                           'coauthors': [short((x.get('author') or {}).get('id')) for x in w['authorships']
                                         if (x.get('author') or {}).get('id') and x is not mine[0]],
-                          'subfield': ((w.get('primary_topic') or {}).get('subfield') or {}).get('display_name')})
-        drops = classify(works, [c['institution'] for c in prof['career']])
+                          'subfield': ((w.get('primary_topic') or {}).get('subfield') or {}).get('display_name'),
+                          'field': ((w.get('primary_topic') or {}).get('field') or {}).get('display_name'),
+                          'domain': ((w.get('primary_topic') or {}).get('domain') or {}).get('display_name')})
+        drops = classify(works, [c['institution'] for c in prof['career']], prof['subject'])
         rep = report[pid] = {'published': len(rows), 'resolved': len(resolved), 'unresolved_kept': len(unresolved),
                              'dropped': [{'year': by_id[w][0]['year'], 'reason': why, 'title': by_id[w][0]['title'][:80],
                                           'institutions': next(x['institutions'] for x in works if x['id'] == w)}

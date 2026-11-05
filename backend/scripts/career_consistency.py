@@ -1,31 +1,32 @@
 """Career-consistency namesake rule, shared by the private build and the public patch.
 
-An OpenAlex author ID can absorb a namesake's papers (observed 2026-11-05: a network
-scientist's ID also held food-science papers by a namesake, with no or unrelated
-affiliations; even a coauthor ID was shared by two people of the same common name). KOAD
-keeps such papers when the ID itself looks right. This rule judges each published
-(researcher, work) pair against the researcher's own career:
+An OpenAlex author ID can absorb a namesake's papers (2026-11-05: a network scientist's ID
+held food-science papers; a coauthor ID was even shared by two people of a common name).
+Calibrated on all 255,856 published papers (2026-11-05): a first rule that dropped any work
+without a career institution would have removed 17,030 papers of 2,098 researchers, many of
+them genuine (visits, joint institutes, large collaborations). This rule is conservative:
 
-  anchor     the authorship's institution matches an institution of the researcher's career
-             (doctoral, postdoc, faculty) — the work is consistent.
-  A non-anchor work is
-    kept     if it shares >= 2 coauthor IDs with the anchor works (one shared coauthor is not
-             enough: common names merge in OpenAlex too). Visits abroad pass here;
-    dropped  'career_institution_mismatch' if its authorship names institutions, none of
-             them in the career;
-    dropped  'career_coauthor_mismatch' if it names no institution, has coauthors, and shares
-             none of them with the anchor works;
-    dropped  'career_field_mismatch' if it names no institution, shares one coauthor, and its
-             OpenAlex subfield is not among the anchor works' subfields;
-    kept     otherwise (not enough evidence: solo papers, one shared coauthor in a known subfield).
-The rule is not applied to researchers with fewer than MIN_ANCHORS anchor works (no basis).
+  anchor      the authorship's institution matches a career institution (doctoral, postdoc,
+              faculty); anchors define the researcher's fields, subfields and coauthors.
+  A non-anchor work is KEPT when
+    * its OpenAlex domain is inside the researcher's home domains (HOME[subject]), or
+    * it shares >= 2 coauthor IDs with the anchor works.
+  Otherwise it is DROPPED when
+    * it shares exactly one coauthor and its field is absent from the anchors
+      ('career_field_mismatch'), or
+    * it shares none, has coauthors, and its subfield is absent from the anchors
+      ('career_subfield_mismatch').
+  Researchers with fewer than MIN_ANCHORS anchor works are not judged.
+On the published release this drops 1,083 papers of 268 researchers.
 """
 import json
 import re
 import unicodedata
 
 MIN_ANCHORS = 3
-REASONS = ('career_institution_mismatch', 'career_coauthor_mismatch', 'career_field_mismatch')
+REASONS = ('career_field_mismatch', 'career_subfield_mismatch')
+HOME = {'physics': {'Physical Sciences'}, 'mathematics': {'Physical Sciences'},
+        'chemistry': {'Physical Sciences', 'Life Sciences'}, 'biology': {'Life Sciences', 'Health Sciences'}}
 
 
 def norm_institution(name):
@@ -36,33 +37,35 @@ def norm_institution(name):
     return re.sub(r'[^a-z0-9]+', '', s)
 
 
-def classify(works, career_institutions, min_anchors=MIN_ANCHORS):
-    """works: [{'id', 'institutions': [names or keys], 'coauthors': [ids], 'subfield': str|None}]
-    career_institutions: names or keys of the researcher's career units.
+def classify(works, career_institutions, subject=None, min_anchors=MIN_ANCHORS):
+    """works: [{'id', 'institutions': [names or keys], 'coauthors': [ids], 'field', 'subfield', 'domain'}]
+    career_institutions: names or keys of the researcher's career units; subject selects HOME.
     Returns {work_id: reason} for dropped works only."""
     career = {norm_institution(c) for c in career_institutions if c}
     career.discard('')
+    home = HOME.get(subject, set())
     anchors, rest = [], []
     for w in works:
         inst = {norm_institution(i) for i in w.get('institutions') or [] if i}
         inst.discard('')
-        (anchors if inst & career else rest).append((w, inst))
+        (anchors if inst & career else rest).append(w)
     if len(anchors) < min_anchors:
         return {}
-    anchor_coauthors = {c for w, _ in anchors for c in w.get('coauthors') or [] if c}
-    anchor_subfields = {w.get('subfield') for w, _ in anchors if w.get('subfield')}
+    anchor_coauthors = {c for w in anchors for c in w.get('coauthors') or [] if c}
+    anchor_fields = {w.get('field') for w in anchors if w.get('field')}
+    anchor_subfields = {w.get('subfield') for w in anchors if w.get('subfield')}
     out = {}
-    for w, inst in rest:
+    for w in rest:
+        if not w.get('domain') or w['domain'] in home:
+            continue
         coauthors = {c for c in w.get('coauthors') or [] if c}
         shared = len(coauthors & anchor_coauthors)
         if shared >= 2:
             continue
-        if inst:
-            out[w['id']] = 'career_institution_mismatch'
-        elif coauthors and shared == 0:
-            out[w['id']] = 'career_coauthor_mismatch'
-        elif shared == 1 and w.get('subfield') and w['subfield'] not in anchor_subfields:
+        if shared == 1 and w.get('field') and w['field'] not in anchor_fields:
             out[w['id']] = 'career_field_mismatch'
+        elif shared == 0 and coauthors and w.get('subfield') and w['subfield'] not in anchor_subfields:
+            out[w['id']] = 'career_subfield_mismatch'
     return out
 
 
@@ -98,16 +101,16 @@ def prepare(con):
                                        f"{col('career_positions_v2', 'institution_name')} FROM career_positions_v2"):
         career.setdefault(uid, set()).update(keys(unit, name))
     works = {}
-    co_col, field_col = col('work_authorship_evidence', 'coauthor_ids_json'), col('work_authorship_evidence', 'subfield_name')
-    for uid, wid, coauthors, field in con.execute(f'''
-        SELECT w.professor_uid, w.work_id, {'w.' + co_col if co_col != 'NULL' else 'NULL'}, {'w.' + field_col if field_col != 'NULL' else 'NULL'}
+    q = lambda c: 'w.' + c if col('work_authorship_evidence', c) != 'NULL' else 'NULL'
+    for uid, wid, coauthors, field, subfield, domain in con.execute(f'''
+        SELECT w.professor_uid, w.work_id, {q('coauthor_ids_json')}, {q('field_name')}, {q('subfield_name')}, {q('domain_name')}
         FROM work_authorship_evidence w JOIN koad.work_decision k USING(professor_uid, work_id)
         WHERE w.identity_decision='keep' AND k.decision='true_paper' '''):
         try:
             co = json.loads(coauthors or '[]')
         except ValueError:
             co = []
-        works[(uid, wid)] = {'id': wid, 'institutions': [], 'coauthors': co, 'subfield': field}
+        works[(uid, wid)] = {'id': wid, 'institutions': [], 'coauthors': co, 'field': field, 'subfield': subfield, 'domain': domain}
     for uid, wid, unit, name in con.execute(f"SELECT professor_uid, work_id, {col('raw_affiliation_units', 'institution_unit_id')}, "
                                             f"{col('raw_affiliation_units', 'institution_name')} FROM raw_affiliation_units"):
         w = works.get((uid, wid))
@@ -116,7 +119,8 @@ def prepare(con):
     by_uid = {}
     for (uid, _), w in works.items():
         by_uid.setdefault(uid, []).append(w)
+    subjects = dict(con.execute(f"SELECT professor_uid, {col('professors', 'subject')} FROM professors")) if 'professors' in have else {}
     rows = [(uid, wid, reason) for uid, ws in by_uid.items()
-            for wid, reason in classify(ws, career.get(uid, ())).items()]
+            for wid, reason in classify(ws, career.get(uid, ()), subjects.get(uid)).items()]
     con.executemany('INSERT OR REPLACE INTO temp.career_inconsistent VALUES (?,?,?)', rows)
     return len(rows)

@@ -54,19 +54,28 @@ AUDIT = '''CREATE TABLE IF NOT EXISTS manual_work_verification_audit(
   previous_value TEXT, new_value TEXT NOT NULL, source_json TEXT NOT NULL, recorded_at TEXT NOT NULL)'''
 
 
+def load_rejected(path):
+    """Optional per spec: "rejected_works": [{"work_id", "note"}] — works a person confirmed to be a
+    namesake's; their KOAD decision becomes namesake_paper (audited)."""
+    data = json.loads(Path(path).read_text(encoding='utf-8'))
+    specs = data if isinstance(data, list) else [data]
+    return [{'uid': s['professor_uid'], 'work_id': entity_id(w['work_id'], 'W'), 'source': s.get('source'), 'note': w.get('note')}
+            for s in specs for w in s.get('rejected_works') or []]
+
+
 def load_verified(path):
     """One researcher spec ({professor_uid, source, works}) or a list of them -> flat items
-    [{uid, work_id, author_id, source}]."""
+    [{uid, work_id, author_id, source}]. A spec may hold only rejected_works."""
     data = json.loads(Path(path).read_text(encoding='utf-8'))
     specs = data if isinstance(data, list) else [data]
     items, seen = [], set()
     for spec in specs:
         uid = spec.get('professor_uid')
-        if not uid or not isinstance(spec.get('works'), list) or not spec['works']:
-            raise ValueError('each verified spec needs professor_uid and a nonempty works list')
+        if not uid or not isinstance(spec.get('works', []), list) or not (spec.get('works') or spec.get('rejected_works')):
+            raise ValueError('each verified spec needs professor_uid and works or rejected_works')
         if not spec.get('source'):
             raise ValueError(f'{uid}: a source (where the works were checked) is required')
-        for w in spec['works']:
+        for w in spec.get('works') or []:
             wid = entity_id(w['work_id'], 'W')
             if (uid, wid) in seen:
                 raise ValueError(f'duplicate work {wid} for {uid}')
@@ -208,6 +217,23 @@ def apply(source_db, decisions_db, verified, works_jsonl, out_dir, api_key=None)
             dec.execute('INSERT INTO manual_work_verification_audit VALUES(?,?,?,?,?,?,?)',
                         (uid, wid, 'work_decision.decision', ','.join(sorted({o[0] for o in old})) or None,
                          'true_paper', src_json, now))
+        report['decisions_set_namesake'] = 0
+        for r in load_rejected(verified):
+            if (r['uid'], r['work_id']) in {(i['uid'], i['work_id']) for i in items}:
+                raise ValueError(f"{r['work_id']} is both verified and rejected for {r['uid']}")
+            old = dec.execute('SELECT decision FROM work_decision WHERE professor_uid=? AND work_id=?', (r['uid'], r['work_id'])).fetchall()
+            if old and all(o[0] == 'namesake_paper' for o in old):
+                continue
+            if old:
+                dec.execute("UPDATE work_decision SET decision='namesake_paper' WHERE professor_uid=? AND work_id=?", (r['uid'], r['work_id']))
+            elif con.execute('SELECT 1 FROM work_authorship_evidence WHERE professor_uid=? AND work_id=?', (r['uid'], r['work_id'])).fetchone():
+                dec.execute('INSERT INTO work_decision(professor_uid,work_id,decision) VALUES(?,?,?)', (r['uid'], r['work_id'], 'namesake_paper'))
+            else:
+                continue
+            dec.execute('INSERT INTO manual_work_verification_audit VALUES(?,?,?,?,?,?,?)',
+                        (r['uid'], r['work_id'], 'work_decision.decision', ','.join(sorted({o[0] for o in old})) or None,
+                         'namesake_paper', json.dumps(r['source'] or {}, ensure_ascii=False, sort_keys=True), now))
+            report['decisions_set_namesake'] += 1
         con.commit()
         dec.commit()
     return report

@@ -218,8 +218,23 @@ def add_lead_works(prof, roles, release_year, sign=1):
             a['impact_sum'] += sign * r['impact']
             a['impact_known'] += sign
         a['article_citations'] = max(0, a['article_citations'] + sign * int(r.get('cited_by_count') or 0))
-        if min(a[k] for k in ('total', 'first_author', 'corresponding_author', 'impact_known')) < 0:
+        if a['total'] < 0:
             raise ValueError(f"removing a work not counted in {r['year']}")
+        if sign < 0:   # the published role/impact of a removed work may differ slightly: keep counters consistent
+            for k in ('first_author', 'corresponding_author', 'impact_known', 'impact_low', 'impact_medium', 'impact_high', 'impact_unknown'):
+                a[k] = max(0, a[k])
+            a['impact_sum'] = max(0.0, a['impact_sum']) if a['impact_known'] else 0.0
+            bands = ('impact_unknown', 'impact_low', 'impact_medium', 'impact_high')
+            excess = sum(a[k] for k in bands) - a['total']
+            for k in bands:
+                take = min(max(excess, 0), a[k])
+                a[k] -= take
+                excess -= take
+            if excess < 0:
+                a['impact_unknown'] -= excess
+            a['impact_known'] = min(a['impact_known'], a['total'] - a['impact_unknown'])
+            a['first_author'] = min(a['first_author'], a['total'])
+            a['corresponding_author'] = min(a['corresponding_author'], a['total'])
         name = r['source'].get('display_name') or r['source'].get('id')
         if name:
             j = journals.setdefault(name, {'n': 0, 'm': None})
@@ -321,6 +336,12 @@ def main():
     aes, aad = vault_key(topics_dir, password)
     oa = OpenAlex(key)
     report = {'researchers': {}, 'skipped_no_author_id': 0}
+    pending = {}
+
+    def flush():
+        for pid, (info, private) in pending.items():
+            (topics_dir / 'info' / f'{pid}.json').write_text(json.dumps(info, ensure_ascii=False, separators=(',', ':')))
+            write_titles(topics_dir, aes, aad, pid, private)
 
     by_uid = defaultdict(list)
     for it in items:
@@ -346,14 +367,18 @@ def main():
                                              w.get('publication_year') == r['year'], -len(w.get('authorships') or [])),
                        default=None)
             if best is None:
-                hits = oa.get('works', search=r['title'], **{'per-page': 5})['results']
+                try:
+                    hits = oa.get('works', search=r['title'][:200], **{'per-page': 5})['results']
+                except RuntimeError:          # a title the search endpoint rejects counts as unresolved
+                    hits = []
                 best = next((w for w in hits if norm_title(w.get('title')) == norm_title(r['title'])), None)
             if best is None:
                 unresolved.append(r['title'][:40])
                 continue
             current[short(best['id'])] = best
-        if unresolved:
-            sys.exit(f'{pid}: {len(unresolved)} published papers could not be resolved to OpenAlex; refusing to rebuild')
+        if unresolved:   # rebuilding topics would lose these papers: leave this researcher unchanged
+            rep['skipped'] = f'{len(unresolved)} published papers not resolved to OpenAlex'
+            continue
         rep['current_papers'] = len(current)
 
         # 2. new works
@@ -436,9 +461,7 @@ def main():
             index['researchers'][pos] = entry
         rep['topic_papers_after'] = len(papers)
         rep['topics_after'] = stats['topics']
-        if not a.dry_run:
-            (topics_dir / 'info' / f'{pid}.json').write_text(json.dumps(info, ensure_ascii=False, separators=(',', ':')))
-            write_titles(topics_dir, aes, aad, pid, private)
+        pending[pid] = (info, private)      # written together with index.json at the end
 
         if not new:          # --refresh-topics only (e.g. after a career patch changed the eras)
             continue
@@ -463,6 +486,7 @@ def main():
         return
     if not added_papers:
         if a.refresh_topics:
+            flush()
             (topics_dir / 'index.json').write_text(json.dumps(index, ensure_ascii=False, separators=(',', ':')))
             print('topics refreshed for the listed researchers')
         else:
@@ -480,6 +504,7 @@ def main():
         path.write_text(text)
     index.setdefault('method', {})['manual_patch'] = (f"{patch['date']}: {added_papers} verified papers added for "
                                                      f"{patch['researchers']} researchers; topic vectors folded into the shared space")
+    flush()
     (topics_dir / 'index.json').write_text(json.dumps(index, ensure_ascii=False, separators=(',', ':')))
     (ROOT / 'public' / 'data' / 'research_areas.json').write_text(json.dumps(areas, ensure_ascii=False, separators=(',', ':')))
 

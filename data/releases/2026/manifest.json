@@ -1,7 +1,7 @@
 {
   "release_year": 2026,
   "professor_count": 3937,
-  "lead_work_count": 112704,
+  "lead_work_count": 112396,
   "impact_metric": "OpenAlex source summary_stats.2yr_mean_citedness",
   "lead_definition": "OpenAlex author_position=first OR is_corresponding=true",
   "identity_filter": "KOAD career-aware same-person filter; source keep and an explicit true_paper decision for the same researcher and work are both required before bibliography, affiliation, career, yearly, and journal aggregation; publication_year>=phd_year-5 when PhD year is known",
@@ -34,7 +34,7 @@
   "same_institution_segment_merge_rule": "same researcher, stage, and institution with at most two missing half-years is coalesced",
   "merged_career_segment_count": 1028,
   "names_encrypted": true,
-  "public_db_bytes": 19111936,
+  "public_db_bytes": 19091456,
   "sqlite_integrity": "ok",
   "foreign_key_errors": 0,
   "plaintext_names_in_public_assets": false,
@@ -57,5 +57,12 @@
     "papers_removed": 6,
     "lead_works_removed": 1,
     "rule": "career-consistency namesake rule (career_consistency.py): works without a career institution and with fewer than two coauthors shared with career-anchored works"
+  },
+  "manual_namesake_patch_bulk": {
+    "date": "2026-11-05",
+    "researchers": 260,
+    "papers_removed": 1038,
+    "lead_works_removed": 308,
+    "rule": "career-consistency namesake rule v2 (career_consistency.py): outside the subject home domains, fewer than two coauthors shared with career-anchored works, and a field (one shared) or subfield (none shared) absent from those works"
   }
 }
