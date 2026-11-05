@@ -1,6 +1,6 @@
 {
   "release_year": 2026,
-  "public_data_sha256": "0463598030a698fe364943b24477528a0ec59bbc9c5eb6c0d65204c4fa1c81d9",
+  "public_data_sha256": "7c477b06c96c4bfd90796921781170341535f9619667f5fc2184aa22c1b6ed8f",
   "source": "existing KOAD-filtered 2026 private build source mapped to existing anonymous IDs",
   "identity_filter_version": "KOAD 1.2-positive-work-decision",
   "identity_filter_rule": "same-researcher/work KOAD true_paper and source keep are required before publication-affiliation department inference; unclassified works are excluded",
@@ -48,6 +48,7 @@
     "2026-11-05 manual_namesake_patch_bulk: lead-output fields only",
     "2026-11-05 manual_verified_patch: lead-output fields only; career and department metadata not recomputed",
     "2026-11-05 manual_career_patch: 62 evidence-backed pre-faculty segments with their career units",
-    "2026-11-05 explicit keep decision: lead-output fields only"
+    "2026-11-05 explicit keep decision: lead-output fields only",
+    "2026-11-05 explicit_keep patch note text: dashboard meta only; career and department metadata not recomputed"
   ]
 }
