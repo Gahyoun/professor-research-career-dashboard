@@ -1,7 +1,7 @@
 {
   "release_year": 2026,
   "professor_count": 3937,
-  "lead_work_count": 112394,
+  "lead_work_count": 112401,
   "impact_metric": "OpenAlex source summary_stats.2yr_mean_citedness",
   "lead_definition": "OpenAlex author_position=first OR is_corresponding=true",
   "identity_filter": "KOAD career-aware same-person filter; source keep and an explicit true_paper decision for the same researcher and work are both required before bibliography, affiliation, career, yearly, and journal aggregation; publication_year>=phd_year-5 when PhD year is known",
@@ -40,15 +40,15 @@
   "plaintext_names_in_public_assets": false,
   "manual_verified_patch": {
     "date": "2026-11-05",
-    "researchers": 76,
-    "papers_added": 487,
-    "lead_works_added": 197,
+    "researchers": 1,
+    "papers_added": 23,
+    "lead_works_added": 7,
     "rule": "externally verified works (Google Scholar profile / mapping review) added work by work; same selection, identity-year and lead rules as the full build"
   },
   "manual_career_patch": {
     "date": "2026-11-05",
-    "segments_added": 62,
-    "researchers": 43,
+    "segments_added": 1,
+    "researchers": 1,
     "rule": "pre-faculty postdoc segments from retained same-institution work evidence (medium confidence)"
   },
   "manual_namesake_patch": {

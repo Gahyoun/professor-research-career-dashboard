@@ -79,33 +79,41 @@ class OpenAlex:
                     raise RuntimeError(f'OpenAlex request failed: {path}')
                 time.sleep(2 ** attempt)
 
-    def works(self, ids):
-        out = {}
-        ids = sorted(set(ids))
-        for i in range(0, len(ids), 50):
-            chunk = ids[i:i + 50]
-            for w in self.get('works', filter='openalex:' + '|'.join(chunk), **{'per-page': 50})['results']:
-                out[w['id'].rsplit('/', 1)[1]] = w
+    def one(self, path):
+        """Singleton lookup (works/W…, works/doi:…, sources/S…). OpenAlex does not charge these
+        against the daily list/search budget, so they are the fallback when that budget is spent."""
+        try:
+            return self.get(path)
+        except RuntimeError:
+            return None
+
+    def _listed(self, entity, key, values, per_page, single):
+        """List-filter lookup in chunks of 50; a chunk whose list request fails (e.g. the daily
+        budget is exhausted) is fetched one record at a time with singleton requests instead."""
+        out = []
+        for i in range(0, len(values), 50):
+            chunk = values[i:i + 50]
+            try:
+                out += self.get(entity, filter=f'{key}:' + '|'.join(chunk), **{'per-page': per_page})['results']
+            except RuntimeError:
+                out += [r for r in (self.one(single(v)) for v in chunk) if r]
         return out
+
+    def works(self, ids):
+        rows = self._listed('works', 'openalex', sorted(set(ids)), 50, lambda v: f'works/{v}')
+        return {w['id'].rsplit('/', 1)[1]: w for w in rows}
 
     def by_doi(self, dois):
         out = defaultdict(list)
-        dois = sorted(set(dois))
-        for i in range(0, len(dois), 50):
-            chunk = dois[i:i + 50]
-            res = self.get('works', filter='doi:' + '|'.join(chunk), **{'per-page': 200})['results']
-            for w in res:
-                out[(w.get('doi') or '').lower()].append(w)
+        for w in self._listed('works', 'doi', sorted(set(dois)), 200,
+                              lambda v: 'works/doi:' + urllib.parse.quote(v.replace('https://doi.org/', ''))):
+            out[(w.get('doi') or '').lower()].append(w)
         return out
 
     def sources(self, ids):
-        out = {}
-        ids = sorted({i for i in ids if i})
-        for i in range(0, len(ids), 50):
-            chunk = ids[i:i + 50]
-            for s in self.get('sources', filter='openalex:' + '|'.join(chunk), **{'per-page': 50})['results']:
-                out[s['id']] = s
-        return out
+        rows = self._listed('sources', 'openalex', sorted({i for i in ids if i}), 50,
+                            lambda v: 'sources/' + short(v))
+        return {s['id']: s for s in rows}
 
 
 def short(x):
@@ -382,7 +390,7 @@ def main():
         rep['current_papers'] = len(current)
 
         # 2. new works
-        listed = [i for i in its if i['author_id']]
+        listed = [i for i in its if i['author_id'] or i.get('raw_author_name')]
         report['skipped_no_author_id'] += len(its) - len(listed)
         fetched = oa.works([i['work_id'] for i in listed])
         new, roles, why = {}, [], Counter()
@@ -395,7 +403,11 @@ def main():
                 why['already_published'] += 1
                 continue
             y, t = w.get('publication_year'), w.get('type')
-            mine = [x for x in w.get('authorships') or [] if short((x.get('author') or {}).get('id')) == i['author_id']]
+            if i['author_id']:
+                mine = [x for x in w.get('authorships') or [] if short((x.get('author') or {}).get('id')) == i['author_id']]
+            else:   # authorship without an OpenAlex author id: the person-verified raw name must match exactly one
+                mine = [x for x in w.get('authorships') or [] if not (x.get('author') or {}).get('id')
+                        and norm_title(x.get('raw_author_name')) == norm_title(i['raw_author_name'])]
             if len(mine) != 1:
                 why['authorship_not_found'] += 1
                 continue

@@ -87,7 +87,7 @@ def load_verified(path):
                 raise ValueError(f'duplicate work {wid} for {uid}')
             seen.add((uid, wid))
             items.append({'uid': uid, 'work_id': wid, 'author_id': entity_id(w['author_id'], 'A') if w.get('author_id') else None,
-                          'source': spec['source'], 'note': w.get('note')})
+                          'raw_author_name': w.get('raw_author_name'), 'source': spec['source'], 'note': w.get('note')})
     return items
 
 
