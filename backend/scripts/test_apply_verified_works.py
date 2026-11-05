@@ -41,7 +41,7 @@ class ApplyVerifiedWorksTests(unittest.TestCase):
         out = self.root / 'out'
         report = apply(self.source, self.decisions, self.verified, self.works, out)
         self.assertEqual((self.source.read_bytes(), self.decisions.read_bytes()), self.before)   # inputs untouched
-        self.assertEqual(report['no_author_id'], ['W3009'])
+        self.assertEqual(report['no_author_id'], ['synthetic-one W3009'])
         self.assertEqual(report['imported']['verified_new_works'], 1)
         self.assertEqual(report['evidence_set_keep'], 1)
         self.assertEqual((report['decisions_set_true_paper'], report['decisions_inserted']), (1, 1))
@@ -74,12 +74,12 @@ class ApplyVerifiedWorksTests(unittest.TestCase):
         import apply_verified_works as avw
         calls = []
 
-        def fake_fetch(uid, need, out_path, key, base=None):
+        def fake_fetch(need, out_path, key, base=None):
             calls.append([w['work_id'] for w in need])
             out_path.parent.mkdir(parents=True, exist_ok=True)
             import gzip
             with gzip.open(out_path, 'wt') as fh:
-                fh.write(json.dumps({'professor_uid': uid, 'target_author_id': 'A1002', 'work': synthetic_work('W3001')}) + '\n')
+                fh.write(json.dumps({'professor_uid': need[0]['uid'], 'target_author_id': 'A1002', 'work': synthetic_work('W3001')}) + '\n')
             return out_path
         original, avw.fetch_packets = avw.fetch_packets, fake_fetch
         try:
@@ -90,6 +90,24 @@ class ApplyVerifiedWorksTests(unittest.TestCase):
         self.assertEqual(report['imported']['verified_new_works'], 1)
         with self.assertRaises(ValueError):                       # no file and no key
             apply(self.source, self.decisions, self.verified, None, self.root / 'g')
+
+    def test_several_researchers_in_one_file(self):
+        spec = json.loads(self.verified.read_text())
+        other = {'professor_uid': 'synthetic-two', 'source': {'kind': 'review_workbook'},
+                 'works': [{'work_id': 'W3000', 'author_id': 'A1003'}]}
+        self.verified.write_text(json.dumps([spec, other]))
+        with sqlite3.connect(self.source) as c:     # the second researcher already has the work, dropped
+            c.execute("INSERT INTO work_authorship_evidence(professor_uid,openalex_id,work_id,identity_decision,"
+                      "duplicate_candidate_score,decision_reasons_json,anchor_flags_json,coauthor_ids_json,source_url) "
+                      "VALUES('synthetic-two','A1003','W3000','namesake_paper',0,'[]','{}','[]','x')")
+        report = apply(self.source, self.decisions, self.verified, self.works, self.root / 'multi')
+        self.assertEqual(report['researchers'], 2)
+        with sqlite3.connect(self.root / 'multi' / 'identity_decisions.sqlite') as c:
+            rows = {(u, w): d for u, w, d, _ in c.execute('SELECT * FROM work_decision')}
+        self.assertEqual(rows[('synthetic-two', 'W3000')], 'true_paper')
+        with self.assertRaises(ValueError):                       # unknown researcher
+            self.verified.write_text(json.dumps([dict(other, professor_uid='nobody')]))
+            apply(self.source, self.decisions, self.verified, self.works, self.root / 'bad')
 
     def test_refuses_missing_packet_and_existing_out_dir(self):
         self.works.write_text('')

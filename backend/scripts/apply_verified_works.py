@@ -21,7 +21,7 @@ Steps, all on copies (inputs are opened read-only and never changed):
 Works whose authorship has no OpenAlex author ID cannot be imported this way; they are
 reported, not guessed.
 
-verified.json:
+verified.json (one spec, or a JSON list of specs for several researchers):
   {"professor_uid": "prof:physics:phy0000",
    "source": {"kind": "google_scholar_profile", "url": "...", "checked": "YYYY-MM-DD"},
    "works": [{"work_id": "W…", "author_id": "A…" | null, "note": "..."}]}
@@ -55,29 +55,34 @@ AUDIT = '''CREATE TABLE IF NOT EXISTS manual_work_verification_audit(
 
 
 def load_verified(path):
-    spec = json.loads(Path(path).read_text(encoding='utf-8'))
-    uid = spec.get('professor_uid')
-    if not uid or not isinstance(spec.get('works'), list) or not spec['works']:
-        raise ValueError('verified file needs professor_uid and a nonempty works list')
-    if not spec.get('source'):
-        raise ValueError('verified file needs a source (where the works were checked)')
-    works = []
-    for w in spec['works']:
-        wid = entity_id(w['work_id'], 'W')
-        aid = entity_id(w['author_id'], 'A') if w.get('author_id') else None
-        works.append({'work_id': wid, 'author_id': aid, 'note': w.get('note')})
-    if len({w['work_id'] for w in works}) != len(works):
-        raise ValueError('duplicate work_id in verified file')
-    return uid, spec['source'], works
+    """One researcher spec ({professor_uid, source, works}) or a list of them -> flat items
+    [{uid, work_id, author_id, source}]."""
+    data = json.loads(Path(path).read_text(encoding='utf-8'))
+    specs = data if isinstance(data, list) else [data]
+    items, seen = [], set()
+    for spec in specs:
+        uid = spec.get('professor_uid')
+        if not uid or not isinstance(spec.get('works'), list) or not spec['works']:
+            raise ValueError('each verified spec needs professor_uid and a nonempty works list')
+        if not spec.get('source'):
+            raise ValueError(f'{uid}: a source (where the works were checked) is required')
+        for w in spec['works']:
+            wid = entity_id(w['work_id'], 'W')
+            if (uid, wid) in seen:
+                raise ValueError(f'duplicate work {wid} for {uid}')
+            seen.add((uid, wid))
+            items.append({'uid': uid, 'work_id': wid, 'author_id': entity_id(w['author_id'], 'A') if w.get('author_id') else None,
+                          'source': spec['source'], 'note': w.get('note')})
+    return items
 
 
 def open_lines(path):
     return gzip.open(path, 'rt', encoding='utf-8') if str(path).endswith('.gz') else open(path, encoding='utf-8')
 
 
-def fetch_packets(uid, need, out_path, key, base='https://api.openalex.org'):
-    """Full OpenAlex work objects for (author_id, work_id) pairs, checked to hold exactly one
-    authorship of that author. Written to out_path (gzip JSONL)."""
+def fetch_packets(need, out_path, key, base='https://api.openalex.org'):
+    """Full OpenAlex work objects for items [{uid, author_id, work_id}], each checked to hold
+    exactly one authorship of that author. Written to out_path (gzip JSONL)."""
     import time
     import urllib.parse
     import urllib.request
@@ -98,57 +103,60 @@ def fetch_packets(uid, need, out_path, key, base='https://api.openalex.org'):
                     if entity_id(((a.get('author') or {}).get('id') or 'A0'), 'A') == w['author_id']]
             if len(hits) != 1:
                 raise ValueError(f"{w['work_id']}: {len(hits)} authorships of {w['author_id']} (expected 1)")
-            fh.write(json.dumps({'professor_uid': uid, 'target_author_id': w['author_id'], 'work': work}, ensure_ascii=False) + '\n')
+            fh.write(json.dumps({'professor_uid': w['uid'], 'target_author_id': w['author_id'], 'work': work}, ensure_ascii=False) + '\n')
     return out_path
 
 
 def apply(source_db, decisions_db, verified, works_jsonl, out_dir, api_key=None):
     source_db, decisions_db, out_dir = Path(source_db), Path(decisions_db), Path(out_dir)
-    uid, source, works = load_verified(verified)
+    items = load_verified(verified)
     out_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
     out_source, out_decisions = out_dir / 'web.sqlite', out_dir / 'identity_decisions.sqlite'
     now = datetime.now(timezone.utc).isoformat()
-    report = {'professor_uid': uid, 'verified_works': len(works), 'no_author_id': [], 'imported': {},
-              'evidence_set_keep': 0, 'affiliations_set_keep': 0, 'decisions_set_true_paper': 0,
-              'decisions_inserted': 0, 'already_in_place': 0, 'missing_after_import': []}
+    report = {'researchers': len({i['uid'] for i in items}), 'verified_works': len(items), 'no_author_id': [],
+              'imported': {}, 'evidence_set_keep': 0, 'affiliations_set_keep': 0, 'decisions_set_true_paper': 0,
+              'decisions_inserted': 0, 'already_in_place': 0, 'missing_after_import': [], 'per_researcher': {}}
 
     with closing(read_only(source_db)) as src:
-        if not src.execute('SELECT 1 FROM professors WHERE professor_uid=?', (uid,)).fetchone():
-            raise ValueError(f'unknown researcher {uid}')
-        present = {r[0] for r in src.execute('SELECT work_id FROM work_authorship_evidence WHERE professor_uid=?', (uid,))}
+        known = {r[0] for r in src.execute('SELECT professor_uid FROM professors')}
+        unknown = sorted({i['uid'] for i in items} - known)
+        if unknown:
+            raise ValueError(f'unknown researchers {unknown}')
+        present = {(r[0], r[1]) for r in src.execute('SELECT professor_uid, work_id FROM work_authorship_evidence')}
 
-    need = [w for w in works if w['work_id'] not in present]
-    report['no_author_id'] = [w['work_id'] for w in need if not w['author_id']]
-    need = [w for w in need if w['author_id']]
+    need = [i for i in items if (i['uid'], i['work_id']) not in present]
+    report['no_author_id'] = [f"{i['uid']} {i['work_id']}" for i in need if not i['author_id']]
+    need = [i for i in need if i['author_id']]
 
     if need and not works_jsonl:
         if not api_key:
             raise ValueError('works not in the source need --works-jsonl or OPENALEX_API_KEY to fetch them')
-        works_jsonl = fetch_packets(uid, need, out_dir / 'works.jsonl.gz', api_key)
+        works_jsonl = fetch_packets(need, out_dir / 'works.jsonl.gz', api_key)
     if need:
         packets = {}
         with open_lines(works_jsonl) as fh:
             for line in fh:
                 if line.strip():
                     rec = json.loads(line)
-                    if rec.get('professor_uid') == uid:
-                        packets[(entity_id(rec['target_author_id'], 'A'), entity_id(rec['work']['id'], 'W'))] = rec
-        missing = [w['work_id'] for w in need if (w['author_id'], w['work_id']) not in packets]
+                    packets[(rec.get('professor_uid'), entity_id(rec['target_author_id'], 'A'),
+                             entity_id(rec['work']['id'], 'W'))] = rec
+        missing = [i['work_id'] for i in need if (i['uid'], i['author_id'], i['work_id']) not in packets]
         if missing:
             raise ValueError(f'works.jsonl lacks packets for {missing}')
-        by_author = {}
-        for w in need:
-            by_author.setdefault(w['author_id'], []).append(w['work_id'])
+        groups = {}
+        for i in need:
+            groups.setdefault((i['uid'], i['author_id']), []).append(i)
         with tempfile.TemporaryDirectory() as tmp:
             aliases = Path(tmp) / 'accepted.json'
-            aliases.write_text(json.dumps([{'professor_uid': uid, 'openalex_ids': [aid], 'verified_work_ids': wids,
-                                            'source': source, 'evidence': {'method': 'work-by-work verification',
-                                                                           'work_ids': wids}}
-                                           for aid, wids in sorted(by_author.items())]), encoding='utf-8')
+            aliases.write_text(json.dumps([{'professor_uid': uid, 'openalex_ids': [aid],
+                                            'verified_work_ids': [i['work_id'] for i in group], 'source': group[0]['source'],
+                                            'evidence': {'method': 'work-by-work verification',
+                                                         'work_ids': [i['work_id'] for i in group]}}
+                                           for (uid, aid), group in sorted(groups.items())]), encoding='utf-8')
             subset = Path(tmp) / 'works.jsonl'
             with open(subset, 'w', encoding='utf-8') as fh:
-                for w in need:
-                    fh.write(json.dumps(packets[(w['author_id'], w['work_id'])], ensure_ascii=False) + '\n')
+                for i in need:
+                    fh.write(json.dumps(packets[(i['uid'], i['author_id'], i['work_id'])], ensure_ascii=False) + '\n')
             report['imported'] = augment(source_db, aliases, subset, out_source)
     else:
         with closing(read_only(source_db)) as src, closing(sqlite3.connect(out_source)) as dst:
@@ -157,19 +165,20 @@ def apply(source_db, decisions_db, verified, works_jsonl, out_dir, api_key=None)
 
     shutil.copyfile(decisions_db, out_decisions)
     os.chmod(out_decisions, 0o600)
-    src_json = json.dumps(source, ensure_ascii=False, sort_keys=True)
     with closing(sqlite3.connect(out_source)) as con, closing(sqlite3.connect(out_decisions)) as dec:
         con.execute(AUDIT)
         dec.execute(AUDIT)
-        dec_cols = [r[1] for r in dec.execute('PRAGMA table_info(work_decision)')]
         required = [r[1] for r in dec.execute('PRAGMA table_info(work_decision)') if r[3] and r[4] is None and not r[5]]
-        for w in works:
-            wid = w['work_id']
+        for i in items:
+            uid, wid = i['uid'], i['work_id']
+            src_json = json.dumps(i['source'], ensure_ascii=False, sort_keys=True)
+            per = report['per_researcher'].setdefault(uid, {'listed': 0, 'changed': 0})
+            per['listed'] += 1
             row = con.execute('SELECT identity_decision FROM work_authorship_evidence WHERE professor_uid=? AND work_id=?',
                               (uid, wid)).fetchone()
             if row is None:
-                if w['author_id']:
-                    report['missing_after_import'].append(wid)
+                if i['author_id']:
+                    report['missing_after_import'].append(f'{uid} {wid}')
                 continue
             changed = False
             if row[0] != 'keep':
@@ -178,12 +187,13 @@ def apply(source_db, decisions_db, verified, works_jsonl, out_dir, api_key=None)
                             (uid, wid, 'work_authorship_evidence.identity_decision', row[0], 'keep', src_json, now))
                 report['evidence_set_keep'] += 1
                 changed = True
-            n = con.execute("UPDATE raw_affiliation_units SET identity_decision='keep' WHERE professor_uid=? AND work_id=? "
-                            "AND identity_decision!='keep'", (uid, wid)).rowcount
-            report['affiliations_set_keep'] += n
+            report['affiliations_set_keep'] += con.execute(
+                "UPDATE raw_affiliation_units SET identity_decision='keep' WHERE professor_uid=? AND work_id=? "
+                "AND identity_decision!='keep'", (uid, wid)).rowcount
             old = dec.execute('SELECT decision FROM work_decision WHERE professor_uid=? AND work_id=?', (uid, wid)).fetchall()
             if old and all(o[0] == 'true_paper' for o in old):
                 report['already_in_place'] += int(not changed)
+                per['changed'] += int(changed)
                 continue
             if old:
                 dec.execute("UPDATE work_decision SET decision='true_paper' WHERE professor_uid=? AND work_id=?", (uid, wid))
@@ -194,6 +204,7 @@ def apply(source_db, decisions_db, verified, works_jsonl, out_dir, api_key=None)
                     raise ValueError(f'work_decision has required columns {extra}; insert for {wid} needs KOAD itself')
                 dec.execute('INSERT INTO work_decision(professor_uid,work_id,decision) VALUES(?,?,?)', (uid, wid, 'true_paper'))
                 report['decisions_inserted'] += 1
+            per['changed'] += 1
             dec.execute('INSERT INTO manual_work_verification_audit VALUES(?,?,?,?,?,?,?)',
                         (uid, wid, 'work_decision.decision', ','.join(sorted({o[0] for o in old})) or None,
                          'true_paper', src_json, now))

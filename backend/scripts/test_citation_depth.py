@@ -24,9 +24,12 @@ sys.path.insert(0, str(DEPTH))
 import cdcommon  # noqa: E402
 import citation_layers as cl  # noqa: E402
 
-try:
+try:   # analysis tests need the scientific stack; CI without it runs the collector tests only
     import scipy.sparse as sp  # noqa: F401
     import sklearn  # noqa: F401
+    import igraph  # noqa: F401
+    import leidenalg  # noqa: F401
+    import networkx  # noqa: F401
     import depth_sweep as ds  # noqa: E402
     import faculty_louvain as fl  # noqa: E402
     HAVE_SCI = True
