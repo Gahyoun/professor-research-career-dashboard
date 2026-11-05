@@ -112,7 +112,7 @@ export default function SankeyPage({ professors, names, onSelect, releaseYear }:
       title: '학사 → 박사 → 현재 재직',
       subtitle: `${scope} · 세 단계 경로가 있는 연구자 ${count(data.count)}명 · 흐름 색 = 학부 출신기관${selection ? ` · 선택: ${selection.label}` : ''}`,
       legend: [...[['서울대', 'snu'], ['고려대', 'korea'], ['연세대', 'yonsei'], ['KAIST', 'kaist'], ['POSTECH', 'postech']].map(([label, key]) => ({ label, color: colorOfOrigin(key) })), { label: '짙은 흐름: 학부 = 현재 재직기관', color: deepen(colorOfOrigin('snu')), strong: true }],
-      note: `K–STEM Research Atlas · ${releaseYear} 공개 자료 · 흐름 폭은 인원에 비례 · ${figureDate()} 내보냄`,
+      note: `K–NatSci Research Atlas · ${releaseYear} 공개 자료 · 흐름 폭은 인원에 비례 · ${figureDate()} 내보냄`,
       columns: STAGES.flatMap(stage => { const node = layout.nodes.find(n => n.stage === stage); return node ? [{ x: node.x + 6, label: STAGE_LABELS[stage] }] : []; }),
       filename: `kstem-education-flow-${releaseYear}${subject ? `-${subject}` : ''}-${figureDate()}`,
     };

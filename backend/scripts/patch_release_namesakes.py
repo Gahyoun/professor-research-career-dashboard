@@ -44,7 +44,10 @@ def resolve(oa, rows):
         best = max(cands, key=lambda w: (norm_title(w.get('title')) == norm_title(r['title']),
                                          w.get('publication_year') == r['year']), default=None)
         if best is None:
-            hits = oa.get('works', search=r['title'], **{'per-page': 5})['results']
+            try:
+                hits = oa.get('works', search=r['title'][:200], **{'per-page': 5})['results']
+            except RuntimeError:      # a title the search endpoint rejects stays unresolved
+                hits = []
             best = next((w for w in hits if norm_title(w.get('title')) == norm_title(r['title'])), None)
         (out.append((r, best)) if best else unresolved.append(r))
     return out, unresolved

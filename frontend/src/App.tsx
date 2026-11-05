@@ -229,7 +229,7 @@ export default function App() {
     <div className={`app ${contrast ? 'high-contrast' : ''}`} style={{ fontSize: `${zoom}%`, '--text-scale': zoom / 100 } as React.CSSProperties}>
       <a className="skip-link" href="#main" onClick={e => { e.preventDefault(); const main = document.getElementById('main'); main?.focus(); main?.scrollIntoView(); }}>본문 바로가기</a>
       <header className="v2-header"><div className="v2-header-inner">
-        <a className="v2-brand" href="#/constellations" onClick={e => { e.preventDefault(); setViewMode('constellation'); }}><AtlasMark /><span><strong>K–STEM Research Atlas</strong><small>기초자연과학 교수 연구경력</small></span></a>
+        <a className="v2-brand" href="#/constellations" onClick={e => { e.preventDefault(); setViewMode('constellation'); }}><AtlasMark /><span><strong>K–NatSci Research Atlas</strong><small>기초자연과학 교수 연구경력</small></span></a>
         <nav className="v2-nav" aria-label="탐색 화면">
           {navItems.map((item, i) => { const on = viewMode === item.mode || (item.mode === 'individual' && viewMode === 'group'); return <button key={item.mode} type="button" className={on ? 'is-on' : ''} aria-current={on ? 'page' : undefined} onClick={() => setViewMode(item.mode)}><span aria-hidden="true">{String(i + 1).padStart(2, '0')}</span>{item.label}</button>; })}
         </nav>
@@ -283,7 +283,7 @@ export default function App() {
         </>}
         </Suspense>
       </main>
-      <footer className="v2-footer"><div className="container"><span className="footer-brand">K–STEM Research Atlas</span><span>{dashboard.meta.release_year} 공개 릴리스 · 공개 화면에는 익명화·집계된 정보만 포함됩니다.</span><span>논문 메타데이터 OpenAlex (CC0) · 동명이인 판별 {dashboard.meta.identity_filter_version || 'KOAD'}</span></div></footer>
+      <footer className="v2-footer"><div className="container"><span className="footer-brand">K–NatSci Research Atlas</span><span>{dashboard.meta.release_year} 공개 릴리스 · 공개 화면에는 익명화·집계된 정보만 포함됩니다.</span><span>논문 메타데이터 OpenAlex (CC0) · 동명이인 판별 {dashboard.meta.identity_filter_version || 'KOAD'}</span></div></footer>
     </div>
   );
 }

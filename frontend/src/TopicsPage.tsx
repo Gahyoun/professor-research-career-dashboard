@@ -202,7 +202,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
   const chartMeta = (r: TopicResearcher): FigureMeta => ({
     title: `연구 토픽 흐름 · ${r.alias || r.id}`,
     subtitle: `${mode === 'year' ? '연도별' : '경력 시기별'} · 기준선 위 선 높이 = 논문 수 · 점선 = 모토픽에서의 분기${showArcs && hasRecip ? ' · ABA 경로 표시' : ''}`,
-    note: `K–STEM Research Atlas · ${releaseYear} 공개 자료 · 토픽 = 공유 참고문헌 weighted Louvain 군집, 이름 = c-TF-IDF 특징어 · ${figureDate()} 내보냄`,
+    note: `K–NatSci Research Atlas · ${releaseYear} 공개 자료 · 토픽 = 공유 참고문헌 weighted Louvain 군집, 이름 = c-TF-IDF 특징어 · ${figureDate()} 내보냄`,
     filename: `kstem-topic-flow-${r.id}-${mode}-${figureDate()}`,
   });
   const [error, setError] = useState('');

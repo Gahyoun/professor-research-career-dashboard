@@ -112,7 +112,10 @@ test('all shipped presets return validated IDs from the actual public SQLite rel
     // (10/21, 61/152, 8/12), yielding 219. The 2026-11-05 career-consistency namesake patch
     // (1,038 papers out of the researchers' home domains) takes two researchers below 100 lead
     // works (164 -> 162) and raises one chemist's materials-science share past 40% (219 -> 220).
-    const expectedCounts = [3937, 299, 199, 162, 37, 220];
+    // The institution x period recheck (487 works) lifts two researchers to 100+ lead works and the
+    // explicit mathematics-only decision for one mathematician (213 -> 14) drops one: 162 -> 163.
+    // Two recheck works dilute one statistical physicist from 12/59 to 12/61 (< 20%): 37 -> 36.
+    const expectedCounts = [3937, 299, 199, 163, 36, 220];
     for (const [index, preset] of FLOW_SQL_PRESETS.entries()) {
       const result = runFlowSqlQuery(db, preset.sql, publicIds);
       assert.equal(result.ids.length, expectedCounts[index], preset.label);
