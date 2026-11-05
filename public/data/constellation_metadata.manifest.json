@@ -1,6 +1,6 @@
 {
   "release_year": 2026,
-  "public_data_sha256": "171d0212ac8abe1bde46b68d506bca3e6865b1b8302392a748238eec6d971227",
+  "public_data_sha256": "d7d7d30940766ea3f660eedf6f20a5ebb1395a6697d9f014d9f997ab12cabc53",
   "source": "existing KOAD-filtered 2026 private build source mapped to existing anonymous IDs",
   "identity_filter_version": "KOAD 1.2-positive-work-decision",
   "identity_filter_rule": "same-researcher/work KOAD true_paper and source keep are required before publication-affiliation department inference; unclassified works are excluded",
@@ -41,5 +41,6 @@
     "researchers": 3937,
     "verified_faculty_intervals": 6
   },
-  "metadata_sha256": "1b802c6a22828aa89eec6d183d68f5767e903a317e7126aa1acdd4ed3784ae81"
+  "metadata_sha256": "1b802c6a22828aa89eec6d183d68f5767e903a317e7126aa1acdd4ed3784ae81",
+  "rebound_after_patch": "2026-11-05 manual_verified_patch: lead-output fields only; career and department metadata not recomputed"
 }
