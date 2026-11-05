@@ -5,12 +5,12 @@
   "professors": 3937,
   "decrypted_names": 3937,
   "encrypted_names_validation": "decrypted",
-  "lead_work_count": 112704,
+  "lead_work_count": 112396,
   "db_counts": {
     "professors": 3937,
     "career_segments": 12337,
-    "yearly_lead_output": 87665,
-    "professor_journal_output": 57513
+    "yearly_lead_output": 87656,
+    "professor_journal_output": 57305
   },
   "sqlite_integrity": "ok",
   "foreign_key_errors": 0,

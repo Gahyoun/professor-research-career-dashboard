@@ -109,6 +109,18 @@ class ApplyVerifiedWorksTests(unittest.TestCase):
             self.verified.write_text(json.dumps([dict(other, professor_uid='nobody')]))
             apply(self.source, self.decisions, self.verified, self.works, self.root / 'bad')
 
+    def test_rejected_works_become_namesake(self):
+        spec = json.loads(self.verified.read_text())
+        self.verified.write_text(json.dumps([spec, {'professor_uid': 'synthetic-two', 'source': {'kind': 'manual_review'},
+                                                    'rejected_works': [{'work_id': 'W3000'}]}]))
+        with sqlite3.connect(self.decisions) as c:
+            c.execute("UPDATE work_decision SET decision='true_paper' WHERE professor_uid='synthetic-two'")
+        report = apply(self.source, self.decisions, self.verified, self.works, self.root / 'rej')
+        self.assertEqual(report['decisions_set_namesake'], 1)
+        with sqlite3.connect(self.root / 'rej' / 'identity_decisions.sqlite') as c:
+            self.assertEqual(c.execute("SELECT decision FROM work_decision WHERE professor_uid='synthetic-two'").fetchone()[0], 'namesake_paper')
+            self.assertEqual(c.execute("SELECT decision FROM work_decision WHERE professor_uid='synthetic-one' AND work_id='W3000'").fetchone()[0], 'true_paper')
+
     def test_refuses_missing_packet_and_existing_out_dir(self):
         self.works.write_text('')
         with self.assertRaises(ValueError):

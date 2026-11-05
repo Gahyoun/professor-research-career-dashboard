@@ -8,36 +8,44 @@ CAREER = ['Korea Advanced Institute of Science and Technology', 'Umeå Universit
           'Korea Institute for Advanced Study', 'Gyeongsang National University']
 
 
-def work(wid, institutions=(), coauthors=(), subfield='Statistical and Nonlinear Physics'):
-    return {'id': wid, 'institutions': list(institutions), 'coauthors': list(coauthors), 'subfield': subfield}
+def work(wid, institutions=(), coauthors=(), subfield='Statistical and Nonlinear Physics',
+         field='Physics and Astronomy', domain='Physical Sciences'):
+    return {'id': wid, 'institutions': list(institutions), 'coauthors': list(coauthors),
+            'subfield': subfield, 'field': field, 'domain': domain}
+
+
+FOOD = dict(subfield='Food Science', field='Agricultural and Biological Sciences', domain='Life Sciences')
 
 
 class ClassifyTests(unittest.TestCase):
-    """Mirrors the 2026-11-05 case: a network scientist's OpenAlex ID also held food-science
-    papers by a namesake, some with an unrelated affiliation and some with none; a common-name
-    coauthor ID ('A-park') linked the namesake's papers to the real collaborator."""
+    """The 2026-11-05 case: a network scientist's OpenAlex ID also held food-science papers by a
+    namesake; a common-name coauthor ID ('A-park') linked some of them to a real collaborator."""
 
     def setUp(self):
         self.works = [
             work('W1', ['Korea Advanced Institute of Science and Technology'], ['A-kim', 'A-jeong']),
             work('W2', ['Umea University'], ['A-holme', 'A-porter']),           # accent-free spelling
-            work('W3', ['Korea Institute for Advanced Study', 'University of Oxford'], ['A-porter', 'A-cucuringu']),
-            work('W4', ['Gyeongsang National University (Main Campus)'], ['A-son', 'A-park'], 'Molecular Biology'),
-            work('W5', ['University of Oxford'], ['A-porter', 'A-cucuringu']),   # visit abroad: two shared coauthors
-            work('W6', ['Chungbuk National University'], ['A-park', 'A-food1'], 'Biochemistry (medical)'),
-            work('W7', [], ['A-food2', 'A-food3'], 'Molecular Biology'),         # no affiliation, nobody shared
-            work('W8', [], ['A-park', 'A-food4'], 'Plant Science'),              # one shared (common name), other subfield
-            work('W9', [], ['A-jeong'], 'Statistical and Nonlinear Physics'),    # one shared, own subfield
-            work('W10', [], []),                                                 # solo, no affiliation
+            work('W3', ['Korea Institute for Advanced Study'], ['A-porter', 'A-cucuringu']),
+            work('W4', ['Gyeongsang National University (Main Campus)'], ['A-son', 'A-park'],
+                 'Molecular Biology', 'Biochemistry, Genetics and Molecular Biology', 'Life Sciences'),
+            work('W5', ['University of Oxford'], ['A-porter']),                  # physics visit: home domain
+            work('W6', [], ['A-food1', 'A-food2'], **FOOD),                     # no shared coauthor, new subfield
+            work('W7', ['Chungbuk National University'], ['A-park', 'A-food3'], **FOOD),   # one shared, new field
+            work('W8', [], ['A-food4'], 'Molecular Biology', 'Biochemistry, Genetics and Molecular Biology', 'Life Sciences'),
+            work('W9', [], [], **FOOD),                                         # solo: protected
+            work('W10', ['Harvard University'], ['A-x', 'A-y'], 'Genetics', 'Biochemistry, Genetics and Molecular Biology',
+                 'Life Sciences'),                                              # field known from anchors, subfield new
         ]
 
-    def test_namesakes_dropped_visits_and_unknowns_kept(self):
-        self.assertEqual(classify(self.works, CAREER), {'W6': 'career_institution_mismatch',
-                                                         'W7': 'career_coauthor_mismatch',
-                                                         'W8': 'career_field_mismatch'})
+    def test_physicist_namesakes_dropped_genuine_kept(self):
+        self.assertEqual(classify(self.works, CAREER, 'physics'), {
+            'W6': 'career_subfield_mismatch', 'W7': 'career_field_mismatch', 'W10': 'career_subfield_mismatch'})
+
+    def test_home_domain_is_never_judged(self):
+        self.assertEqual(classify(self.works, CAREER, 'biology'), {})
 
     def test_needs_enough_anchor_works(self):
-        self.assertEqual(classify(self.works[4:], CAREER), {})
+        self.assertEqual(classify(self.works[4:], CAREER, 'physics'), {})
 
     def test_institution_names_normalise(self):
         self.assertEqual(norm_institution('Umeå University'), norm_institution('UMEA university'))
@@ -50,7 +58,9 @@ class PrivateBuildTests(unittest.TestCase):
         con.execute("ATTACH DATABASE ':memory:' AS koad")
         con.executescript('''
             CREATE TABLE work_authorship_evidence(professor_uid TEXT, work_id TEXT, identity_decision TEXT,
-                coauthor_ids_json TEXT, subfield_name TEXT);
+                coauthor_ids_json TEXT, subfield_name TEXT, field_name TEXT, domain_name TEXT);
+            CREATE TABLE professors(professor_uid TEXT, subject TEXT);
+            INSERT INTO professors VALUES ('p', 'physics');
             CREATE TABLE raw_affiliation_units(professor_uid TEXT, work_id TEXT, institution_unit_id TEXT, institution_name TEXT);
             CREATE TABLE career_positions_v2(professor_uid TEXT, position_type TEXT, institution_unit_id TEXT, institution_name TEXT);
             CREATE TABLE institution_units(unit_id TEXT, display_name TEXT);
@@ -58,9 +68,11 @@ class PrivateBuildTests(unittest.TestCase):
         ''')
         con.executemany('INSERT INTO institution_units VALUES (?,?)', [('U1', 'Gyeongsang National University'), ('U9', 'Chungbuk National University')])
         con.execute("INSERT INTO career_positions_v2 VALUES ('p','faculty','U1',NULL)")
-        for wid, unit, co, field in (('W1', 'U1', '["A1"]', 'Physics'), ('W2', 'U1', '["A2"]', 'Physics'),
-                                     ('W3', 'U1', '["A3"]', 'Physics'), ('W9', 'U9', '["A9"]', 'Food')):
-            con.execute('INSERT INTO work_authorship_evidence VALUES (?,?,?,?,?)', ('p', wid, 'keep', co, field))
+        for wid, unit, co, sub, fld, dom in (('W1', 'U1', '["A1"]', 'Physics', 'Physics', 'Physical Sciences'),
+                                             ('W2', 'U1', '["A2"]', 'Physics', 'Physics', 'Physical Sciences'),
+                                             ('W3', 'U1', '["A3"]', 'Physics', 'Physics', 'Physical Sciences'),
+                                             ('W9', 'U9', '["A9"]', 'Food Science', 'Agricultural', 'Life Sciences')):
+            con.execute('INSERT INTO work_authorship_evidence VALUES (?,?,?,?,?,?,?)', ('p', wid, 'keep', co, sub, fld, dom))
             con.execute('INSERT INTO raw_affiliation_units VALUES (?,?,?,NULL)', ('p', wid, unit))
             con.execute("INSERT INTO koad.work_decision VALUES ('p',?,'true_paper')", (wid,))
         self.assertEqual(prepare(con), 1)
@@ -68,7 +80,7 @@ class PrivateBuildTests(unittest.TestCase):
             f"SELECT work_id FROM work_authorship_evidence w WHERE {STRICT_IDENTITY_PREDICATE.format(alias='w')} ORDER BY work_id")]
         self.assertEqual(kept, ['W1', 'W2', 'W3'])
         gate = PublicationIdentityGate.from_connection(con)
-        self.assertEqual(gate.exclusion_reason('p', 'W9'), 'career_institution_mismatch')
+        self.assertEqual(gate.exclusion_reason('p', 'W9'), 'career_subfield_mismatch')
         self.assertIsNone(gate.exclusion_reason('p', 'W1'))
 
     def test_missing_tables_leave_everything_published(self):

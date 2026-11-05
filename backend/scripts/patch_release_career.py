@@ -3,7 +3,10 @@
 researchers, when the private source database is not at hand (companion of
 patch_release_verified_works.py).
 
-  OPENALEX_API_KEY=… python3 backend/scripts/patch_release_career.py --spec segments.json [--dry-run]
+  OPENALEX_API_KEY=… NAMES_PASSWORD=… python3 backend/scripts/patch_release_career.py --spec segments.json [--dry-run]
+  … patch_release_career.py --auto verified.json --public-ids anon_map.json [--dry-run]
+      (derive segments for those researchers: an institution absent from the career with >= 2
+       published works after the PhD and before the first faculty period)
 
 segments.json: [{"public_id": "P-…", "stage": "postdoc", "institution": "<public display name>",
                  "openalex_institution": "I…",
@@ -72,20 +75,58 @@ def build_segment(spec, works, published_dois, prof):
     return seg
 
 
+def derive_specs(prof, pid, works, author_ids, metadata_all, min_works=2):
+    """Auto mode: pre-faculty segments from published works whose authorship (one of author_ids)
+    lists an institution absent from the career, after the PhD year and before the first faculty
+    period. >= min_works works per institution; overlapping candidates keep the larger one."""
+    from career_consistency import norm_institution
+    career = {norm_institution(c['institution']): c['institution'] for c in prof['career']}
+    phd = prof.get('phd_year') or 0
+    faculty = [c['start_period'] for c in prof['career'] if c['stage'] == 'faculty' and c.get('start_period')]
+    first = min(faculty) if faculty else '9999-H2'
+    groups = {}
+    for w in works:
+        if not w.get('publication_date') or not (phd < w['publication_year']) or half(w['publication_date']) >= first:
+            continue
+        for a in w.get('authorships') or []:
+            if short((a.get('author') or {}).get('id')) not in author_ids:
+                continue
+            for inst in a.get('institutions') or []:
+                key = norm_institution(inst.get('display_name'))
+                if not key:
+                    continue
+                g = groups.setdefault(short(inst['id']), {'name': career.get(key, inst['display_name']), 'country': inst.get('country_code'),
+                                                          'in_career': key in career, 'evidence': {}})
+                g['evidence'][short(w['id'])] = short(a['author']['id'])
+    cands = []
+    for iid, g in groups.items():
+        if len(g['evidence']) < min_works or g['in_career']:
+            continue
+        canon = [u.get('institution_canonical') for r in metadata_all.values() for u in r['career_units'] if u['institution'] == g['name']]
+        canonical = max(set(canon), key=canon.count) if canon else g['name']
+        cands.append({'public_id': pid, 'stage': 'postdoc', 'institution': g['name'], 'openalex_institution': iid,
+                      'evidence': [{'work_id': k, 'author_id': v} for k, v in sorted(g['evidence'].items())],
+                      'metadata': {'institution_canonical': canonical, 'country': g['country'], 'department': None,
+                                   'department_inferred': False, 'department_evidence': 'no_formal_department_evidence'}})
+    return sorted(cands, key=lambda c: -len(c['evidence']))
+
+
 def order(career):
     return sorted(career, key=lambda c: (c.get('start_year') or 0, c.get('start_period') or '', c.get('institution') or ''))
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--spec', required=True)
+    p.add_argument('--spec', help='explicit segments (see above)')
+    p.add_argument('--auto', help='verified-works file: derive segments for its researchers from their published works')
+    p.add_argument('--public-ids', help='with --auto: JSON {professor_uid: P-…}')
     p.add_argument('--year', default='2026')
     p.add_argument('--dry-run', action='store_true')
     a = p.parse_args()
     key, password = os.environ.get('OPENALEX_API_KEY'), os.environ.get('NAMES_PASSWORD')
     if not key or not password:
         sys.exit('OPENALEX_API_KEY and NAMES_PASSWORD are required (environment only)')
-    specs = json.loads(Path(a.spec).read_text())
+    specs = json.loads(Path(a.spec).read_text()) if a.spec else []
     release = ROOT / 'data' / 'releases' / a.year
     dashboard = json.loads((release / 'dashboard.json').read_text())
     profs = {x['id']: x for x in dashboard['professors']}
@@ -94,12 +135,33 @@ def main():
     topics_dir = ROOT / 'public' / 'data' / 'topics'
     aes, aad = vault_key(topics_dir, password)
     oa = OpenAlex(key)
+    skipped = []
+    if a.auto:
+        verified = json.loads(Path(a.auto).read_text())
+        verified = verified if isinstance(verified, list) else [verified]
+        public_ids = json.loads(Path(a.public_ids).read_text())
+        from patch_release_namesakes import resolve
+        for spec in verified:
+            pid = public_ids[spec['professor_uid']]
+            resolved, _ = resolve(oa, read_titles(topics_dir, aes, aad, pid))
+            ids = {w['author_id'] for w in spec['works'] if w.get('author_id')}
+            mode = __import__('collections').Counter(short((x.get('author') or {}).get('id')) for _, w in resolved
+                                                     for x in w.get('authorships') or [] if (x.get('author') or {}).get('id'))
+            if mode:
+                ids.add(mode.most_common(1)[0][0])
+            specs += derive_specs(profs[pid], pid, [w for _, w in resolved], ids, metadata)
     works = oa.works([ev['work_id'] for s in specs for ev in s['evidence']])
     added, touched = [], set()
     for s in specs:
         prof = profs[s['public_id']]
         dois = {(r.get('doi') or '').lower() for r in read_titles(topics_dir, aes, aad, s['public_id'])}
-        seg = build_segment(s, works, dois, prof)
+        try:
+            seg = build_segment(s, works, dois, prof)
+        except ValueError as e:     # auto candidates that overlap or reach faculty are skipped, not forced
+            if not a.auto:
+                raise
+            skipped.append(str(e))
+            continue
         old = list(prof['career'])
         prof['career'] = order(old + [seg])
         # constellation units follow the new segment order; existing units keep their content
@@ -121,8 +183,8 @@ def main():
         added.append({'public_id': s['public_id'], **{k: seg[k] for k in ('stage', 'institution', 'start_period', 'end_period')},
                       'evidence_works': len(s['evidence'])})
         touched.add(s['public_id'])
-    print(json.dumps(added, ensure_ascii=False, indent=1))
-    if a.dry_run:
+    print(json.dumps({'added': added, 'skipped': skipped}, ensure_ascii=False, indent=1))
+    if a.dry_run or not added:
         return
 
     patch = {'date': str(date.today()), 'segments_added': len(added), 'researchers': len(touched),
@@ -163,7 +225,8 @@ def main():
     cm_path = ROOT / 'public' / 'data' / 'constellation_metadata.manifest.json'
     cm = json.loads(cm_path.read_text())
     counts = cm.get('counts', {})
-    for s in specs:
+    applied = [s for s in specs if any(x['public_id'] == s['public_id'] and x['institution'] == s['institution'] for x in added)]
+    for s in applied:
         m = s['metadata']
         counts['career_segments'] = counts.get('career_segments', 0) + 1
         counts['career_country_known'] = counts.get('career_country_known', 0) + int(bool(m.get('country')))
