@@ -1,6 +1,6 @@
 {
   "release_year": 2026,
-  "public_data_sha256": "7c477b06c96c4bfd90796921781170341535f9619667f5fc2184aa22c1b6ed8f",
+  "public_data_sha256": "f145cf31db2a8070749d3a0079a424a90d4896f92d32647b74c510f0bba7fb62",
   "source": "existing KOAD-filtered 2026 private build source mapped to existing anonymous IDs",
   "identity_filter_version": "KOAD 1.2-positive-work-decision",
   "identity_filter_rule": "same-researcher/work KOAD true_paper and source keep are required before publication-affiliation department inference; unclassified works are excluded",
@@ -15,12 +15,12 @@
   "private_fields_exported": false,
   "counts": {
     "bachelor_country_known": 2855,
-    "career_country_known": 11422,
+    "career_country_known": 11423,
     "career_department_inferred": 3109,
     "career_department_verified": 2,
     "career_domestic": 8241,
     "career_domestic_department_inferred": 2312,
-    "career_segments": 12401,
+    "career_segments": 12402,
     "current_department_inferred": 2516,
     "current_department_verified": 3,
     "current_positions": 3937,
@@ -41,7 +41,7 @@
     "researchers": 3937,
     "verified_faculty_intervals": 6
   },
-  "metadata_sha256": "068a662ccfcad829a2e8bcb60f94c116aa2941e3eaba411fa823889c88ab04e1",
+  "metadata_sha256": "c25d9e0e8dd0c395eee8a75cd9e2bdc8146545d57b17197e8aed75837fe24a1d",
   "rebound_after_patch": [
     "2026-11-05 manual_verified_patch (lead output) and manual_career_patch (2 evidence-backed pre-faculty segments with their career units)",
     "2026-11-05 manual_namesake_patch: lead-output fields only",
@@ -49,6 +49,7 @@
     "2026-11-05 manual_verified_patch: lead-output fields only; career and department metadata not recomputed",
     "2026-11-05 manual_career_patch: 62 evidence-backed pre-faculty segments with their career units",
     "2026-11-05 explicit keep decision: lead-output fields only",
-    "2026-11-05 explicit_keep patch note text: dashboard meta only; career and department metadata not recomputed"
+    "2026-11-05 explicit_keep patch note text: dashboard meta only; career and department metadata not recomputed",
+    "2026-11-05 manual_career_patch: 1 evidence-backed pre-faculty segments with their career units"
   ]
 }

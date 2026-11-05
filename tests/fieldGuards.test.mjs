@@ -162,8 +162,9 @@ test('the full release has no cross-field lifetime membership and preserves the 
   // two evidence-backed postdoc segments to one researcher who had none: 2133 -> 2134 profiles.
   // The automatic career augmentation (62 postdoc segments from >= 2 published works at an
   // institution between the PhD and the first faculty role) adds 41 postdoc profiles (2175).
+  // A manual review adds one researcher's Cornell postdoc (2005-2010, six works): 2176.
   assert.deepEqual({ total: index.ids.length, connected, noEvidence, unmatched, counts }, {
-    total: 3937, connected: 3321, noEvidence: 577, unmatched: 39,
-    counts: { doctoral: [804, 427], postdoc: [2175, 1811], first_faculty: [1, 0], current: [3241, 3240] },
+    total: 3937, connected: 3322, noEvidence: 576, unmatched: 39,
+    counts: { doctoral: [804, 427], postdoc: [2176, 1812], first_faculty: [1, 0], current: [3241, 3240] },
   });
 });
