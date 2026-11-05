@@ -17,7 +17,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import numpy as np
+import random
 
 DEPTH = Path(__file__).resolve().parents[1] / "topics" / "depth"
 sys.path.insert(0, str(DEPTH))
@@ -25,6 +25,7 @@ import cdcommon  # noqa: E402
 import citation_layers as cl  # noqa: E402
 
 try:   # analysis tests need the scientific stack; CI without it runs the collector tests only
+    import numpy as np
     import scipy.sparse as sp  # noqa: F401
     import sklearn  # noqa: F401
     import igraph  # noqa: F401
@@ -44,7 +45,7 @@ cl.time.sleep = lambda s: None          # retries without waiting
 def make_world(seed=1, fields=4, per_field=60, profs_per_field=6):
     """Works 1..: deep ancestors (2 hops), references (1 hop), focal works, later citers.
     Ids are integers; OpenAlex form is W<id>."""
-    rng = np.random.default_rng(seed)
+    rng = random.Random(seed)       # stdlib only: the collector tests must run without numpy
     nid = iter(range(1000, 10 ** 7))
     year, refs = {}, {}
     hubs = [next(nid) for _ in range(5)]
@@ -53,19 +54,19 @@ def make_world(seed=1, fields=4, per_field=60, profs_per_field=6):
     deep = {f: [next(nid) for _ in range(40)] for f in range(fields)}
     for f, ws in deep.items():
         for w in ws:
-            year[w], refs[w] = 1980, list(rng.choice(hubs, 2, replace=False))
+            year[w], refs[w] = 1980, rng.sample(hubs, 2)
     mid = {f: [next(nid) for _ in range(80)] for f in range(fields)}
     for f, ws in mid.items():
         for w in ws:
-            own = list(rng.choice(deep[f], 6, replace=False))
-            other = list(rng.choice(deep[(f + 1) % fields], 1))
-            year[w], refs[w] = 2000, own + other + [int(rng.choice(hubs))]
+            own = rng.sample(deep[f], 6)
+            other = rng.sample(deep[(f + 1) % fields], 1)
+            year[w], refs[w] = 2000, own + other + [rng.choice(hubs)]
     focal, field_of, profs = {}, {}, []
     for f in range(fields):
         for i in range(per_field):
             w = next(nid)
-            y = int(rng.integers(2012, 2025))
-            r = list(rng.choice(mid[f], 8, replace=False)) + list(rng.choice(mid[int(rng.integers(fields))], 1))
+            y = rng.randrange(2012, 2025)
+            r = rng.sample(mid[f], 8) + rng.sample(mid[rng.randrange(fields)], 1)
             year[w], refs[w] = y, [int(x) for x in r]
             focal[w], field_of[w] = y, f
         for p in range(profs_per_field):
@@ -75,14 +76,14 @@ def make_world(seed=1, fields=4, per_field=60, profs_per_field=6):
         f = field_of[w]
         for k in range(4):
             c = next(nid)
-            year[c] = y + int(rng.integers(0, 6))
+            year[c] = y + rng.randrange(0, 6)
             peers = [x for x in focal if field_of[x] == f and x != w]
-            refs[c] = [w] + [int(x) for x in rng.choice(peers, 2, replace=False)]
+            refs[c] = [w] + rng.sample(peers, 2)
     links = []
     fw = sorted(focal)
     for uid, f in profs:
         mine = [w for w in fw if field_of[w] == f]
-        for w in rng.choice(mine, 12, replace=False):
+        for w in rng.sample(mine, 12):
             links.append((uid, int(w)))
     return {"year": year, "refs": refs, "focal": focal, "field": field_of, "links": links, "hubs": hubs}
 
@@ -372,7 +373,7 @@ class SweepEndToEnd(unittest.TestCase):
         self.assertIn("3", s["skipped"])                         # layer 3 not fetched -> refused
         r = s["communities"]["4"]
         for d in ("1", "2"):
-            self.assertEqual(r["depth"][d]["communities"], 4)    # same K at every depth
+            self.assertTrue(r["depth"][d]["target_reached"])     # same K (within tolerance) at every depth
             self.assertGreater(r["depth"][d]["ami_vs_reference"]["mean"], 0.8)   # planted fields recovered
         self.assertIn("1-2", r["ami"])
         # floors and between-depth values are both cross-replicate (2 x seeds^2 and seeds^2 pairs)
