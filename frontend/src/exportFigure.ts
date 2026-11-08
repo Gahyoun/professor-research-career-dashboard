@@ -22,9 +22,9 @@ export function standaloneSvg(svg: SVGSVGElement, columns: FigureColumn[] = []):
     out.removeAttribute('class');
     out.style.cssText = STYLE_PROPS.map(prop => `${prop}:${computed.getPropertyValue(prop)}`).join(';');
   });
-  clone.querySelectorAll('title, desc').forEach(node => node.remove());
-  clone.querySelectorAll('[role], [tabindex], [aria-label], [aria-labelledby], [aria-pressed]').forEach(node => {
-    for (const attr of ['role', 'tabindex', 'aria-label', 'aria-labelledby', 'aria-pressed']) node.removeAttribute(attr);
+  clone.querySelectorAll('[data-export-exclude], title, desc').forEach(node => node.remove());
+  clone.querySelectorAll('[role], [tabindex], [aria-label], [aria-labelledby], [aria-describedby], [aria-pressed]').forEach(node => {
+    for (const attr of ['role', 'tabindex', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-pressed']) node.removeAttribute(attr);
   });
   const box = svg.viewBox.baseVal;
   const width = box?.width || svg.getBoundingClientRect().width, height = box?.height || svg.getBoundingClientRect().height;
