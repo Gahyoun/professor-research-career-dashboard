@@ -9,7 +9,7 @@ import ResearchAreaTree from './ResearchAreaTree';
 import { researcherTexts } from './researcherQuery';
 import { useResearchAreas } from './useResearchAreas';
 import InfoFlowPanel from './InfoFlowPanel';
-import AbaNodeDetail from './AbaNodeDetail';
+import AbaNodeControls, { AbaPaperDialog } from './AbaNodeDetail';
 import { citationNodeKey, indexNodeCitations } from './abaNodes';
 import { readAbaPaths, type AbaPath } from './abaVault';
 import { downloadSvg, figureDate, printSvgAsPdf, type FigureMeta } from './exportFigure';
@@ -62,7 +62,7 @@ function useFitColumns(columns: number, left: number, minimum: number, maximum: 
     return () => observer.disconnect();
   }, []);
   const fit = columns ? (width - left - 24) / columns : minimum;
-  return { ref, columnWidth: Math.max(minimum, Math.min(maximum, fit || minimum)) };
+  return { ref, width, columnWidth: Math.max(minimum, Math.min(maximum, fit || minimum)) };
 }
 
 type Tip = { x: number; y: number; topic: number; column: number; count: number; cited: number } | null;
@@ -72,12 +72,13 @@ function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles, va
   titles: PaperTitle[] | null | undefined; vault: TitleVault | null; svgRef?: React.Ref<SVGSVGElement>;
 }) {
   const columnCount = mode === 'year' ? (yearRange(researcher) ? yearRange(researcher)![1] - yearRange(researcher)![0] + 1 : 0) : researcher.eras.length;
-  const { ref: wrap, columnWidth } = useFitColumns(columnCount, 228, mode === 'year' ? 34 : 120, mode === 'year' ? 72 : 260);
+  const { ref: wrap, width: viewportWidth, columnWidth } = useFitColumns(columnCount, 228, mode === 'year' ? 34 : 120, mode === 'year' ? 72 : 260);
   const layout = useMemo(() => layoutAlluvial(researcher, mode, { columnWidth }), [researcher, mode, columnWidth]);
   const [tip, setTip] = useState<Tip>(null);
   const [selection, setSelection] = useState<{ node: string; middle?: number; route: number } | null>(null);
   const [paths, setPaths] = useState<AbaPath[] | 'error' | null>(null);
-  const detailRef = useRef<HTMLElement>(null);
+  const [inspecting, setInspecting] = useState(false);
+  const [scrollLeft, setScrollLeft] = useState(0);
   const dotRefs = useRef(new Map<string, SVGCircleElement>());
   const requestPaths = Boolean(selection && vault);
   useEffect(() => {
@@ -127,17 +128,16 @@ function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles, va
   const clear = () => { setTip(null); setFocus(null); };
   function chooseDot(node: string) {
     clear();
+    setInspecting(false);
     setSelection(selection?.node === node ? null : { node, route: 0 });
   }
   function closeDetail() {
     if (selection) dotRefs.current.get(selection.node)?.focus({ preventScroll: true });
     clear();
+    setInspecting(false);
     setSelection(null);
   }
-  const inspectMiddle = () => {
-    detailRef.current?.focus({ preventScroll: true });
-    detailRef.current?.scrollIntoView({ block: 'nearest' });
-  };
+  const inspectMiddle = () => setInspecting(true);
   const bend = (x1: number, y1: number, x2: number, y2: number) => {
     const mid = (x1 + x2) / 2;
     return `M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2}`;
@@ -153,10 +153,27 @@ function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles, va
     const y = [24, -24, 17, -17, 34, -34].map(offset => selectedDot.y + offset).find(room) ?? selectedDot.y - 17;
     const left = bend(firstDot.x, firstDot.y, x, y);
     const right = bend(x, y, lastDot.x, lastDot.y);
-    return { x, y, left, right, year: route.path.middle.year };
+    return { x, y, left, right, paper: route.path.middle };
+  })();
+  const bridgeX = bridge?.x;
+  useEffect(() => {
+    const el = wrap.current;
+    if (!el || bridgeX === undefined) return;
+    if (bridgeX < el.scrollLeft + 24 || bridgeX > el.scrollLeft + el.clientWidth - 24) {
+      el.scrollTo({ left: bridgeX - el.clientWidth / 2 });
+    }
+  }, [bridgeX, wrap]);
+  const preview = (() => {
+    if (!bridge) return null;
+    const viewLeft = scrollLeft, viewRight = Math.min(layout.width, viewLeft + (viewportWidth || layout.width));
+    const inView = bridge.x >= viewLeft && bridge.x <= viewRight;
+    const before = bridge.x - (inView ? viewLeft : 0), after = (inView ? viewRight : layout.width) - bridge.x;
+    const left = after < 210 && before > after;
+    const width = Math.max(0, Math.min(340, (left ? before : after) - 21));
+    return { left, width, x: bridge.x + (left ? -15 - width : 15) };
   })();
   return <>
-  <div className="tp-chart-scroll" ref={wrap} onMouseLeave={clear}>
+  <div className="tp-chart-scroll" ref={wrap} onMouseLeave={clear} onScroll={e => setScrollLeft(e.currentTarget.scrollLeft)}>
     {!layout.lanes.length ? <p className="tp-empty">표시할 논문이 없습니다.</p> : <svg ref={svgRef} className="tp-chart" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="group" aria-labelledby="tp-chart-title" aria-describedby="tp-chart-desc">
       <title id="tp-chart-title">{mode === 'year' ? '연도별' : '경력 시기별'} 연구 토픽 흐름</title>
       <desc id="tp-chart-desc">토픽 {layout.lanes.length}개, 논문 {layout.placed}편. 기준선 위 선의 높이는 해당 {mode === 'year' ? '연도' : '시기'} 논문 수, 점선은 모토픽에서의 분기입니다. 원형 노드를 선택하면 해당 논문의 A–B–A 인용 경로를 확인할 수 있습니다.</desc>
@@ -210,12 +227,13 @@ function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles, va
           }} />;
       })}
       {bridge && <g data-export-exclude="" className="aba-node-marker" role="button" tabIndex={0}
-        aria-label={`가운데 B 논문 상세 보기, ${bridge.year}년`} onClick={inspectMiddle}
+        aria-label={`가운데 B 논문 상세 보기, ${bridge.paper.year}년, ${bridge.paper.title}`} aria-haspopup="dialog" onClick={inspectMiddle}
         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inspectMiddle(); } }}>
         <circle cx={bridge.x} cy={bridge.y} r={11} />
         <text x={bridge.x} y={bridge.y + 4} textAnchor="middle" className="aba-node-letter">B</text>
-        <text x={bridge.x + (bridge.x + 58 > layout.width ? -15 : 15)} y={bridge.y + 4}
-          textAnchor={bridge.x + 58 > layout.width ? 'end' : 'start'} className="aba-node-year">{bridge.year}</text>
+        {preview && preview.width >= 50 && <foreignObject x={preview.x} y={bridge.y - 11} width={preview.width} height={22} aria-hidden="true">
+          <div className={`aba-node-preview ${preview.left ? 'aba-node-preview-left' : ''}`}><span>{bridge.paper.year} · {bridge.paper.title}</span></div>
+        </foreignObject>}
       </g>}
     </svg>}
     {tip && tipLane && tipColumn && <div className="tp-tip" style={{ left: tip.x, top: tip.y }} role="status">
@@ -227,16 +245,17 @@ function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles, va
       <small className="tp-tip-lock">점을 선택하면 A–B–A 인용을 볼 수 있습니다.</small>
     </div>}
   </div>
-  {selection && selectedDot && selectedColumn && <AbaNodeDetail
+  {selection && selectedDot && selectedColumn && <AbaNodeControls
     nodeLabel={`${selectedColumn.label} · ${shown.get(selectedDot.topic)?.topic.label ?? ''}`}
     groups={groups} activeGroup={group} routeIndex={routeIndex} activeRoute={route} status={detailStatus}
     onGroup={id => setSelection({ node: selection.node, middle: id, route: 0 })}
-    onRoute={index => setSelection({ ...selection, route: index })} onClose={closeDetail} detailRef={detailRef}>
+    onRoute={index => setSelection({ ...selection, route: index })} onClose={closeDetail} onInspect={inspectMiddle} canInspectInChart={Boolean(bridge)}>
     {selectedTitles.length > 0 && <details className="aba-node-publications">
       <summary>이 노드의 논문 {selectedTitles.length}편</summary>
       <ul>{selectedTitles.map((paper, i) => <li key={i}>{paper.doi ? <a href={paper.doi} target="_blank" rel="noreferrer">{paper.title}</a> : paper.title}</li>)}</ul>
     </details>}
-  </AbaNodeDetail>}
+  </AbaNodeControls>}
+  {vault && route && inspecting && <AbaPaperDialog route={route} onClose={() => setInspecting(false)} />}
   </>;
 
 }

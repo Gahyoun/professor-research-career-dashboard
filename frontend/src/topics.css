@@ -229,9 +229,16 @@
 .aba-node-marker circle { fill: #166c64; stroke: #fff; stroke-width: 2; }
 .aba-node-marker:hover circle, .aba-node-marker:focus-visible circle { stroke: #a9d8d2; stroke-width: 4; }
 .aba-node-letter { fill: #fff; font-size: 11px; font-weight: 700; pointer-events: none; }
-.aba-node-year { fill: #125951; stroke: #fff; stroke-width: 4; paint-order: stroke; font-size: 12px; font-weight: 700; }
+.aba-node-preview { display: flex; align-items: center; height: 22px; min-width: 0; font-family: inherit; font-size: 12px; font-weight: 600; color: #125951; }
+.aba-node-preview-left { justify-content: flex-end; }
+.aba-node-preview span { display: block; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: #f4fbfa; border: 1px solid #d9ece9; border-radius: 4px; padding: 0 6px; line-height: 18px; }
+.aba-node-marker:hover .aba-node-preview span, .aba-node-marker:focus-visible .aba-node-preview span { background: #e3f4f1; border-color: #a9d8d2; }
+.aba-paper-dialog { width: min(640px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow: auto; padding: 20px 22px; border: 1px solid var(--v2-line); border-radius: 12px; color: var(--v2-ink); background: #fff; box-shadow: var(--v2-shadow-pop); }
+.aba-paper-dialog::backdrop { background: rgb(21 35 52 / 35%); }
+.aba-paper-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.aba-paper-dialog h4 { margin: 0; font-size: 16px; }
+.aba-paper-dialog .aba-node-works li { padding: 7px 0; border-top: 1px solid var(--v2-line-soft); }
 .aba-node-detail { border-top: 1px solid var(--v2-line-soft); padding: 17px 24px 20px; }
-.aba-node-detail:focus-visible { outline: 2px solid var(--v2-accent, #3366ff); outline-offset: -2px; }
 .aba-node-detail header { display: flex; align-items: start; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
 .aba-node-detail h4 { margin: 0; font-size: 15px; color: var(--v2-ink); }
 .aba-node-detail p { margin: 3px 0 0; font-size: 13px; color: var(--v2-muted); }
