@@ -9,6 +9,7 @@ import ResearchAreaTree from './ResearchAreaTree';
 import { researcherTexts } from './researcherQuery';
 import { useResearchAreas } from './useResearchAreas';
 import InfoFlowPanel from './InfoFlowPanel';
+import AbaRibbons from './AbaRibbons';
 import { downloadSvg, figureDate, printSvgAsPdf, type FigureMeta } from './exportFigure';
 import { readTitles, type TitleVault } from './titleVault';
 import './topics.css';
@@ -415,6 +416,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
           </div>
           <AlluvialChart researcher={researcher} mode={mode} showArcs={showArcs && hasRecip} focus={focus} setFocus={setFocus} titles={titles && paperTitles?.id === researcher.id ? paperTitles.rows : null} unlocked={Boolean(titles)} svgRef={chartSvg} />
         </section>
+        <AbaRibbons key={researcher.id} researcher={researcher.id} vault={titles} />
         <InfoFlowPanel key={researcher.id} researcher={researcher} infoUrl={index.infoPath ? `${import.meta.env.BASE_URL}data/topics/${index.infoPath}/${researcher.id}.json` : undefined} />
         <ResearchAreaTree profile={areas?.profiles.get(researcher.id)} title="OpenAlex 연구분야 계층" />
         <section className="tp-split">
