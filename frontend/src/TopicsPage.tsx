@@ -9,6 +9,9 @@ import ResearchAreaTree from './ResearchAreaTree';
 import { researcherTexts } from './researcherQuery';
 import { useResearchAreas } from './useResearchAreas';
 import InfoFlowPanel from './InfoFlowPanel';
+import AbaNodeControls, { AbaPaperDialog } from './AbaNodeDetail';
+import { citationNodeKey, indexNodeCitations } from './abaNodes';
+import { readAbaPaths, type AbaPath } from './abaVault';
 import { downloadSvg, figureDate, printSvgAsPdf, type FigureMeta } from './exportFigure';
 import { readTitles, type TitleVault } from './titleVault';
 import './topics.css';
@@ -59,37 +62,121 @@ function useFitColumns(columns: number, left: number, minimum: number, maximum: 
     return () => observer.disconnect();
   }, []);
   const fit = columns ? (width - left - 24) / columns : minimum;
-  return { ref, columnWidth: Math.max(minimum, Math.min(maximum, fit || minimum)) };
+  return { ref, width, columnWidth: Math.max(minimum, Math.min(maximum, fit || minimum)) };
 }
 
 type Tip = { x: number; y: number; topic: number; column: number; count: number; cited: number } | null;
 
-function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles, unlocked, svgRef }: {
+function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles, vault, svgRef }: {
   researcher: TopicResearcher; mode: AlluvialMode; showArcs: boolean; focus: number | null; setFocus: (topic: number | null) => void;
-  titles: PaperTitle[] | null; unlocked: boolean; svgRef?: React.Ref<SVGSVGElement>;
+  titles: PaperTitle[] | null | undefined; vault: TitleVault | null; svgRef?: React.Ref<SVGSVGElement>;
 }) {
   const columnCount = mode === 'year' ? (yearRange(researcher) ? yearRange(researcher)![1] - yearRange(researcher)![0] + 1 : 0) : researcher.eras.length;
-  const { ref: wrap, columnWidth } = useFitColumns(columnCount, 228, mode === 'year' ? 34 : 120, mode === 'year' ? 72 : 260);
+  const { ref: wrap, width: viewportWidth, columnWidth } = useFitColumns(columnCount, 228, mode === 'year' ? 34 : 120, mode === 'year' ? 72 : 260);
   const layout = useMemo(() => layoutAlluvial(researcher, mode, { columnWidth }), [researcher, mode, columnWidth]);
   const [tip, setTip] = useState<Tip>(null);
-  const [pinned, setPinned] = useState(false);
+  const [selection, setSelection] = useState<{ node: string; middle?: number; route: number } | null>(null);
+  const [paths, setPaths] = useState<AbaPath[] | 'error' | null>(null);
+  const [inspecting, setInspecting] = useState(false);
+  const [scrollLeft, setScrollLeft] = useState(0);
+  const dotRefs = useRef(new Map<string, SVGCircleElement>());
+  const requestPaths = Boolean(selection && vault);
+  useEffect(() => {
+    if (!vault || !requestPaths || paths !== null) return;
+    let active = true;
+    readAbaPaths(vault, researcher.id).then(
+      rows => { if (active) setPaths(rows); },
+      () => { if (active) setPaths('error'); },
+    );
+    return () => { active = false; };
+  }, [vault, researcher.id, requestPaths, paths]);
+  const indexed = useMemo(() => vault && titles && Array.isArray(paths) ? indexNodeCitations(paths, titles, researcher, mode) : null,
+    [vault, paths, titles, researcher, mode]);
   const shown = new Map(layout.lanes.map(l => [l.topic.id, l]));
-  const dim = (topic: number) => focus !== null && focus !== topic;
+  const dots = new Map(layout.dots.map(d => [citationNodeKey(d.topic, d.column), d]));
+  const selectedDot = selection ? dots.get(selection.node) : undefined;
+  const groups = selection ? [...(indexed?.get(selection.node)?.values() ?? [])] : [];
+  const group = groups.find(g => g.middle.id === selection?.middle) ?? groups[0];
+  const routeIndex = selection?.route ?? 0;
+  const route = group?.routes[routeIndex];
+  const firstDot = route?.first ? dots.get(route.first) : undefined;
+  const lastDot = route?.last ? dots.get(route.last) : undefined;
+  const yearTick = mode === 'year' && route ? layout.ticks[route.path.middle.year - (yearRange(researcher)?.[0] ?? 0)] : undefined;
+  const active = selection !== null;
+  const dim = (topic: number) => !active && focus !== null && focus !== topic;
   const tipLane = tip ? shown.get(tip.topic) : null;
   const tipColumn = tip ? layout.columns[tip.column] : null;
-  const tipTitles = tip && titles && tipColumn ? titles.filter(t => t.topic === tip.topic && (mode === 'year' ? t.year === Number(tipColumn.label) : (tipColumn.start === null || t.year >= tipColumn.start) && (tipColumn.end === null || t.year <= tipColumn.end))) : [];
+  const selectedColumn = selectedDot ? layout.columns[selectedDot.column] : undefined;
+  const papersAt = (topic: number, column: NonNullable<typeof tipColumn>) => (titles ?? []).filter(t =>
+    t.topic === topic && (mode === 'year' ? t.year === Number(column.label) :
+      (column.start === null || t.year >= column.start) && (column.end === null || t.year <= column.end)));
+  const selectedTitles = selectedDot && selectedColumn && mode === 'year' ? papersAt(selectedDot.topic, selectedColumn) : [];
+  const tipTitles = tip && tipColumn ? papersAt(tip.topic, tipColumn) : [];
+  const detailStatus = !vault ? '잠금을 해제하면 이 노드의 인용 경로와 논문 제목을 볼 수 있습니다.'
+    : paths === 'error' ? '인용 경로를 불러오지 못했습니다.'
+    : paths === null || (paths.length > 0 && titles === undefined) ? '인용 경로를 불러오는 중입니다.'
+    : paths.length > 0 && titles === null ? '논문 제목을 불러오지 못해 이 노드의 인용 경로를 확인할 수 없습니다.'
+    : !route ? mode === 'era' ? '이 노드에 표시할 경로가 없습니다. 소속 시기가 겹치는 논문은 연도 보기에서 확인할 수 있습니다.' : '이 연도와 토픽에서 확인된 인용 경로가 없습니다.'
+    : !firstDot || !lastDot ? mode === 'era' ? '이 보기에서 양끝 노드를 모두 확인할 수 없습니다. 연도 보기에서 경로를 확인할 수 있습니다.' : '토픽을 확인할 수 없는 논문이 있어 링크만 표시합니다.' : '';
   function showTip(event: React.MouseEvent | React.FocusEvent, dot: typeof layout.dots[number]) {
-    if (pinned) return;
-    const box = wrap.current?.getBoundingClientRect(), target = (event.currentTarget as Element).getBoundingClientRect();
+    if (active) return;
+    const box = wrap.current?.getBoundingClientRect(), target = event.currentTarget.getBoundingClientRect();
     if (!box) return;
     setTip({ x: target.left - box.left + target.width / 2 + (wrap.current?.scrollLeft || 0), y: target.top - box.top, topic: dot.topic, column: dot.column, count: dot.count, cited: dot.cited });
     setFocus(dot.topic);
   }
-  const clear = () => { if (!pinned) { setTip(null); setFocus(null); } };
-  return <div className="tp-chart-scroll" ref={wrap} onMouseLeave={clear}>
-    {!layout.lanes.length ? <p className="tp-empty">표시할 논문이 없습니다.</p> : <svg ref={svgRef} className="tp-chart" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-labelledby="tp-chart-title tp-chart-desc">
+  const clear = () => { setTip(null); setFocus(null); };
+  function chooseDot(node: string) {
+    clear();
+    setInspecting(false);
+    setSelection(selection?.node === node ? null : { node, route: 0 });
+  }
+  function closeDetail() {
+    if (selection) dotRefs.current.get(selection.node)?.focus({ preventScroll: true });
+    clear();
+    setInspecting(false);
+    setSelection(null);
+  }
+  const inspectMiddle = () => setInspecting(true);
+  const bend = (x1: number, y1: number, x2: number, y2: number) => {
+    const mid = (x1 + x2) / 2;
+    return `M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2}`;
+  };
+  const bridge = (() => {
+    if (!vault || !route || !firstDot || !lastDot || !selectedDot) return null;
+    const span = route.path.last.year - route.path.first.year;
+    const fraction = (route.path.middle.year - route.path.first.year) / span;
+    const x = yearTick?.x ?? (firstDot.x === lastDot.x
+      ? firstDot.x + Math.min(layout.columnWidth / 4, 34)
+      : firstDot.x + fraction * (lastDot.x - firstDot.x));
+    const room = (y: number) => y >= layout.top && y <= layout.height - 10 && layout.lanes.every(lane => Math.abs(lane.base - y) >= 12);
+    const y = [24, -24, 17, -17, 34, -34].map(offset => selectedDot.y + offset).find(room) ?? selectedDot.y - 17;
+    const left = bend(firstDot.x, firstDot.y, x, y);
+    const right = bend(x, y, lastDot.x, lastDot.y);
+    return { x, y, left, right, paper: route.path.middle };
+  })();
+  const bridgeX = bridge?.x;
+  useEffect(() => {
+    const el = wrap.current;
+    if (!el || bridgeX === undefined) return;
+    if (bridgeX < el.scrollLeft + 24 || bridgeX > el.scrollLeft + el.clientWidth - 24) {
+      el.scrollTo({ left: bridgeX - el.clientWidth / 2 });
+    }
+  }, [bridgeX, wrap]);
+  const preview = (() => {
+    if (!bridge) return null;
+    const viewLeft = scrollLeft, viewRight = Math.min(layout.width, viewLeft + (viewportWidth || layout.width));
+    const inView = bridge.x >= viewLeft && bridge.x <= viewRight;
+    const before = bridge.x - (inView ? viewLeft : 0), after = (inView ? viewRight : layout.width) - bridge.x;
+    const left = after < 210 && before > after;
+    const width = Math.max(0, Math.min(340, (left ? before : after) - 21));
+    return { left, width, x: bridge.x + (left ? -15 - width : 15) };
+  })();
+  return <>
+  <div className="tp-chart-scroll" ref={wrap} onMouseLeave={clear} onScroll={e => setScrollLeft(e.currentTarget.scrollLeft)}>
+    {!layout.lanes.length ? <p className="tp-empty">표시할 논문이 없습니다.</p> : <svg ref={svgRef} className="tp-chart" width={layout.width} height={layout.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="group" aria-labelledby="tp-chart-title" aria-describedby="tp-chart-desc">
       <title id="tp-chart-title">{mode === 'year' ? '연도별' : '경력 시기별'} 연구 토픽 흐름</title>
-      <desc id="tp-chart-desc">토픽 {layout.lanes.length}개, 논문 {layout.placed}편. 기준선 위 선의 높이는 해당 {mode === 'year' ? '연도' : '시기'} 논문 수, 점선은 모토픽에서의 분기입니다. 레인은 모토픽 아래에 자식 토픽이 오는 tree 순서입니다.</desc>
+      <desc id="tp-chart-desc">토픽 {layout.lanes.length}개, 논문 {layout.placed}편. 기준선 위 선의 높이는 해당 {mode === 'year' ? '연도' : '시기'} 논문 수, 점선은 모토픽에서의 분기입니다. 원형 노드를 선택하면 해당 논문의 A–B–A 인용 경로를 확인할 수 있습니다.</desc>
       {layout.bands.map((band, i) => <g key={i} className="tp-band"><rect x={band.x} y={12 + band.row * 28} width={band.width} height={24} rx="6" /><text x={band.x + 8} y={12 + band.row * 28 + 16}>{band.text}<title>{band.label}</title></text></g>)}
       {layout.ticks.map((tick, i) => <g key={i} className={`tp-tick ${tick.major ? 'major' : ''}`}>
         <line x1={tick.x} x2={tick.x} y1={layout.top - 10} y2={layout.height - 8} />
@@ -103,7 +190,7 @@ function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles, un
         const px = 17 + Math.min(parent.depth, 4) * 10, cx = 12 + Math.min(lane.depth, 4) * 10;
         return <path key={`tree-${lane.topic.id}`} className={`tp-tree ${dim(lane.topic.id) && dim(parent.topic.id) ? 'is-dim' : ''}`} d={`M${px},${(parent.mid + 6).toFixed(1)} V${lane.mid.toFixed(1)} H${cx - 2}`} />;
       })}
-      {layout.lanes.map(lane => <g key={lane.topic.id} className={`tp-lane-label ${dim(lane.topic.id) ? 'is-dim' : ''}`} onMouseEnter={() => !pinned && setFocus(lane.topic.id)} onMouseLeave={clear}>
+      {layout.lanes.map(lane => <g key={lane.topic.id} className={`tp-lane-label ${dim(lane.topic.id) ? 'is-dim' : ''}`} onMouseEnter={() => !active && setFocus(lane.topic.id)} onMouseLeave={clear}>
         {(() => {
           // English c-TF-IDF names: leading term on the first line, the rest below; child lanes indent.
           const indent = Math.min(lane.depth, 4) * 10, cut = Math.round(indent / 7);
@@ -122,22 +209,55 @@ function AlluvialChart({ researcher, mode, showArcs, focus, setFocus, titles, un
       {layout.branches.map(b => <path key={`${b.from}-${b.to}`} d={b.d} className={`tp-branch ${dim(b.to) && dim(b.from) ? 'is-dim' : ''}`} stroke={shown.get(b.to)?.color}><title>{`${shown.get(b.from)?.topic.label} → ${shown.get(b.to)?.topic.label} · coupling ${b.sim}`}</title></path>)}
       {showArcs && layout.arcs.map((arc, i) => <path key={i} d={arc.d} className={`tp-arc ${dim(arc.to) && dim(arc.from) ? 'is-dim' : ''}`} />)}
       {layout.births.filter(b => b.independent).map(b => <g key={b.topic} className={`tp-new ${dim(b.topic) ? 'is-dim' : ''}`}><rect x={b.x - 30} y={b.y - 8} width={26} height={16} rx="8" /><text x={b.x - 17} y={b.y + 3.5} textAnchor="middle">NEW</text></g>)}
-      {layout.dots.map(dot => <circle key={`${dot.topic}-${dot.column}`} cx={dot.x} cy={dot.y} r={dot.r} className={`tp-dot ${dim(dot.topic) ? 'is-dim' : ''}`} stroke={shown.get(dot.topic)?.color} tabIndex={0}
-        aria-label={`${layout.columns[dot.column].label} ${shown.get(dot.topic)?.topic.label} ${dot.count}편`}
-        onMouseEnter={e => showTip(e, dot)} onFocus={e => showTip(e, dot)} onBlur={clear}
-        onClick={e => { if (pinned) { setPinned(false); setTip(null); setFocus(null); } else { showTip(e, dot); setPinned(true); } }} />)}
+      {bridge && <g data-export-exclude="" className="aba-node-bridge" aria-hidden="true">
+        <path className="aba-node-underlay" d={bridge.left} /><path className="aba-node-underlay" d={bridge.right} />
+        <path className="aba-node-from" d={bridge.left} /><path className="aba-node-to" d={bridge.right} />
+        {[firstDot, lastDot].map((dot, i) => dot && dot !== selectedDot && <circle key={i} cx={dot.x} cy={dot.y} r={dot.r + 4} className="aba-node-end-ring" />)}
+      </g>}
+      {selectedDot && <circle data-export-exclude="" className="aba-node-selected-ring" cx={selectedDot.x} cy={selectedDot.y} r={selectedDot.r + 4} stroke={shown.get(selectedDot.topic)?.color} aria-hidden="true" />}
+      {layout.dots.map(dot => {
+        const key = citationNodeKey(dot.topic, dot.column), pressed = selection?.node === key;
+        return <circle key={key} cx={dot.x} cy={dot.y} r={dot.r} className={`tp-dot ${dim(dot.topic) ? 'is-dim' : ''}`} stroke={shown.get(dot.topic)?.color} tabIndex={0}
+          ref={node => { if (node) dotRefs.current.set(key, node); else dotRefs.current.delete(key); }}
+          role="button" aria-pressed={pressed} aria-label={`${layout.columns[dot.column].label} ${shown.get(dot.topic)?.topic.label} ${dot.count}편`}
+          onMouseEnter={e => showTip(e, dot)} onFocus={e => showTip(e, dot)} onBlur={clear} onClick={() => chooseDot(key)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); chooseDot(key); }
+            if (e.key === 'Escape' && active) { e.preventDefault(); closeDetail(); }
+          }} />;
+      })}
+      {bridge && <g data-export-exclude="" className="aba-node-marker" role="button" tabIndex={0}
+        aria-label={`가운데 B 논문 상세 보기, ${bridge.paper.year}년, ${bridge.paper.title}`} aria-haspopup="dialog" onClick={inspectMiddle}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inspectMiddle(); } }}>
+        <circle cx={bridge.x} cy={bridge.y} r={11} />
+        <text x={bridge.x} y={bridge.y + 4} textAnchor="middle" className="aba-node-letter">B</text>
+        {preview && preview.width >= 50 && <foreignObject x={preview.x} y={bridge.y - 11} width={preview.width} height={22} aria-hidden="true">
+          <div className={`aba-node-preview ${preview.left ? 'aba-node-preview-left' : ''}`}><span>{bridge.paper.year} · {bridge.paper.title}</span></div>
+        </foreignObject>}
+      </g>}
     </svg>}
-    {tip && tipLane && tipColumn && <div className={`tp-tip ${pinned ? 'is-pinned' : ''}`} style={{ left: tip.x, top: tip.y }} role="status">
+    {tip && tipLane && tipColumn && <div className="tp-tip" style={{ left: tip.x, top: tip.y }} role="status">
       <span className="tp-tip-head"><i style={{ background: tipLane.color }} />{tipLane.topic.label}</span>
       <strong>{tipColumn.label} · {tip.count}편</strong>
       <small>피인용 합계 {n(tip.cited)}</small>
       {tipTitles.length > 0 && <ul>{tipTitles.slice(0, 6).map((t, i) => <li key={i}>{t.doi ? <a href={t.doi} target="_blank" rel="noreferrer">{t.title}</a> : t.title}{(t.venue || t.doi) && <em>{[t.venue, t.doi && doiText(t.doi)].filter(Boolean).join(' · ')}</em>}</li>)}</ul>}
       {tipTitles.length > 6 && <small>외 {tipTitles.length - 6}편</small>}
-      {!unlocked && <small className="tp-tip-lock">잠금 해제 시 논문 제목·DOI 표시</small>}
-      {unlocked && !titles && <small className="tp-tip-lock">논문 제목을 불러오는 중이거나 이 연구자의 제목 파일이 없습니다</small>}
-      {pinned && <small className="tp-tip-lock">점을 다시 누르면 닫힙니다</small>}
+      <small className="tp-tip-lock">점을 선택하면 A–B–A 인용을 볼 수 있습니다.</small>
     </div>}
-  </div>;
+  </div>
+  {selection && selectedDot && selectedColumn && <AbaNodeControls
+    nodeLabel={`${selectedColumn.label} · ${shown.get(selectedDot.topic)?.topic.label ?? ''}`}
+    groups={groups} activeGroup={group} routeIndex={routeIndex} activeRoute={route} status={detailStatus}
+    onGroup={id => setSelection({ node: selection.node, middle: id, route: 0 })}
+    onRoute={index => setSelection({ ...selection, route: index })} onClose={closeDetail} onInspect={inspectMiddle} canInspectInChart={Boolean(bridge)}>
+    {selectedTitles.length > 0 && <details className="aba-node-publications">
+      <summary>이 노드의 논문 {selectedTitles.length}편</summary>
+      <ul>{selectedTitles.map((paper, i) => <li key={i}>{paper.doi ? <a href={paper.doi} target="_blank" rel="noreferrer">{paper.title}</a> : paper.title}</li>)}</ul>
+    </details>}
+  </AbaNodeControls>}
+  {vault && route && inspecting && <AbaPaperDialog route={route} onClose={() => setInspecting(false)} />}
+  </>;
+
 }
 
 function MultiChart({ hits, mode, labelFor }: { hits: TopicHit[]; mode: MultiMode; labelFor: (id: string) => string }) {
@@ -223,11 +343,11 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
   const input = useRef<HTMLInputElement>(null);
   // Titles for the open researcher only, decrypted in memory. App remounts this page on lock, which drops them.
   const openId = selection.kind === 'researcher' ? selection.id : null;
-  const [paperTitles, setPaperTitles] = useState<{ id: string; rows: PaperTitle[] } | null>(null);
+  const [paperTitles, setPaperTitles] = useState<{ id: string; rows: PaperTitle[] | null } | null>(null);
   useEffect(() => {
     if (!titles || !openId) return;
     let alive = true;
-    readTitles(titles, openId).then(rows => { if (alive) setPaperTitles(rows ? { id: openId, rows } : null); });
+    readTitles(titles, openId).then(rows => { if (alive) setPaperTitles({ id: openId, rows }); });
     return () => { alive = false; };
   }, [titles, openId]);
   function select(next: Selection) { setSelectionState(next); writeSelection(next); setOpen(false); setQuery(''); setFocus(null); window.scrollTo({ top: 0, behavior: 'smooth' }); }
@@ -402,7 +522,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
         </div>
         <section className="tp-chart-card" aria-label="토픽 흐름 다이어그램">
           <div className="tp-chart-bar">
-            <div><h3>토픽 흐름</h3><p>기준선 위 선 높이 = {mode === 'year' ? '그 해' : '그 시기'} 논문 수 · 점선 = 모토픽에서의 분기 · 기준선에 붙은 구간 = 논문 없는 해</p></div>
+            <div><h3>토픽 흐름</h3><p>기준선 위 선 높이 = {mode === 'year' ? '그 해' : '그 시기'} 논문 수 · 점선 = 모토픽에서의 분기 · 원형 노드 선택 = A–B–A 인용 보기</p></div>
             <div className="tp-controls">
               <div className="v2-seg" role="group" aria-label="시간 단위">
                 <button type="button" className={mode === 'year' ? 'is-on' : ''} aria-pressed={mode === 'year'} onClick={() => setMode('year')}>연도</button>
@@ -413,7 +533,7 @@ export default function TopicsPage({ professors, names, titles, releaseYear, onO
               <button type="button" className="v2-btn-quiet" onClick={() => chartSvg.current && downloadSvg(chartSvg.current, chartMeta(researcher).filename)}>SVG 저장</button>
             </div>
           </div>
-          <AlluvialChart researcher={researcher} mode={mode} showArcs={showArcs && hasRecip} focus={focus} setFocus={setFocus} titles={titles && paperTitles?.id === researcher.id ? paperTitles.rows : null} unlocked={Boolean(titles)} svgRef={chartSvg} />
+          <AlluvialChart key={`${researcher.id}-${mode}`} researcher={researcher} mode={mode} showArcs={showArcs && hasRecip} focus={focus} setFocus={setFocus} titles={titles && paperTitles?.id === researcher.id ? paperTitles.rows : undefined} vault={titles} svgRef={chartSvg} />
         </section>
         <InfoFlowPanel key={researcher.id} researcher={researcher} infoUrl={index.infoPath ? `${import.meta.env.BASE_URL}data/topics/${index.infoPath}/${researcher.id}.json` : undefined} />
         <ResearchAreaTree profile={areas?.profiles.get(researcher.id)} title="OpenAlex 연구분야 계층" />
