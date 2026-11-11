@@ -115,7 +115,10 @@ test('all shipped presets return validated IDs from the actual public SQLite rel
     // The institution x period recheck (487 works) lifts two researchers to 100+ lead works and the
     // explicit mathematics-only decision for one mathematician (213 -> 14) drops one: 162 -> 163.
     // Two recheck works dilute one statistical physicist from 12/59 to 12/61 (< 20%): 37 -> 36.
-    const expectedCounts = [3937, 299, 199, 163, 36, 220];
+    // The low-count audit restores two researchers whose works were not mapped (a mathematician
+    // 16 -> 161 and a plasma physicist 9 -> 182 lead works): 163 -> 165. Its additions move three
+    // chemists across 40% materials science (6/15 -> 7/19 out; 7/19 -> 13/26 and 5/13 -> 6/14 in): 221.
+    const expectedCounts = [3937, 299, 199, 165, 36, 221];
     for (const [index, preset] of FLOW_SQL_PRESETS.entries()) {
       const result = runFlowSqlQuery(db, preset.sql, publicIds);
       assert.equal(result.ids.length, expectedCounts[index], preset.label);

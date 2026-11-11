@@ -74,6 +74,11 @@ class OpenAlex:
                                             timeout=90) as r:
                     self.calls += 1
                     return json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                # a spent daily budget answers 429 with a long Retry-After: fail fast so callers fall back
+                if e.code == 429 and int(e.headers.get('Retry-After') or 0) > 120 or e.code == 404 or attempt == 5:
+                    raise RuntimeError(f'OpenAlex request failed: {path} ({e.code})')
+                time.sleep(2 ** attempt)
             except Exception:
                 if attempt == 5:
                     raise RuntimeError(f'OpenAlex request failed: {path}')

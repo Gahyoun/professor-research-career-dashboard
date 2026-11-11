@@ -89,5 +89,29 @@ class PrivateBuildTests(unittest.TestCase):
         self.assertEqual(con.execute('SELECT COUNT(*) FROM temp.career_inconsistent').fetchone()[0], 0)
 
 
+class CorroborationTests(unittest.TestCase):
+    """An ID that merged a physicist with a food scientist of the same name; one coauthor ID is
+    shared too. Only works with BOTH an identity and a subject affirmation survive."""
+
+    def test_identity_and_subject_both_required(self):
+        from career_consistency import corroboration
+        segs = [('Sungkyunkwan University', 2011, 2016), ('Max Planck Institute for Evolutionary Biology', 2017, 2021),
+                ('Inha University', 2022, 2026)]
+        sp = dict(subfield='Statistical and Nonlinear Physics', domain='Physical Sciences')
+        food = dict(subfield='Food Science', domain='Life Sciences')
+        works = [
+            dict(id='W1', year=2014, institutions=['Sungkyunkwan University'], coauthors=['A-kim'], **sp),
+            dict(id='W2', year=2019, institutions=['Max Planck Institute for Evolutionary Biology'], coauthors=['A-traulsen'],
+                 subfield='Genetics', domain='Life Sciences'),
+            dict(id='W3', year=2024, institutions=['Inha University'], coauthors=['A-kim'], **sp),
+            dict(id='W4', year=2020, institutions=[], coauthors=['A-traulsen'], subfield='Genetics', domain='Life Sciences'),
+            dict(id='W5', year=2013, institutions=[], coauthors=[], **food),            # nothing affirms it
+            dict(id='W6', year=2015, institutions=[], coauthors=['A-kim'], **food),     # shared coauthor only
+            dict(id='W7', year=2016, institutions=[], coauthors=[], subfield='Pollution', domain='Physical Sciences'),  # domain only
+        ]
+        self.assertEqual(corroboration(works, segs, 'physics'),
+                         {'W5': 'uncorroborated', 'W6': 'uncorroborated', 'W7': 'uncorroborated'})
+
+
 if __name__ == '__main__':
     unittest.main()
