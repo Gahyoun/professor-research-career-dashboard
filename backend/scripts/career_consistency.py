@@ -69,6 +69,38 @@ def classify(works, career_institutions, subject=None, min_anchors=MIN_ANCHORS):
     return out
 
 
+def corroboration(works, career_segments, subject=None):
+    """Strict rule for a researcher whose OpenAlex author ID is known to hold a namesake
+    (explicit decision 'require_corroboration'). A published work is kept only when two
+    mutually supporting affirmations hold:
+      identity  the authorship institution is a career institution within that segment +-1
+                year, OR the work shares a coauthor ID with the career-anchored works;
+      subject   the work's subfield appears among the anchored works, OR its domain is a
+                home domain of the researcher's subject.
+    A shared coauthor alone is not enough (common-name coauthor IDs are merged too), nor is
+    a matching topic alone (a namesake can work in a related area).
+    works: [{'id', 'year', 'institutions', 'coauthors', 'subfield', 'domain'}];
+    career_segments: [(institution, start_year, end_year)]. Returns {work_id: 'uncorroborated'}."""
+    segs = [(norm_institution(n), s, e) for n, s, e in career_segments if n and s]
+    home = HOME.get(subject, set())
+
+    def anchored(w):
+        y = w.get('year') or 0
+        return any(norm_institution(i) == n and s - 1 <= y <= (e or 9999) + 1
+                   for i in w.get('institutions') or [] for n, s, e in segs)
+    anchors = [w for w in works if anchored(w)]
+    subfields = {w.get('subfield') for w in anchors if w.get('subfield')}
+    out = {}
+    for w in works:
+        co = {c for c in w.get('coauthors') or [] if c}
+        others = {c for a in anchors if a is not w for c in a.get('coauthors') or [] if c}
+        identity = anchored(w) or bool(co & others)
+        subject_ok = w.get('subfield') in subfields or w.get('domain') in home
+        if not (identity and subject_ok):
+            out[w['id']] = 'uncorroborated'
+    return out
+
+
 def prepare(con):
     """Private build: create temp.career_inconsistent(professor_uid, work_id, reason) from the
     source DB (koad attached), for pairs that pass KOAD and source keep. Missing tables give an

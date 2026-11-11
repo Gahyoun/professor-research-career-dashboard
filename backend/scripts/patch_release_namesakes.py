@@ -12,6 +12,8 @@ Per researcher:
      title); unresolved papers are kept and reported;
   2. the researcher's authorship = the author ID present on most resolved works (an ID that
      absorbed a namesake still carries the researcher's own works); works without it are kept;
+  (--rule corroboration: career_consistency.corroboration() instead, for researchers with the
+   explicit 'require_corroboration' decision: identity AND subject affirmation per work)
   3. classify(): institutions of that authorship vs the public career institutions,
      coauthor IDs, OpenAlex primary field; dropped works leave the topic map (rebuilt with
      the same Louvain rule), the encrypted titles, the lead output (if they were counted:
@@ -29,7 +31,7 @@ from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'backend' / 'scripts'))
-from career_consistency import classify  # noqa: E402
+from career_consistency import classify, corroboration  # noqa: E402
 from patch_release_verified_works import (  # noqa: E402
     ALLOWED, JOURNAL_TYPES, MAX_YEAR, OpenAlex, add_areas, add_lead_works, build_one, compact_researcher,
     english_label, english_tags, fold_in, norm_title, normalise_doi, oa_compact, read_titles, rebind_constellation,
@@ -58,6 +60,9 @@ def main():
     p.add_argument('--public-id', action='append', required=True)
     p.add_argument('--year', default='2026')
     p.add_argument('--dry-run', action='store_true')
+    p.add_argument('--rule', choices=('career', 'corroboration'), default='career',
+                   help="career: the career-consistency rule; corroboration: the explicit 'require_corroboration' "
+                        "decision (identity AND subject affirmation for every work)")
     a = p.parse_args()
     key, password = os.environ.get('OPENALEX_API_KEY'), os.environ.get('NAMES_PASSWORD')
     if not key or not password:
@@ -86,13 +91,17 @@ def main():
             if len(mine) != 1:
                 continue
             by_id[wid] = (r, w, mine[0])
-            works.append({'id': wid, 'institutions': [i.get('display_name') for i in mine[0].get('institutions') or []],
+            works.append({'id': wid, 'year': w.get('publication_year'), 'institutions': [i.get('display_name') for i in mine[0].get('institutions') or []],
                           'coauthors': [short((x.get('author') or {}).get('id')) for x in w['authorships']
                                         if (x.get('author') or {}).get('id') and x is not mine[0]],
                           'subfield': ((w.get('primary_topic') or {}).get('subfield') or {}).get('display_name'),
                           'field': ((w.get('primary_topic') or {}).get('field') or {}).get('display_name'),
                           'domain': ((w.get('primary_topic') or {}).get('domain') or {}).get('display_name')})
-        drops = classify(works, [c['institution'] for c in prof['career']], prof['subject'])
+        if a.rule == 'corroboration':
+            drops = corroboration(works, [(c['institution'], c.get('start_year'), c.get('end_year')) for c in prof['career']],
+                                  prof['subject'])
+        else:
+            drops = classify(works, [c['institution'] for c in prof['career']], prof['subject'])
         rep = report[pid] = {'published': len(rows), 'resolved': len(resolved), 'unresolved_kept': len(unresolved),
                              'dropped': [{'year': by_id[w][0]['year'], 'reason': why, 'title': by_id[w][0]['title'][:80],
                                           'institutions': next(x['institutions'] for x in works if x['id'] == w)}
