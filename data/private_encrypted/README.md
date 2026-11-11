@@ -9,3 +9,4 @@
 
 키는 공개 ID 기준입니다. 비공개 DB에 반영할 때(`apply_verified_works.py`)는 익명화 salt로 `professor_uid`에
 대응시킨 뒤 `works` / `rejected_works`로 넣습니다.
+| `career_conflict_20261111.json` | 경력 충돌 규칙(`career_consistency.career_conflict`)으로 공개 릴리스에서 뺀 논문: 공개 ID별 `rejected_works` 명세(work_id, 근거, 제목, DOI). 비공개 DB에는 `apply_verified_works.py`의 `rejected_works`로 넣습니다 |

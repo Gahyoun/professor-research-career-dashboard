@@ -3,7 +3,10 @@
 from a cache of the published papers' OpenAlex records (no re-clustering).
 
   NAMES_PASSWORD=… OPENALEX_API_KEY=… python3 backend/scripts/patch_release_namesakes_bulk.py \
-      --cache DIR [--dry-run]
+      --cache DIR [--rule career|conflict --inst-meta institutions.json] [--dry-run]
+
+--rule conflict applies career_conflict() instead of classify(); institutions.json maps every
+OpenAlex institution ID on the cached authorships to {'type', 'lineage'} (OpenAlex institutions).
 
 DIR holds works.jsonl.gz (OpenAlex works of the published DOIs) and papers.jsonl
 ({pid, i, year, topic, doi, title} per published topic paper, i = row in the title file).
@@ -27,7 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'backend' / 'scripts'))
-from career_consistency import classify  # noqa: E402
+from career_consistency import career_conflict, classify  # noqa: E402
 from patch_release_verified_works import (ALLOWED, MAX_YEAR, OpenAlex, add_areas, add_lead_works,  # noqa: E402
                                           read_titles, rebind_constellation, short, vault_key, write_titles)
 
@@ -39,7 +42,14 @@ def main():
     p.add_argument('--cache', required=True)
     p.add_argument('--year', default='2026')
     p.add_argument('--dry-run', action='store_true')
+    p.add_argument('--rule', choices=('career', 'conflict'), default='career',
+                   help='career: classify() (career consistency); conflict: career_conflict() (a different '
+                        'university or hospital while the career places the researcher elsewhere)')
+    p.add_argument('--inst-meta', help="with --rule conflict: JSON {I…: {'type', 'lineage'}} of OpenAlex institutions")
     a = p.parse_args()
+    if a.rule == 'conflict' and not a.inst_meta:
+        p.error('--rule conflict needs --inst-meta')
+    inst_meta = json.loads(Path(a.inst_meta).read_text()) if a.inst_meta else {}
     cache = Path(a.cache)
     release = ROOT / 'data' / 'releases' / a.year
     topics_dir = ROOT / 'public' / 'data' / 'topics'
@@ -77,12 +87,17 @@ def main():
             pt = w.get('primary_topic') or {}
             wid = short(w['id'])
             rows[wid] = (x, w, me[0])
-            works.append({'id': wid, 'institutions': [i['display_name'] for i in me[0]['institutions']],
+            works.append({'id': wid, 'year': w.get('publication_year'),
+                          'institutions': [i['display_name'] for i in me[0]['institutions']],
+                          'institution_ids': [short(i.get('id')) for i in me[0]['institutions']],
                           'coauthors': [short((au.get('author') or {}).get('id')) for au in w['authorships']
                                         if au is not me[0] and (au.get('author') or {}).get('id')],
                           'field': (pt.get('field') or {}).get('display_name'), 'subfield': (pt.get('subfield') or {}).get('display_name'),
                           'domain': (pt.get('domain') or {}).get('display_name')})
-        drops = classify(works, [c['institution'] for c in profs[pid]['career']], profs[pid]['subject'])
+        if a.rule == 'conflict':
+            drops = career_conflict(works, profs[pid]['career'], profs[pid]['subject'], inst_meta)
+        else:
+            drops = classify(works, [c['institution'] for c in profs[pid]['career']], profs[pid]['subject'])
         if drops:
             plan[pid] = {wid: (rows[wid], why) for wid, why in drops.items()}
             reasons.update(drops.values())
@@ -150,14 +165,22 @@ def main():
              'rule': 'career-consistency namesake rule v2 (career_consistency.py): outside the subject home domains, '
                      'fewer than two coauthors shared with career-anchored works, and a field (one shared) or subfield '
                      '(none shared) absent from those works'}
-    dashboard['meta']['manual_namesake_patch_bulk'] = patch
+    key = 'manual_namesake_patch_bulk'
+    if a.rule == 'conflict':
+        key = 'manual_career_conflict_patch_bulk'
+        patch['rule'] = ('career-conflict rule (career_consistency.career_conflict): during a doctoral or faculty segment '
+                         '(more than a year from any boundary) the authorship names only other universities or hospitals '
+                         '(not in the lineage of the career institutions) and shares no coauthor with career-anchored works, '
+                         'or one while the subfield is absent from them')
+    dashboard['meta'][key] = patch
     dashboard['meta']['lead_work_count'] = sum(x['lead_work_count'] for x in dashboard['professors'])
     text = json.dumps(dashboard, ensure_ascii=False, separators=(',', ':'))
     for path in (release / 'dashboard.json', ROOT / 'public' / 'data' / 'dashboard.json'):
         path.write_text(text)
-    index.setdefault('method', {})['namesake_patch_bulk'] = (f"{patch['date']}: {patch['papers_removed']} papers of "
-                                                            f"{patch['researchers']} researchers removed by the career-consistency rule; "
-                                                            "topic keywords and vectors kept")
+    index.setdefault('method', {})[key.replace('manual_', '')] = (f"{patch['date']}: {patch['papers_removed']} papers of "
+                                                                f"{patch['researchers']} researchers removed by the "
+                                                                f"{'career-conflict' if a.rule == 'conflict' else 'career-consistency'} rule; "
+                                                                "topic keywords and vectors kept")
     (topics_dir / 'index.json').write_text(json.dumps(index, ensure_ascii=False, separators=(',', ':')))
     (ROOT / 'public' / 'data' / 'research_areas.json').write_text(json.dumps(areas, ensure_ascii=False, separators=(',', ':')))
     db = release / f'professor_dashboard_{a.year}.sqlite'
@@ -174,19 +197,19 @@ def main():
         con.executemany('INSERT INTO professor_journal_output (professor_id,journal,lead_work_count,openalex_2yr_mean_citedness) '
                         'VALUES (?,?,?,?)', [(pid, j['journal'], j['lead_work_count'], j['openalex_2yr_mean_citedness']) for j in x['journals']])
     con.execute("UPDATE release_metadata SET value=? WHERE key='lead_work_count'", (str(dashboard['meta']['lead_work_count']),))
-    con.execute("INSERT OR REPLACE INTO release_metadata VALUES ('manual_namesake_patch_bulk', ?)", (json.dumps(patch, ensure_ascii=False),))
+    con.execute("INSERT OR REPLACE INTO release_metadata VALUES (?, ?)", (key, json.dumps(patch, ensure_ascii=False)))
     con.commit()
     con.execute('VACUUM')
     integrity = con.execute('PRAGMA integrity_check').fetchone()[0]
     con.close()
     manifest = json.loads((release / 'manifest.json').read_text())
-    manifest.update({'lead_work_count': dashboard['meta']['lead_work_count'], 'manual_namesake_patch_bulk': patch,
+    manifest.update({'lead_work_count': dashboard['meta']['lead_work_count'], key: patch,
                      'public_db_bytes': db.stat().st_size, 'sqlite_integrity': integrity})
     mtext = json.dumps(manifest, ensure_ascii=False, indent=2)
     for path in (release / 'manifest.json', ROOT / 'public' / 'data' / 'manifest.json'):
         path.write_text(mtext)
     (ROOT / 'public' / 'downloads' / db.name).write_bytes(db.read_bytes())
-    rebind_constellation(ROOT, {'date': patch['date'], 'note': f"{patch['date']} manual_namesake_patch_bulk: lead-output fields only"})
+    rebind_constellation(ROOT, {'date': patch['date'], 'note': f"{patch['date']} {key}: lead-output fields only"})
     print(f"patched: {patch['papers_removed']} papers of {patch['researchers']} researchers; lead_work_count {dashboard['meta']['lead_work_count']:,}")
 
 
