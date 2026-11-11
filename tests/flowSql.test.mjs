@@ -118,7 +118,9 @@ test('all shipped presets return validated IDs from the actual public SQLite rel
     // The low-count audit restores two researchers whose works were not mapped (a mathematician
     // 16 -> 161 and a plasma physicist 9 -> 182 lead works): 163 -> 165. Its additions move three
     // chemists across 40% materials science (6/15 -> 7/19 out; 7/19 -> 13/26 and 5/13 -> 6/14 in): 221.
-    const expectedCounts = [3937, 299, 199, 165, 36, 221];
+    // The career-conflict rule (2026-11-11) removes a namesake's 131 lead works from one physicist
+    // (209 -> 78): 165 -> 164; one chemist's materials-science share falls from 0.400 to 0.397: 220.
+    const expectedCounts = [3937, 299, 199, 164, 36, 220];
     for (const [index, preset] of FLOW_SQL_PRESETS.entries()) {
       const result = runFlowSqlQuery(db, preset.sql, publicIds);
       assert.equal(result.ids.length, expectedCounts[index], preset.label);
